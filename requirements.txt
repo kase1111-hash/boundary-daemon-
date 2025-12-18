@@ -1,0 +1,7 @@
+# Boundary Daemon Dependencies
+
+# System monitoring
+psutil>=5.9.0
+
+# No other dependencies required
+# Minimal attack surface by design

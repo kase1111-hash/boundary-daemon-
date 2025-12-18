@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""
+boundaryctl - Boundary Daemon Control CLI
+Command-line interface for interacting with the Boundary Daemon.
+"""
+
+import sys
+import argparse
+import json
+from typing import Optional
+
+# Add parent directory to path
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from api.boundary_api import BoundaryAPIClient
+
+
+def format_status(status: dict):
+    """Format status output"""
+    if not status.get('success'):
+        print(f"Error: {status.get('error', 'Unknown error')}")
+        return
+
+    data = status.get('status', {})
+    boundary = data.get('boundary_state', {})
+    env = data.get('environment', {})
+    lockdown = data.get('lockdown')
+
+    print("\n" + "=" * 70)
+    print("BOUNDARY DAEMON STATUS")
+    print("=" * 70)
+
+    # Boundary state
+    print(f"\nMode: {boundary.get('mode', 'unknown').upper()}")
+    print(f"Operator: {boundary.get('operator', 'unknown')}")
+    print(f"Last Transition: {boundary.get('last_transition', 'unknown')}")
+
+    # Environment
+    if env:
+        print(f"\nNetwork: {env.get('network', 'unknown').upper()}")
+        print(f"Hardware Trust: {env.get('hardware_trust', 'unknown').upper()}")
+        print(f"Active Interfaces: {', '.join(env.get('active_interfaces', [])) or 'none'}")
+        print(f"External Models: {env.get('external_models', False)}")
+
+    # Lockdown
+    if lockdown:
+        print(f"\n*** SYSTEM IN LOCKDOWN ***")
+        print(f"Reason: {lockdown.get('reason', 'unknown')}")
+        print(f"Since: {lockdown.get('timestamp', 'unknown')}")
+
+    # Stats
+    print(f"\nEvent Count: {data.get('event_count', 0)}")
+    print(f"Violations: {data.get('tripwire_violations', 0)}")
+
+    print("=" * 70 + "\n")
+
+
+def format_events(events_data: list):
+    """Format events output"""
+    if not events_data:
+        print("No events found.")
+        return
+
+    print("\n" + "=" * 70)
+    print("BOUNDARY EVENTS")
+    print("=" * 70 + "\n")
+
+    for event in events_data:
+        timestamp = event.get('timestamp', 'unknown')
+        event_type = event.get('event_type', 'unknown')
+        details = event.get('details', '')
+
+        print(f"[{timestamp}] {event_type.upper()}")
+        print(f"  {details}")
+        print()
+
+    print("=" * 70 + "\n")
+
+
+def cmd_status(client: BoundaryAPIClient, args):
+    """Get daemon status"""
+    status = client.get_status()
+    format_status(status)
+
+
+def cmd_check_recall(client: BoundaryAPIClient, args):
+    """Check recall permission"""
+    memory_class = args.memory_class
+
+    permitted, reason = client.check_recall(memory_class)
+
+    print(f"\nMemory Class {memory_class}: {'ALLOWED' if permitted else 'DENIED'}")
+    print(f"Reason: {reason}\n")
+
+    return 0 if permitted else 1
+
+
+def cmd_check_tool(client: BoundaryAPIClient, args):
+    """Check tool permission"""
+    tool_name = args.tool_name
+    requires_network = args.network
+    requires_filesystem = args.filesystem
+    requires_usb = args.usb
+
+    permitted, reason = client.check_tool(
+        tool_name,
+        requires_network=requires_network,
+        requires_filesystem=requires_filesystem,
+        requires_usb=requires_usb
+    )
+
+    print(f"\nTool '{tool_name}': {'ALLOWED' if permitted else 'DENIED'}")
+    print(f"Reason: {reason}\n")
+
+    return 0 if permitted else 1
+
+
+def cmd_set_mode(client: BoundaryAPIClient, args):
+    """Set boundary mode"""
+    mode = args.mode
+    reason = args.reason or f"Manual mode change to {mode}"
+
+    success, message = client.set_mode(mode, operator='human', reason=reason)
+
+    print(f"\nMode change: {'SUCCESS' if success else 'FAILED'}")
+    print(f"{message}\n")
+
+    return 0 if success else 1
+
+
+def cmd_events(client: BoundaryAPIClient, args):
+    """Get recent events"""
+    count = args.count
+    event_type = args.type
+
+    events = client.get_events(count=count, event_type=event_type)
+    format_events(events)
+
+
+def cmd_verify(client: BoundaryAPIClient, args):
+    """Verify log integrity"""
+    is_valid, error = client.verify_log()
+
+    if is_valid:
+        print("\n✓ Event log chain is VALID\n")
+        return 0
+    else:
+        print(f"\n✗ Event log chain is INVALID: {error}\n")
+        return 1
+
+
+def cmd_watch(client: BoundaryAPIClient, args):
+    """Watch daemon status (live updates)"""
+    import time
+
+    print("Watching Boundary Daemon status (Ctrl+C to exit)...\n")
+
+    try:
+        while True:
+            # Clear screen
+            os.system('clear' if os.name != 'nt' else 'cls')
+
+            # Show status
+            status = client.get_status()
+            format_status(status)
+
+            # Wait
+            time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        print("\nStopped watching.\n")
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='Boundary Daemon Control CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  boundaryctl status                    # Show daemon status
+  boundaryctl check-recall 3            # Check if memory class 3 is accessible
+  boundaryctl check-tool wget --network # Check if wget (network tool) is allowed
+  boundaryctl set-mode airgap           # Change to AIRGAP mode
+  boundaryctl events                    # Show recent events
+  boundaryctl verify                    # Verify log integrity
+  boundaryctl watch                     # Watch status (live updates)
+"""
+    )
+
+    parser.add_argument('--socket', type=str, default='./api/boundary.sock',
+                       help='Path to boundary daemon socket')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+
+    # status
+    parser_status = subparsers.add_parser('status', help='Show daemon status')
+    parser_status.set_defaults(func=cmd_status)
+
+    # check-recall
+    parser_check_recall = subparsers.add_parser('check-recall',
+                                                help='Check memory recall permission')
+    parser_check_recall.add_argument('memory_class', type=int,
+                                    help='Memory classification level (0-5)')
+    parser_check_recall.set_defaults(func=cmd_check_recall)
+
+    # check-tool
+    parser_check_tool = subparsers.add_parser('check-tool',
+                                             help='Check tool execution permission')
+    parser_check_tool.add_argument('tool_name', type=str,
+                                  help='Name of the tool')
+    parser_check_tool.add_argument('--network', action='store_true',
+                                  help='Tool requires network')
+    parser_check_tool.add_argument('--filesystem', action='store_true',
+                                  help='Tool requires filesystem')
+    parser_check_tool.add_argument('--usb', action='store_true',
+                                  help='Tool requires USB')
+    parser_check_tool.set_defaults(func=cmd_check_tool)
+
+    # set-mode
+    parser_set_mode = subparsers.add_parser('set-mode', help='Change boundary mode')
+    parser_set_mode.add_argument('mode', type=str,
+                                choices=['open', 'restricted', 'trusted', 'airgap', 'coldroom'],
+                                help='Target boundary mode')
+    parser_set_mode.add_argument('--reason', type=str,
+                                help='Reason for mode change')
+    parser_set_mode.set_defaults(func=cmd_set_mode)
+
+    # events
+    parser_events = subparsers.add_parser('events', help='Show recent events')
+    parser_events.add_argument('--count', type=int, default=20,
+                              help='Number of events to show')
+    parser_events.add_argument('--type', type=str,
+                              help='Filter by event type')
+    parser_events.set_defaults(func=cmd_events)
+
+    # verify
+    parser_verify = subparsers.add_parser('verify', help='Verify log integrity')
+    parser_verify.set_defaults(func=cmd_verify)
+
+    # watch
+    parser_watch = subparsers.add_parser('watch', help='Watch status (live updates)')
+    parser_watch.add_argument('--interval', type=int, default=2,
+                             help='Update interval in seconds')
+    parser_watch.set_defaults(func=cmd_watch)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    # Create API client
+    client = BoundaryAPIClient(socket_path=args.socket)
+
+    # Execute command
+    try:
+        return args.func(client, args) or 0
+    except Exception as e:
+        print(f"\nError: {e}\n")
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

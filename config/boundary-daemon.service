@@ -1,0 +1,55 @@
+[Unit]
+Description=Boundary Daemon - Agent Smith Trust Enforcement
+Documentation=https://github.com/yourusername/boundary-daemon
+After=network.target
+
+# This is a critical security service
+# System should not operate without it
+RequiresMountsFor=/var/log/boundary-daemon
+RequiresMountsFor=/var/run/boundary-daemon
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/opt/boundary-daemon
+
+# Start the daemon
+ExecStart=/usr/bin/python3 /opt/boundary-daemon/daemon/boundary_daemon.py \
+    --mode=open \
+    --log-dir=/var/log/boundary-daemon
+
+# Restart policy
+Restart=always
+RestartSec=5s
+
+# If daemon dies, this is a critical failure
+# Enter emergency mode
+FailureAction=halt
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/boundary-daemon /var/run/boundary-daemon
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=512M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boundary-daemon
+
+[Install]
+WantedBy=multi-user.target
+
+# CRITICAL: This service is the security enforcement layer
+# Do not disable without understanding the implications
