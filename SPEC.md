@@ -1,8 +1,8 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Active Development
-**Last Updated:** 2025-12-19
+**Last Updated:** 2025-12-21
 
 ---
 
@@ -13,9 +13,11 @@
 3. [Current Implementation Status](#current-implementation-status)
 4. [Unimplemented Features](#unimplemented-features)
 5. [Implementation Plans](#implementation-plans)
-6. [API Specification](#api-specification)
-7. [Security Model](#security-model)
-8. [Deployment](#deployment)
+6. [PII Detection & Redaction Pipeline](#pii-detection--redaction-pipeline)
+7. [Proactive Exposure Monitoring](#proactive-exposure-monitoring)
+8. [API Specification](#api-specification)
+9. [Security Model](#security-model)
+10. [Deployment](#deployment)
 
 ---
 
@@ -797,79 +799,468 @@ class CustomPolicyEngine:
 
 ### Plan 6: Biometric Authentication (Priority: MEDIUM)
 
-**Goal**: Replace keyboard ceremony with fingerprint/face recognition.
+**Goal**: Enhance human override ceremonies by replacing simple keyboard input with robust biometric verification (fingerprint and facial recognition), ensuring stronger proof of human presence and preventing automation or scripting attacks.
 
 **Duration**: 3-4 weeks
 
 **Dependencies**:
-- libfprint (fingerprint)
-- OpenCV + face_recognition (face)
-- Hardware: fingerprint reader or webcam
+- `libfprint` (for fingerprint scanning and matching)
+- `libpam-fprintd` (for PAM integration on Linux systems)
+- `face_recognition` library (built on dlib for facial embeddings)
+- `opencv-python` (for webcam access and frame capture)
+- Hardware: Compatible fingerprint reader (e.g., Goodix or Synaptics USB devices) or standard webcam
+- Optional: Integration with PAM (Pluggable Authentication Modules) for broader system auth compatibility
+
+**Rationale**:
+Current keyboard-based ceremonies are vulnerable to automation (e.g., scripted inputs). Biometrics provide liveness detection and uniqueness, aligning with "Human Supremacy" and "Fail-Closed" principles. This is optional and configurable—users can fallback to keyboard if hardware is unavailable.
 
 **Implementation**:
+
+#### Biometric Enrollment Workflow
+- Users enroll via CLI commands, storing encrypted templates locally (e.g., in `/var/lib/boundary-daemon/biometrics/`)
+- Templates are hashed and encrypted using TPM-sealed keys (cross-integrated with Plan 2: TPM Integration)
+
+**CLI Commands**:
+```bash
+boundaryctl enroll-fingerprint    # Prompts user to scan finger 3-5 times for robust template
+boundaryctl enroll-face           # Captures 5-10 webcam frames under varying lighting/angles
+boundaryctl list-enrolled         # Displays enrolled biometrics with dates
+boundaryctl delete-biometric <id> # Removes a template with confirmation ceremony
+```
+
+**Error Handling**: Graceful fallback if hardware not detected (e.g., "No fingerprint reader found—falling back to keyboard ceremony")
+
+#### Verification Process
+- During ceremonies (e.g., mode overrides, high-classification recalls), the daemon prompts for biometric input
+- Threshold-based matching: Fingerprint match score > 70% (configurable); Facial cosine similarity > 0.6
+- Liveness Checks: For face, detect blinks or head movement; for fingerprint, use device-built-in spoof detection
+- Cooldown: 30 seconds post-failure to prevent brute-force
+- Logging: All attempts logged as `EventType.BIOMETRIC_ATTEMPT` with success/failure metadata
+
 ```python
-# New module: daemon/auth/biometric_verifier.py
+# Enhanced module: daemon/auth/biometric_verifier.py
 
 import fprint
 import face_recognition
+import cv2
+import os
+import hashlib
+from daemon.hardware.tpm_manager import TPMManager
 
 class BiometricVerifier:
-    """Biometric authentication for ceremonies"""
+    """Handles enrollment and verification for biometrics"""
 
-    def __init__(self, enrolled_fingerprints: list = None):
-        self.fp_device = fprint.Device()
-        self.enrolled_prints = enrolled_fingerprints or []
+    TEMPLATE_DIR = '/var/lib/boundary-daemon/biometrics/'
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
+
+    def __init__(self, tpm_manager: TPMManager):
+        self.fp_device = fprint.Device() if fprint.device_available() else None
+        self.enrolled_prints = self._load_templates('fingerprint')
+        self.enrolled_faces = self._load_templates('face')
+        self.tpm = tpm_manager
+
+    def _load_templates(self, type: str) -> list:
+        """Load encrypted templates from disk"""
+        templates = []
+        for file in os.listdir(self.TEMPLATE_DIR):
+            if file.startswith(type):
+                with open(os.path.join(self.TEMPLATE_DIR, file), 'rb') as f:
+                    sealed_data = f.read()
+                unsealed = self.tpm.unseal_mode_secret(sealed_data)
+                templates.append(unsealed)
+        return templates
+
+    def enroll_fingerprint(self) -> bool:
+        """Enroll new fingerprint"""
+        print("Place finger on reader (3 scans required)...")
+        samples = [self.fp_device.capture() for _ in range(3)]
+        template = fprint.create_template(samples)
+        sealed = self.tpm.seal_mode_secret(self.daemon.mode, template)
+        hash_id = hashlib.sha256(template).hexdigest()[:8]
+        with open(os.path.join(self.TEMPLATE_DIR, f'fingerprint_{hash_id}.enc'), 'wb') as f:
+            f.write(sealed)
+        self.enrolled_prints.append(template)
+        return True
+
+    def enroll_face(self) -> bool:
+        """Enroll new face"""
+        camera = cv2.VideoCapture(0)
+        samples = []
+        for _ in range(5):
+            ret, frame = camera.read()
+            if ret:
+                encodings = face_recognition.face_encodings(frame)
+                if encodings:
+                    samples.append(encodings[0])
+        camera.release()
+        if len(samples) < 3:
+            return False
+        template = face_recognition.average_encodings(samples)
+        sealed = self.tpm.seal_mode_secret(self.daemon.mode, template.tobytes())
+        hash_id = hashlib.sha256(template.tobytes()).hexdigest()[:8]
+        with open(os.path.join(self.TEMPLATE_DIR, f'face_{hash_id}.enc'), 'wb') as f:
+            f.write(sealed)
+        self.enrolled_faces.append(template)
+        return True
 
     def verify_fingerprint(self) -> bool:
-        """Verify user fingerprint"""
+        """Verify fingerprint with liveness"""
         print("Place finger on reader...")
-        sample = self.fp_device.enroll_finger()
-
+        sample = self.fp_device.capture(with_liveness=True)
         for enrolled in self.enrolled_prints:
             if fprint.compare(sample, enrolled) > 0.7:
                 return True
         return False
 
     def verify_face(self) -> bool:
-        """Verify user face with webcam"""
-        import cv2
-
-        # Capture frame
+        """Verify face with basic liveness (blink detection)"""
         camera = cv2.VideoCapture(0)
-        ret, frame = camera.read()
+        print("Look at camera and blink...")
+        frames = [camera.read()[1] for _ in range(10)]
         camera.release()
-
-        # Detect face
-        face_locations = face_recognition.face_locations(frame)
-        if not face_locations:
+        blink_detected = self._detect_blink(frames)
+        if not blink_detected:
             return False
-
-        # Compare with enrolled faces
-        face_encoding = face_recognition.face_encodings(frame, face_locations)[0]
-        matches = face_recognition.compare_faces(
-            self.enrolled_faces,
-            face_encoding
-        )
+        encodings = [face_recognition.face_encodings(frame)
+                     for frame in frames if face_recognition.face_locations(frame)]
+        if not encodings:
+            return False
+        avg_encoding = face_recognition.average_encodings([e[0] for e in encodings])
+        matches = face_recognition.compare_faces(self.enrolled_faces, avg_encoding, tolerance=0.4)
         return any(matches)
 
-# Integration into CeremonyManager
+    def _detect_blink(self, frames: list) -> bool:
+        """Simple blink detection via eye aspect ratio changes"""
+        # Implement EAR (Eye Aspect Ratio) threshold logic using dlib landmarks
+        return True  # Placeholder; expand with dlib landmarks
+
+# Integration into EnhancedCeremonyManager
 class EnhancedCeremonyManager(CeremonyManager):
     def __init__(self, daemon, biometric_verifier: BiometricVerifier):
         super().__init__(daemon)
         self.biometric = biometric_verifier
 
-    def _verify_human_presence(self, confirmation_callback=None) -> bool:
-        """Use biometric instead of keyboard"""
-        print("Biometric verification required...")
-        return self.biometric.verify_fingerprint()
+    def perform_ceremony(self, action: str) -> bool:
+        """Full ceremony with biometric"""
+        if not self._cooldown_check():
+            return False
+        print(f"Ceremony for {action}: Biometric required.")
+        verified = self.biometric.verify_fingerprint() or self.biometric.verify_face()
+        if verified:
+            self.daemon.event_logger.log_event(EventType.OVERRIDE, f"Biometric ceremony success for {action}")
+            return True
+        self.daemon.event_logger.log_event(EventType.OVERRIDE, f"Biometric ceremony failed for {action}")
+        return False
 ```
 
-**Enrollment Process**:
-```bash
-# New CLI command
-boundaryctl enroll-fingerprint
-boundaryctl enroll-face
-boundaryctl list-enrolled
+**Configuration Options** (in `boundary.conf`):
+```ini
+[biometrics]
+enabled = true
+preferred_method = fingerprint  # or 'face' or 'any'
+match_threshold_fingerprint = 0.7
+match_threshold_face = 0.4
+liveness_required = true
+```
+
+**Fallback**: If biometrics fail or hardware absent, revert to keyboard with warning log.
+
+**Testing & Validation**:
+- Unit Tests: Mock hardware for enrollment/verification
+- Integration Tests: Simulate ceremonies in VM with virtual devices
+- Security Tests: Attempt spoofing (e.g., photos for face); ensure liveness blocks
+- Usability Tests: Measure ceremony time (<10s ideal)
+
+**Benefits**:
+- Stronger against automation attacks
+- Seamless for daily use with hardware
+- Auditable: All biometric events immutable in Event Logger
+
+**Risks & Mitigations**:
+- Privacy: Templates stored encrypted; never shared
+- Hardware Dependency: Configurable fallback
+- False Negatives: Tunable thresholds; multi-method OR logic
+
+---
+
+### Plan 7: LLM-Powered Code Vulnerability Advisor (Priority: HIGH - Enhancement)
+
+**Goal**: Deliver a privacy-first, advisory-only security intelligence layer that uses trusted, local-first LLM security models to scan code for potential vulnerabilities.
+
+**Duration**: 6-8 weeks
+
+**Dependencies**:
+- Ollama or local inference runtime
+- Fine-tuned security models (e.g., Llama 3, CodeLlama)
+
+**Design Principles**:
+- **Advisory Only** – No automatic actions or blocking; purely informational
+- **Human-in-the-Loop** – All findings require explicit user review
+- **Local-First Execution** – Scans run on-device using trusted local models
+- **Privacy-Preserving** – No code leaves the device unless user explicitly enables escalation under a Learning Contract
+- **Optional & Consent-Driven** – Activated only via plain-language Learning Contract
+- **Educational Focus** – Every flag includes suggested readings and explanations
+
+**Integration Points**:
+- **Boundary Mode Compatibility**: Available in all modes (OPEN → COLDROOM). In AIRGAP/COLDROOM, uses strictly offline models
+- **Learning Contracts**: Requires an explicit contract (e.g., "Allow Boundary Daemon to scan imported code for security issues using local models")
+- **Memory Vault**: Scan reports can be stored as low-classification memories (Class 0-1) if desired
+- **IntentLog**: All scan events and user decisions logged as prose commits for full auditability
+- **Tripwire System**: No direct triggering—purely advisory
+
+**Core Features**:
+
+#### 1. Code Intake Scanning
+- Triggered when importing code (e.g., GitHub clone, local directory import, PR review)
+- Optional toggle: "Enable security scan on import" (default: off)
+- Scans entire repo or specific files/commits using local LLM
+
+#### 2. Continuous Monitoring (Optional)
+- On LLM model update (e.g., new fine-tune incorporating recent CVEs), optionally re-scan monitored repositories
+- Background, low-priority process—never interferes with primary workflows
+
+#### 3. Decentralized Node Auditing (Optional)
+- In collaborative or networked deployments, participating nodes can opt-in to audit incoming code/pull requests
+- Each node runs independent local scan and shares only prose summary reports via IntentLog-style entries
+- No raw code shared between nodes—preserves privacy
+- Consensus emerges from multiple independent advisories (e.g., "3 nodes flagged potential injection in utils.py")
+
+#### 4. Advisory Output Format
+Every finding presented in plain language:
+```text
+Security Advisory – Potential Issue Detected
+
+File: src/api/auth.py (line 42-55)
+Issue: Potential SQL injection risk in query construction
+Confidence: High
+Explanation: The code builds SQL queries using string concatenation with user input, which could allow malicious injection.
+
+Suggested Reading:
+• OWASP SQL Injection Prevention Cheat Sheet
+• CVE-2024-XXXX example (similar pattern)
+
+Recommended Action: Consider using parameterized queries or an ORM.
+
+[ ] Mark as reviewed      [ ] Add to watch list      [Isolate Module] (quarantine in Memory Vault)
+```
+
+#### 5. User Interaction Options
+- **Review & Dismiss**: Mark finding as reviewed (logged)
+- **Watch List**: Flag file for priority re-scan on next model update
+- **Optional Panic/Isolate Button**: One-click to temporarily isolate the module/file in Memory Vault (prevents recall/use until cleared)
+- **Override/Ignore**: Explicitly ignore with reason (logged immutably)
+
+**Implementation**:
+
+##### Phase 1: Core Advisor Engine (3-4 weeks)
+```python
+# New module: daemon/security/code_advisor.py
+
+class CodeVulnerabilityAdvisor:
+    """Advisory-only code scanner using local LLMs"""
+
+    def __init__(self, daemon):
+        self.daemon = daemon
+        self.model = "llama3.1:8b-instruct-q6_K"  # Local, secure model
+        self.client = ollama.Client()
+
+    def scan_repository(self, repo_path: str, commit: str = None) -> List[Advisory]:
+        """Scan repo and return plain-language advisories"""
+        advisories = []
+        for file_path in self._relevant_files(repo_path):
+            content = self._read_file(file_path)
+            prompt = self._build_security_prompt(content, file_path)
+            response = self.client.generate(model=self.model, prompt=prompt)
+            advisories.extend(self._parse_advisories(response['response']))
+        return advisories
+
+    def rescan_on_model_update(self):
+        """Hook called when local model is updated"""
+        for repo in self.daemon.config.monitored_repos:
+            new_advisories = self.scan_repository(repo.path)
+            self.daemon.event_logger.log_event(
+                EventType.SECURITY_SCAN,
+                f"Re-scan triggered by model update: {len(new_advisories)} new advisories"
+            )
+```
+
+##### Phase 2: UI & Integration (2-3 weeks)
+- Add to boundaryctl: `scan-repo <path>`, `list-advisories`, `isolate <advisory_id>`
+- Dashboard integration: Active advisories panel
+- IntentLog entries for all scans and decisions
+
+##### Phase 3: Decentralized Auditing (1-2 weeks, optional)
+- Node-to-node prose report sharing via secure channel
+- Aggregated advisory view in collaborative mode
+
+**Deliverables**:
+- `daemon/security/code_advisor.py`
+- Updated CLI commands
+- Plain-language Learning Contract templates
+- Documentation in `PROACTIVE_SECURITY.md`
+
+---
+
+## PII Detection & Redaction Pipeline
+
+### Purpose
+
+Provide comprehensive detection and protection for Personally Identifiable Information (PII), ensuring no sensitive data leaks outward without explicit consent.
+
+### Core Engine
+
+Built on **Microsoft Presidio** (open-source, local) as the primary engine:
+- Supports 180+ entity types: SSN, credit cards, addresses, phone numbers, email, driver's license, passport, bank accounts, etc.
+- Pluggable enhancers: spaCy NER, regex patterns, context-aware scoring, custom recognizers
+- Configurable thresholds per entity type (e.g., higher confidence required for SSN)
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| **Detect** | Scan all inputs/outputs/memory candidates for PII |
+| **Redact/Mask** | Replace with `[REDACTED]`, tokens (e.g., `<SSN_1>`), or hashes |
+| **Block** | Halt operation if high-risk PII detected and not allowed |
+| **Alert** | Notify user in plain language: "Detected possible SSN—blocked to protect you" |
+
+### Data Flow Enforcement Points
+
+Mandatory checks at key hooks:
+
+| Hook | Description |
+|------|-------------|
+| **Inbound (User → System)** | Scan prompts/interactions; redact/block risky PII before processing |
+| **Internal (LLM Processing)** | Ensure no unredacted PII enters local models or memory |
+| **Outbound (Escalation/Export)** | Strict redaction before any cloud send; require user confirmation + Learning Contract |
+| **Memory Operations** | Validate against contracts; reject writes with forbidden PII |
+| **Recall/Output** | Re-scan and redact before presenting to user |
+
+### Implementation
+
+```python
+# New module: daemon/pii/detector.py
+
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+class PIIDetector:
+    """PII Detection and Redaction using Presidio"""
+
+    def __init__(self, daemon):
+        self.daemon = daemon
+        self.analyzer = AnalyzerEngine()
+        self.anonymizer = AnonymizerEngine()
+        self.entity_thresholds = {
+            'US_SSN': 0.85,
+            'CREDIT_CARD': 0.80,
+            'EMAIL_ADDRESS': 0.70,
+            'PHONE_NUMBER': 0.75,
+        }
+
+    def detect(self, text: str, entities: list = None) -> list:
+        """Detect PII in text"""
+        results = self.analyzer.analyze(
+            text=text,
+            entities=entities,
+            language='en'
+        )
+        # Filter by threshold
+        return [r for r in results if r.score >= self.entity_thresholds.get(r.entity_type, 0.5)]
+
+    def redact(self, text: str, detected: list = None) -> str:
+        """Redact detected PII from text"""
+        if detected is None:
+            detected = self.detect(text)
+        return self.anonymizer.anonymize(text=text, analyzer_results=detected)
+
+    def block_if_sensitive(self, text: str) -> tuple[bool, str]:
+        """Block operation if high-risk PII detected"""
+        detected = self.detect(text)
+        high_risk = ['US_SSN', 'CREDIT_CARD', 'US_BANK_NUMBER', 'US_PASSPORT']
+        for result in detected:
+            if result.entity_type in high_risk and result.score > 0.8:
+                return (True, f"Blocked: {result.entity_type} detected with {result.score:.0%} confidence")
+        return (False, None)
+```
+
+---
+
+## Proactive Exposure Monitoring
+
+### Purpose
+
+Optional module that monitors for external exposure of user-defined protected assets (SSN, home address, VIN, phone, email) across dark web, breach databases, and public listings.
+
+### Activation
+
+Activated via plain-language contract:
+- "Monitor my SSN for dark web exposure?"
+- "Alert me if my email appears in a data breach"
+
+### Scan Sources
+
+| Source | Method |
+|--------|--------|
+| **Dark Web/Breach Checks** | Local integration with HaveIBeenPwned offline DB or anonymized API |
+| **Web Alerts** | Google Alerts-style monitoring for asset + "for sale"/"exposed" |
+| **Fraud Listing Detection** | Detect unauthorized property/car ads with user assets |
+
+### Behavior
+
+- **Alerts only** — No automatic actions beyond notification
+- **User-defined rules** — Users specify what to monitor and alert thresholds
+- **Privacy-preserving** — All scans run locally or use anonymized queries
+
+### Implementation
+
+```python
+# New module: daemon/monitoring/exposure_monitor.py
+
+class ExposureMonitor:
+    """Monitors for external exposure of protected assets"""
+
+    def __init__(self, daemon):
+        self.daemon = daemon
+        self.protected_assets = []  # User-defined
+        self.hibp_db_path = '/var/lib/boundary-daemon/hibp/'
+
+    def add_protected_asset(self, asset_type: str, value: str, label: str):
+        """Add an asset to monitor"""
+        self.protected_assets.append({
+            'type': asset_type,  # 'ssn', 'email', 'phone', 'address', 'vin'
+            'value_hash': hashlib.sha256(value.encode()).hexdigest(),
+            'label': label
+        })
+
+    def check_breaches(self, email: str) -> list:
+        """Check email against local HIBP database"""
+        # Anonymized k-anonymity check
+        sha1_hash = hashlib.sha1(email.encode()).hexdigest().upper()
+        prefix = sha1_hash[:5]
+        # Query local or API with prefix only
+        return self._query_hibp(prefix, sha1_hash)
+
+    def scan_all_assets(self):
+        """Periodic scan of all protected assets"""
+        alerts = []
+        for asset in self.protected_assets:
+            if asset['type'] == 'email':
+                breaches = self.check_breaches(asset['value'])
+                if breaches:
+                    alerts.append({
+                        'asset': asset['label'],
+                        'type': 'breach',
+                        'details': breaches
+                    })
+        return alerts
+
+    def alert_user(self, alert: dict):
+        """Send plain-language alert to user"""
+        self.daemon.event_logger.log_event(
+            EventType.EXPOSURE_ALERT,
+            f"Alert: {alert['asset']} found in {alert['type']}",
+            metadata=alert
+        )
 ```
 
 ---
@@ -1258,6 +1649,11 @@ python-fprint        # Fingerprint reader
 face-recognition     # Face recognition
 opencv-python        # Camera access
 python-etcd3         # Distributed deployment
+ollama               # Local LLM inference for code vulnerability advisor
+presidio-analyzer    # PII detection engine
+presidio-anonymizer  # PII redaction engine
+spacy                # NER for enhanced PII detection
+dlib                 # Face landmark detection for liveness checks
 ```
 
 ---
@@ -1277,6 +1673,10 @@ python-etcd3         # Distributed deployment
 | DAEMON_START | Daemon started | initial_mode |
 | DAEMON_STOP | Daemon stopped | - |
 | HEALTH_CHECK | Health check result | healthy, error |
+| SECURITY_SCAN | Code vulnerability scan performed | repo_path, advisory_count, model_version |
+| BIOMETRIC_ATTEMPT | Biometric verification attempt | method, score, success |
+| PII_DETECTED | PII detected in content | entity_type, action, confidence |
+| EXPOSURE_ALERT | External exposure detected | asset_label, exposure_type, details |
 
 ### B. Memory Class to Mode Mapping
 
@@ -1322,6 +1722,7 @@ class ViolationType(Enum):
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2025-12-19 | Initial comprehensive specification |
+| 1.1 | 2025-12-21 | Added Plan 7 (LLM-Powered Code Vulnerability Advisor), expanded Plan 6 (Biometric Authentication) with detailed implementation, added PII Detection & Redaction Pipeline, added Proactive Exposure Monitoring, added new event types |
 
 ---
 
