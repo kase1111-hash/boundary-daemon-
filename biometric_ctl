@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""
+biometric_ctl - Boundary Daemon Biometric Control CLI
+Command-line interface for managing biometric authentication.
+"""
+
+import sys
+import argparse
+import datetime
+from pathlib import Path
+
+# Add parent directory to path
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from daemon.auth.biometric_verifier import BiometricVerifier, BiometricType
+
+
+def cmd_enroll_fingerprint(verifier: BiometricVerifier, args):
+    """Enroll a new fingerprint"""
+    can_enroll, error = verifier.can_enroll_fingerprint()
+    if not can_enroll:
+        print(f"\n✗ {error}\n")
+        return 1
+
+    num_samples = args.samples if hasattr(args, 'samples') and args.samples else 3
+
+    success, error = verifier.enroll_fingerprint(num_samples=num_samples)
+
+    if not success:
+        print(f"\n✗ Enrollment failed: {error}\n")
+        return 1
+
+    return 0
+
+
+def cmd_enroll_face(verifier: BiometricVerifier, args):
+    """Enroll a new face"""
+    can_enroll, error = verifier.can_enroll_face()
+    if not can_enroll:
+        print(f"\n✗ {error}\n")
+        return 1
+
+    num_samples = args.samples if hasattr(args, 'samples') and args.samples else 5
+
+    success, error = verifier.enroll_face(num_samples=num_samples)
+
+    if not success:
+        print(f"\n✗ Enrollment failed: {error}\n")
+        return 1
+
+    return 0
+
+
+def cmd_verify_fingerprint(verifier: BiometricVerifier, args):
+    """Verify fingerprint"""
+    print("\n" + "=" * 70)
+    print("FINGERPRINT VERIFICATION")
+    print("=" * 70 + "\n")
+
+    result = verifier.verify_fingerprint()
+
+    print("\nResult:")
+    print(f"  Success: {result.success}")
+    print(f"  Match Score: {result.match_score:.2f}")
+    print(f"  Liveness: {result.liveness_passed}")
+
+    if result.error_message:
+        print(f"  Error: {result.error_message}")
+
+    print("\n" + "=" * 70 + "\n")
+
+    return 0 if result.success else 1
+
+
+def cmd_verify_face(verifier: BiometricVerifier, args):
+    """Verify face"""
+    print("\n" + "=" * 70)
+    print("FACIAL RECOGNITION VERIFICATION")
+    print("=" * 70 + "\n")
+
+    liveness_required = not args.no_liveness if hasattr(args, 'no_liveness') else True
+    result = verifier.verify_face(liveness_required=liveness_required)
+
+    print("\nResult:")
+    print(f"  Success: {result.success}")
+    print(f"  Match Score: {result.match_score:.2f}")
+    print(f"  Liveness: {result.liveness_passed}")
+
+    if result.error_message:
+        print(f"  Error: {result.error_message}")
+
+    print("\n" + "=" * 70 + "\n")
+
+    return 0 if result.success else 1
+
+
+def cmd_list_enrolled(verifier: BiometricVerifier, args):
+    """List enrolled biometric templates"""
+    templates = verifier.list_enrolled()
+
+    if not templates:
+        print("\nNo enrolled biometric templates found.\n")
+        return 0
+
+    print("\n" + "=" * 70)
+    print("ENROLLED BIOMETRIC TEMPLATES")
+    print("=" * 70 + "\n")
+
+    for template in templates:
+        created = datetime.datetime.fromtimestamp(float(template.created_at))
+        last_used = None
+        if template.last_used:
+            last_used = datetime.datetime.fromtimestamp(float(template.last_used))
+
+        print(f"ID: {template.template_id}")
+        print(f"  Type: {template.biometric_type.value}")
+        print(f"  Created: {created.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  Last Used: {last_used.strftime('%Y-%m-%d %H:%M:%S') if last_used else 'Never'}")
+        print(f"  Use Count: {template.use_count}")
+        print()
+
+    print(f"Total: {len(templates)} template(s)")
+    print("=" * 70 + "\n")
+
+    return 0
+
+
+def cmd_delete_biometric(verifier: BiometricVerifier, args):
+    """Delete a biometric template"""
+    template_id = args.template_id
+
+    # Check if template exists
+    templates = verifier.list_enrolled()
+    template = None
+    for t in templates:
+        if t.template_id == template_id:
+            template = t
+            break
+
+    if not template:
+        print(f"\n✗ Template not found: {template_id}\n")
+        return 1
+
+    # Confirm deletion
+    print(f"\nWarning: You are about to delete the following biometric template:")
+    print(f"  ID: {template.template_id}")
+    print(f"  Type: {template.biometric_type.value}")
+    print()
+
+    if not args.force:
+        confirmation = input("Type 'DELETE' to confirm: ")
+        if confirmation != "DELETE":
+            print("\n✗ Deletion cancelled\n")
+            return 1
+
+    # Delete
+    success = verifier.delete_template(template_id)
+
+    if success:
+        print(f"\n✓ Template deleted successfully\n")
+        return 0
+    else:
+        print(f"\n✗ Failed to delete template\n")
+        return 1
+
+
+def cmd_capabilities(verifier: BiometricVerifier, args):
+    """Show biometric capabilities"""
+    caps = verifier.get_capabilities()
+
+    print("\n" + "=" * 70)
+    print("BIOMETRIC CAPABILITIES")
+    print("=" * 70 + "\n")
+
+    print(f"Fingerprint Reader: {'Available' if caps['fingerprint_available'] else 'Not Available'}")
+    print(f"  Enrolled: {caps['fingerprint_enrolled']}")
+
+    print(f"\nCamera/Face Recognition: {'Available' if caps['face_available'] else 'Not Available'}")
+    print(f"  Enrolled: {caps['face_enrolled']}")
+
+    print(f"\nTotal Enrolled: {caps['enrolled_count']}")
+
+    print("\n" + "=" * 70 + "\n")
+
+    return 0
+
+
+def cmd_test_ceremony(verifier: BiometricVerifier, args):
+    """Test a complete biometric ceremony"""
+    from daemon.auth.enhanced_ceremony import EnhancedCeremonyManager, BiometricCeremonyConfig
+
+    # Create a mock daemon
+    class MockDaemon:
+        class MockEventLogger:
+            def log_event(self, event_type, details, metadata=None):
+                print(f"  [Event Logged] {event_type.value}: {details}")
+
+        event_logger = MockEventLogger()
+
+    # Create ceremony manager
+    daemon = MockDaemon()
+    config = BiometricCeremonyConfig()
+    config.enabled = True
+    config.preferred_method = args.method if hasattr(args, 'method') and args.method else 'any'
+
+    ceremony = EnhancedCeremonyManager(
+        daemon=daemon,
+        biometric_verifier=verifier,
+        config=config,
+        cooldown_seconds=5  # Short cooldown for testing
+    )
+
+    # Perform test ceremony
+    print("\n" + "=" * 70)
+    print("TESTING BIOMETRIC CEREMONY")
+    print("=" * 70)
+
+    result = ceremony.perform_quick_ceremony("Biometric test")
+
+    if result:
+        print("\n✓ Ceremony completed successfully\n")
+        return 0
+    else:
+        print("\n✗ Ceremony failed\n")
+        return 1
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='Boundary Daemon Biometric Control CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Enroll biometrics
+  biometric_ctl enroll-fingerprint          # Enroll fingerprint (3 scans)
+  biometric_ctl enroll-face                 # Enroll face (5 frames)
+
+  # Verify biometrics
+  biometric_ctl verify-fingerprint          # Verify with fingerprint
+  biometric_ctl verify-face                 # Verify with face
+
+  # Manage templates
+  biometric_ctl list                        # List enrolled templates
+  biometric_ctl delete <template_id>        # Delete a template
+  biometric_ctl capabilities                # Show hardware capabilities
+
+  # Testing
+  biometric_ctl test-ceremony               # Test full ceremony
+"""
+    )
+
+    parser.add_argument('--template-dir', type=str,
+                       default='/var/lib/boundary-daemon/biometrics/',
+                       help='Directory for biometric templates')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+
+    # enroll-fingerprint
+    parser_enroll_fp = subparsers.add_parser('enroll-fingerprint',
+                                             help='Enroll a new fingerprint')
+    parser_enroll_fp.add_argument('--samples', type=int, default=3,
+                                 help='Number of scans to capture')
+    parser_enroll_fp.set_defaults(func=cmd_enroll_fingerprint)
+
+    # enroll-face
+    parser_enroll_face = subparsers.add_parser('enroll-face',
+                                               help='Enroll a new face')
+    parser_enroll_face.add_argument('--samples', type=int, default=5,
+                                   help='Number of frames to capture')
+    parser_enroll_face.set_defaults(func=cmd_enroll_face)
+
+    # verify-fingerprint
+    parser_verify_fp = subparsers.add_parser('verify-fingerprint',
+                                             help='Verify fingerprint')
+    parser_verify_fp.set_defaults(func=cmd_verify_fingerprint)
+
+    # verify-face
+    parser_verify_face = subparsers.add_parser('verify-face',
+                                               help='Verify face')
+    parser_verify_face.add_argument('--no-liveness', action='store_true',
+                                   help='Skip liveness detection')
+    parser_verify_face.set_defaults(func=cmd_verify_face)
+
+    # list
+    parser_list = subparsers.add_parser('list',
+                                       help='List enrolled templates')
+    parser_list.set_defaults(func=cmd_list_enrolled)
+
+    # delete
+    parser_delete = subparsers.add_parser('delete',
+                                         help='Delete a biometric template')
+    parser_delete.add_argument('template_id', type=str,
+                              help='Template ID to delete')
+    parser_delete.add_argument('--force', action='store_true',
+                              help='Skip confirmation prompt')
+    parser_delete.set_defaults(func=cmd_delete_biometric)
+
+    # capabilities
+    parser_caps = subparsers.add_parser('capabilities',
+                                       help='Show biometric capabilities')
+    parser_caps.set_defaults(func=cmd_capabilities)
+
+    # test-ceremony
+    parser_test = subparsers.add_parser('test-ceremony',
+                                       help='Test biometric ceremony')
+    parser_test.add_argument('--method', type=str, choices=['fingerprint', 'face', 'any'],
+                           default='any', help='Preferred verification method')
+    parser_test.set_defaults(func=cmd_test_ceremony)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    # Create biometric verifier
+    try:
+        verifier = BiometricVerifier(template_dir=args.template_dir)
+    except Exception as e:
+        print(f"\nError initializing biometric verifier: {e}\n")
+        return 1
+
+    # Execute command
+    try:
+        return args.func(verifier, args) or 0
+    except KeyboardInterrupt:
+        print("\n\nOperation cancelled by user\n")
+        return 1
+    except Exception as e:
+        print(f"\nError: {e}\n")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
