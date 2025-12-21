@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+"""
+security_scan - Boundary Daemon Security Scanner CLI
+Command-line interface for code vulnerability scanning using local LLMs.
+"""
+
+import sys
+import argparse
+import json
+from pathlib import Path
+
+# Add parent directory to path
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from daemon.security.code_advisor import (
+    CodeVulnerabilityAdvisor,
+    SecurityAdvisory,
+    AdvisorySeverity,
+    AdvisoryStatus
+)
+
+
+def format_advisory(advisory: SecurityAdvisory, detailed: bool = False):
+    """Format advisory for display"""
+    severity_colors = {
+        AdvisorySeverity.CRITICAL: '\033[91m',  # Red
+        AdvisorySeverity.HIGH: '\033[93m',      # Yellow
+        AdvisorySeverity.MEDIUM: '\033[94m',    # Blue
+        AdvisorySeverity.LOW: '\033[92m',       # Green
+        AdvisorySeverity.INFO: '\033[90m'       # Gray
+    }
+    reset_color = '\033[0m'
+
+    severity_str = advisory.severity.value.upper()
+    color = severity_colors.get(advisory.severity, '')
+
+    print(f"\n{color}{'='*70}{reset_color}")
+    print(f"{color}Security Advisory – {severity_str}{reset_color}")
+    print(f"{color}{'='*70}{reset_color}\n")
+
+    print(f"File: {advisory.file_path} (lines {advisory.line_start}-{advisory.line_end})")
+    print(f"Issue: {advisory.issue_type}")
+    print(f"Severity: {color}{severity_str}{reset_color}")
+    print(f"Confidence: {advisory.confidence:.0%}")
+    print(f"Status: {advisory.status.value}")
+
+    if detailed:
+        print(f"\nExplanation:")
+        print(f"  {advisory.explanation}")
+
+        if advisory.recommended_action:
+            print(f"\nRecommended Action:")
+            print(f"  {advisory.recommended_action}")
+
+        if advisory.suggested_readings:
+            print(f"\nSuggested Reading:")
+            for reading in advisory.suggested_readings:
+                print(f"  • {reading}")
+
+        if advisory.code_snippet:
+            print(f"\nCode Snippet:")
+            print(f"  {advisory.code_snippet}")
+
+        if advisory.review_note:
+            print(f"\nReview Note:")
+            print(f"  {advisory.review_note}")
+
+    print(f"\nAdvisory ID: {advisory.advisory_id}")
+    print(f"{color}{'='*70}{reset_color}")
+
+
+def cmd_scan_repo(advisor: CodeVulnerabilityAdvisor, args):
+    """Scan a repository for vulnerabilities"""
+    repo_path = args.repo_path
+
+    if not Path(repo_path).exists():
+        print(f"\n✗ Error: Repository not found: {repo_path}\n")
+        return 1
+
+    # Perform scan
+    result = advisor.scan_repository(repo_path, commit_hash=args.commit)
+
+    # Display summary
+    print("\nAdvisories by Severity:")
+    severity_counts = {}
+    for advisory in result.advisories:
+        severity_counts[advisory.severity] = severity_counts.get(advisory.severity, 0) + 1
+
+    for severity in AdvisorySeverity:
+        count = severity_counts.get(severity, 0)
+        if count > 0:
+            print(f"  {severity.value.upper()}: {count}")
+
+    print(f"\nScan ID: {result.scan_id}")
+    print(f"Results saved to: {advisor.scans_dir / (result.scan_id + '.json')}")
+
+    # Show advisories if requested
+    if args.show_advisories:
+        for advisory in result.advisories:
+            format_advisory(advisory, detailed=args.detailed)
+
+    return 0
+
+
+def cmd_scan_file(advisor: CodeVulnerabilityAdvisor, args):
+    """Scan a single file for vulnerabilities"""
+    file_path = args.file_path
+
+    if not Path(file_path).exists():
+        print(f"\n✗ Error: File not found: {file_path}\n")
+        return 1
+
+    # Perform scan
+    advisories = advisor.scan_file(file_path)
+
+    if not advisories:
+        print(f"\n✓ No vulnerabilities detected in {file_path}\n")
+        return 0
+
+    # Display advisories
+    print(f"\nFound {len(advisories)} potential issue(s):\n")
+    for advisory in advisories:
+        format_advisory(advisory, detailed=True)
+
+    return 0
+
+
+def cmd_list_advisories(advisor: CodeVulnerabilityAdvisor, args):
+    """List all advisories"""
+    status_filter = None
+    if args.status:
+        try:
+            status_filter = AdvisoryStatus(args.status.lower())
+        except ValueError:
+            print(f"✗ Invalid status: {args.status}")
+            return 1
+
+    advisories = advisor.load_advisories(status_filter=status_filter)
+
+    if not advisories:
+        status_str = f" with status '{args.status}'" if args.status else ""
+        print(f"\nNo advisories found{status_str}.\n")
+        return 0
+
+    print(f"\n{'='*70}")
+    print(f"SECURITY ADVISORIES")
+    print(f"{'='*70}\n")
+
+    for advisory in advisories:
+        if args.detailed:
+            format_advisory(advisory, detailed=True)
+        else:
+            severity_char = {
+                AdvisorySeverity.CRITICAL: '🔴',
+                AdvisorySeverity.HIGH: '🟠',
+                AdvisorySeverity.MEDIUM: '🟡',
+                AdvisorySeverity.LOW: '🟢',
+                AdvisorySeverity.INFO: '⚪'
+            }.get(advisory.severity, '⚪')
+
+            status_char = {
+                AdvisoryStatus.PENDING: '⏳',
+                AdvisoryStatus.REVIEWED: '✅',
+                AdvisoryStatus.WATCHING: '👁️',
+                AdvisoryStatus.IGNORED: '🚫',
+                AdvisoryStatus.ISOLATED: '🔒'
+            }.get(advisory.status, '?')
+
+            print(f"{severity_char} {status_char} [{advisory.severity.value.upper():8s}] {advisory.file_path}:{advisory.line_start}")
+            print(f"    {advisory.issue_type} (Confidence: {advisory.confidence:.0%})")
+            print(f"    ID: {advisory.advisory_id}")
+            print()
+
+    print(f"Total: {len(advisories)} advisory(ies)")
+    print(f"{'='*70}\n")
+
+    return 0
+
+
+def cmd_show_advisory(advisor: CodeVulnerabilityAdvisor, args):
+    """Show details of a specific advisory"""
+    advisory_id = args.advisory_id
+
+    # Load advisory
+    advisory_file = advisor.advisories_dir / f'{advisory_id}.json'
+    if not advisory_file.exists():
+        print(f"\n✗ Advisory not found: {advisory_id}\n")
+        return 1
+
+    with open(advisory_file, 'r') as f:
+        data = json.load(f)
+        advisory = SecurityAdvisory.from_dict(data)
+
+    # Display
+    format_advisory(advisory, detailed=True)
+
+    return 0
+
+
+def cmd_update_status(advisor: CodeVulnerabilityAdvisor, args):
+    """Update advisory status"""
+    advisory_id = args.advisory_id
+
+    try:
+        new_status = AdvisoryStatus(args.status.lower())
+    except ValueError:
+        print(f"\n✗ Invalid status: {args.status}")
+        print(f"Valid statuses: {', '.join(s.value for s in AdvisoryStatus)}\n")
+        return 1
+
+    success = advisor.update_advisory_status(
+        advisory_id,
+        new_status,
+        review_note=args.note
+    )
+
+    if success:
+        print(f"\n✓ Updated advisory {advisory_id} to status: {new_status.value}\n")
+        return 0
+    else:
+        print(f"\n✗ Failed to update advisory: {advisory_id}\n")
+        return 1
+
+
+def cmd_stats(advisor: CodeVulnerabilityAdvisor, args):
+    """Show advisory statistics"""
+    stats = advisor.get_summary_stats()
+
+    print(f"\n{'='*70}")
+    print(f"SECURITY ADVISORY STATISTICS")
+    print(f"{'='*70}\n")
+
+    print(f"Total Advisories: {stats['total']}")
+
+    print(f"\nBy Severity:")
+    for severity in AdvisorySeverity:
+        count = stats['by_severity'][severity.value]
+        if count > 0:
+            print(f"  {severity.value.upper():10s}: {count}")
+
+    print(f"\nBy Status:")
+    for status in AdvisoryStatus:
+        count = stats['by_status'][status.value]
+        if count > 0:
+            print(f"  {status.value.capitalize():10s}: {count}")
+
+    print(f"\n{'='*70}\n")
+
+    return 0
+
+
+def cmd_check(advisor: CodeVulnerabilityAdvisor, args):
+    """Check if Ollama is available"""
+    print(f"\n{'='*70}")
+    print(f"SECURITY SCANNER STATUS")
+    print(f"{'='*70}\n")
+
+    print(f"Ollama Available: {'Yes' if advisor.is_available() else 'No'}")
+    print(f"Model: {advisor.model}")
+    print(f"Storage: {advisor.storage_dir}")
+
+    if not advisor.is_available():
+        print(f"\n⚠ Ollama is not available.")
+        print(f"\nTo install Ollama:")
+        print(f"  curl https://ollama.ai/install.sh | sh")
+        print(f"\nTo pull the security model:")
+        print(f"  ollama pull {advisor.model}")
+
+    print(f"\n{'='*70}\n")
+
+    return 0 if advisor.is_available() else 1
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='Boundary Daemon Security Scanner CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Scan repository or file
+  security_scan scan-repo /path/to/repo        # Scan entire repository
+  security_scan scan-file /path/to/file.py     # Scan single file
+
+  # Manage advisories
+  security_scan list                            # List all advisories
+  security_scan list --status pending           # List pending advisories
+  security_scan show <advisory_id>              # Show advisory details
+  security_scan update <advisory_id> reviewed   # Mark as reviewed
+  security_scan stats                           # Show statistics
+
+  # System
+  security_scan check                           # Check Ollama status
+"""
+    )
+
+    parser.add_argument('--model', type=str,
+                       help='Ollama model to use for scanning')
+    parser.add_argument('--storage-dir', type=str,
+                       help='Directory for storing scan results')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+
+    # scan-repo
+    parser_scan_repo = subparsers.add_parser('scan-repo',
+                                             help='Scan repository for vulnerabilities')
+    parser_scan_repo.add_argument('repo_path', type=str,
+                                 help='Path to repository')
+    parser_scan_repo.add_argument('--commit', type=str,
+                                 help='Git commit hash (for tracking)')
+    parser_scan_repo.add_argument('--show-advisories', action='store_true',
+                                 help='Display advisories after scan')
+    parser_scan_repo.add_argument('--detailed', action='store_true',
+                                 help='Show detailed advisory information')
+    parser_scan_repo.set_defaults(func=cmd_scan_repo)
+
+    # scan-file
+    parser_scan_file = subparsers.add_parser('scan-file',
+                                             help='Scan single file')
+    parser_scan_file.add_argument('file_path', type=str,
+                                 help='Path to file')
+    parser_scan_file.set_defaults(func=cmd_scan_file)
+
+    # list
+    parser_list = subparsers.add_parser('list',
+                                       help='List advisories')
+    parser_list.add_argument('--status', type=str,
+                            choices=['pending', 'reviewed', 'watching', 'ignored', 'isolated'],
+                            help='Filter by status')
+    parser_list.add_argument('--detailed', action='store_true',
+                            help='Show detailed information')
+    parser_list.set_defaults(func=cmd_list_advisories)
+
+    # show
+    parser_show = subparsers.add_parser('show',
+                                       help='Show advisory details')
+    parser_show.add_argument('advisory_id', type=str,
+                            help='Advisory ID')
+    parser_show.set_defaults(func=cmd_show_advisory)
+
+    # update
+    parser_update = subparsers.add_parser('update',
+                                         help='Update advisory status')
+    parser_update.add_argument('advisory_id', type=str,
+                              help='Advisory ID')
+    parser_update.add_argument('status', type=str,
+                              choices=['pending', 'reviewed', 'watching', 'ignored', 'isolated'],
+                              help='New status')
+    parser_update.add_argument('--note', type=str,
+                              help='Review note')
+    parser_update.set_defaults(func=cmd_update_status)
+
+    # stats
+    parser_stats = subparsers.add_parser('stats',
+                                        help='Show statistics')
+    parser_stats.set_defaults(func=cmd_stats)
+
+    # check
+    parser_check = subparsers.add_parser('check',
+                                        help='Check system status')
+    parser_check.set_defaults(func=cmd_check)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    # Create advisor
+    try:
+        advisor = CodeVulnerabilityAdvisor(
+            model=args.model,
+            storage_dir=args.storage_dir
+        )
+    except Exception as e:
+        print(f"\n✗ Error initializing security advisor: {e}\n")
+        return 1
+
+    # Execute command
+    try:
+        return args.func(advisor, args) or 0
+    except KeyboardInterrupt:
+        print("\n\nOperation cancelled by user\n")
+        return 1
+    except Exception as e:
+        print(f"\n✗ Error: {e}\n")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
