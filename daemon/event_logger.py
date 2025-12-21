@@ -22,6 +22,7 @@ class EventType(Enum):
     RECALL_ATTEMPT = "recall_attempt"
     TOOL_REQUEST = "tool_request"
     OVERRIDE = "override"
+    BIOMETRIC_ATTEMPT = "biometric_attempt"
     DAEMON_START = "daemon_start"
     DAEMON_STOP = "daemon_stop"
     HEALTH_CHECK = "health_check"

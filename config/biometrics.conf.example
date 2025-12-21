@@ -1,0 +1,49 @@
+[biometrics]
+# Enable biometric authentication for ceremonies
+enabled = true
+
+# Preferred verification method: 'fingerprint', 'face', or 'any'
+# 'any' will try fingerprint first, then face
+preferred_method = any
+
+# Match thresholds (0.0 - 1.0)
+# Higher = stricter matching, more false negatives
+# Lower = looser matching, more false positives
+match_threshold_fingerprint = 0.7
+match_threshold_face = 0.4
+
+# Require liveness detection (anti-spoofing)
+liveness_required = true
+
+# Allow fallback to keyboard ceremony if biometrics fail
+fallback_to_keyboard = true
+
+# Cooldown period after failed attempts (seconds)
+cooldown_on_failure = 30
+
+# Template storage directory
+template_dir = /var/lib/boundary-daemon/biometrics/
+
+# Enable TPM encryption for templates (requires TPM support)
+use_tpm_encryption = false
+
+# Logging
+log_biometric_attempts = true
+log_successful_only = false
+
+# Auto-enroll on first use (NOT RECOMMENDED for production)
+auto_enroll = false
+
+# Ceremony requirements by action type
+[ceremony_requirements]
+# Require biometric for mode changes
+mode_change_requires_biometric = true
+
+# Require biometric for override ceremonies
+override_requires_biometric = true
+
+# Require biometric for high-classification memory access
+high_memory_requires_biometric = false
+
+# Allow quick ceremonies (biometric-only, no keyboard steps)
+allow_quick_ceremonies = true
