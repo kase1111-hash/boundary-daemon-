@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Active Development
 **Last Updated:** 2025-12-21
 
@@ -1007,6 +1007,7 @@ liveness_required = true
 - **Memory Vault**: Scan reports can be stored as low-classification memories (Class 0-1) if desired
 - **IntentLog**: All scan events and user decisions logged as prose commits for full auditability
 - **Tripwire System**: No direct triggering—purely advisory
+- **Cross-Integration**: Works with Plan 8 (Log Watchdog) and Plan 9 (OpenTelemetry) for comprehensive security monitoring
 
 **Core Features**:
 
@@ -1098,6 +1099,363 @@ class CodeVulnerabilityAdvisor:
 - Updated CLI commands
 - Plain-language Learning Contract templates
 - Documentation in `PROACTIVE_SECURITY.md`
+
+---
+
+### Plan 8: Log Watchdog Agent (Priority: MEDIUM - Enhancement)
+
+**Goal**: Implement an optional, LLM-powered observer that tails application logs in real-time, detects anomalies/errors, summarizes issues in plain English, and offers proactive lookup for fixes.
+
+**Duration**: 4-5 weeks
+
+**Dependencies**:
+- `asyncio` (async log tailing)
+- `aiofiles` (async file reading)
+- Ollama or local inference runtime
+- Local LLM models (e.g., Llama 3 via Ollama)
+- `psutil` (for resource anomaly detection)
+- Optional: `sentry_sdk` for enhanced tracing
+
+**Rationale**:
+Enhances the Daemon's proactive security by catching runtime issues early without interfering with core logic. Turns raw logs (exceptions, warnings) into actionable insights, reducing debugging time and spotting patterns that could indicate attacks or exploits.
+
+**Design Principles**:
+- **Non-Intrusive**: Sandboxed from production; no auto-fixes to avoid loops or risks
+- **Fail-Closed**: Ignores trivial warnings; only flags medium/high severity issues
+- **Human Supremacy**: User confirmation required for lookups/actions
+- **Privacy-Preserving**: Local-first; web lookups require Learning Contract + mode approval
+- **Auditable**: All watchdog actions logged immutably via Event Logger
+
+**Architecture**:
+
+```
+Primary Program Layer
+    │ (Emits structured JSON logs or stderr)
+    ▼
+Observer / Watchdog Agent (Local LLM)
+    │ (Tails logs, scans patterns, summarizes)
+    ▼
+Lookup Agent (LLM + Web Integration)
+    │ (Searches fixes with user approval)
+    └─► User notification & recommendations
+```
+
+**Integration Points**:
+- **Event Logger**: All watchdog actions logged as `EventType.WATCHDOG_ALERT`
+- **Policy Engine**: Mode restrictions (e.g., no web lookups in AIRGAP)
+- **Ceremony Manager**: Secure confirmation for web lookups
+- **OpenTelemetry** (Plan 9): Subscribes to structured logs instead of file tailing
+
+**Implementation**:
+
+#### Phase 1: Core Watchdog Engine (2-3 weeks)
+```python
+# New module: daemon/watchdog/log_watchdog.py
+
+import asyncio
+import json
+from ollama import Client  # Local LLM client
+from daemon.policy_engine import PolicyEngine
+
+class LogWatchdog:
+    """Real-time log monitoring with LLM-powered analysis"""
+
+    def __init__(self, log_path: str, policy_engine: PolicyEngine):
+        self.log_path = log_path
+        self.policy = policy_engine
+        self.llm = Client(host='http://localhost:11434')  # Local Ollama
+        self.severity_threshold = 'medium'  # Configurable
+
+    async def monitor_logs(self):
+        """Tail logs and analyze anomalies"""
+        process = await asyncio.create_subprocess_exec(
+            "tail", "-f", self.log_path,
+            stdout=asyncio.subprocess.PIPE
+        )
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            msg = line.decode().strip()
+            try:
+                log_entry = json.loads(msg)  # Assume structured JSON
+                if log_entry.get('level', '').lower() in ['error', 'warning']:
+                    await self.analyze_entry(log_entry)
+            except json.JSONDecodeError:
+                # Fallback for unstructured logs
+                if any(keyword in msg.lower() for keyword in ['error', 'exception', 'warning']):
+                    await self.analyze_entry({'message': msg})
+
+    async def analyze_entry(self, entry: dict):
+        """LLM-summarize and classify"""
+        prompt = f"Summarize this log error in plain English, classify severity (low/medium/high), and suggest if lookup needed:\n{json.dumps(entry)}"
+        response = self.llm.generate(model='llama3', prompt=prompt)
+        summary = response['response']
+        severity = self.extract_severity(summary)
+
+        if severity >= self.severity_threshold:
+            # Log to Event Logger
+            self.policy.daemon.event_logger.log_event('WATCHDOG_ALERT', summary)
+            # User prompt (e.g., via CLI or notification)
+            if await self.user_confirm(f"Issue: {summary}. Lookup fixes?"):
+                await self.perform_lookup(summary)
+
+    async def perform_lookup(self, summary: str):
+        """Web-integrated lookup (if mode allows)"""
+        if not self.policy.check_web_access():  # Tie to Boundary Mode
+            return "Web lookup denied in current mode."
+
+        query = f"{summary} common fixes site:stackoverflow.com OR site:github.com/issues"
+        # Use web_search tool (integrate with available tools)
+        search_results = await self._web_search(query)
+        lookup_prompt = f"From these results, extract top fixes:\n{search_results}"
+        fixes = self.llm.generate(model='llama3', prompt=lookup_prompt)['response']
+        print(f"Recommended fixes: {fixes}")
+
+    def extract_severity(self, summary: str) -> str:
+        """Simple parser; enhance with regex/LLM"""
+        return 'high' if 'critical' in summary else 'medium'
+
+    async def user_confirm(self, prompt: str) -> bool:
+        """Integrate with CeremonyManager for secure confirmation"""
+        return await self.policy.daemon.ceremony_manager.perform_ceremony(prompt)
+```
+
+#### Phase 2: Resource Anomaly Detection (1 week)
+- Use `psutil` to flag CPU/memory spikes as potential leaks
+- Correlate resource spikes with log patterns
+
+#### Phase 3: Integration & Notifications (1 week)
+- CLI commands: `boundaryctl watchdog status`, `watchdog alerts`
+- Optional PagerDuty/Slack integration for summaries
+- Tie to Tripwire System for security-related alerts
+
+**Configuration Options** (in `boundary.conf`):
+```ini
+[watchdog]
+enabled = false  # Opt-in only
+severity_threshold = medium  # low/medium/high
+auto_lookup = false  # Requires Learning Contract
+log_path = /var/log/boundary-daemon/boundary_chain.log
+notification_channels = []  # e.g., ['slack', 'email']
+```
+
+**Enhancements**:
+- **Severity Classifier**: LLM fine-tuned on log datasets to improve accuracy
+- **Auto-Lookup Mode**: Toggle via Learning Contract; searches StackOverflow, GitHub, internal wikis
+- **Notifications**: Integrate with external services (requires mode approval)
+- **Auditability**: All watchdog actions logged immutably; no dynamic fixes to prevent loops
+
+**Benefits**:
+- **Game-Theoretic Win**: Rewards proactive monitoring; deters neglect by making fixes easy/visible
+- **Privacy/Security**: Local LLM default; web lookups require Contract + mode check
+- **Scalability**: Runs async; low overhead (<5% CPU)
+- **Educational**: Teaches users about common errors and best practices
+
+**Testing**:
+- Unit tests: Mock log entries and LLM responses
+- Integration tests: Simulate common errors (connection refused, permission denied)
+- Performance tests: High-volume log tailing without blocking
+- Security tests: Verify mode restrictions prevent unauthorized lookups
+
+**Deliverables**:
+- `daemon/watchdog/log_watchdog.py`
+- Updated CLI with watchdog commands
+- Learning Contract templates for web lookup approval
+- Documentation in `WATCHDOG.md`
+
+---
+
+### Plan 9: OpenTelemetry Integration (Priority: HIGH - Observability)
+
+**Goal**: Add native OpenTelemetry (OTel) integration to enable structured, standardized observability across traces, metrics, and logs, elevating the system from ad-hoc log tailing to professional-grade, vendor-neutral telemetry.
+
+**Duration**: 4-6 weeks
+
+**Dependencies**:
+- `opentelemetry-api`
+- `opentelemetry-sdk`
+- `opentelemetry-exporter-otlp-proto-grpc`
+- `opentelemetry-instrumentation-logging`
+
+**Rationale**:
+OpenTelemetry provides distributed tracing, structured logs with trace correlation, metrics, and seamless export to backends (Jaeger, Prometheus, Loki, Honeycomb). This integration preserves local-first defaults with optional export under strict control.
+
+**Benefits**:
+- **End-to-End Visibility**: Correlate events across daemon subsystems (Policy Engine → Tripwire → Event Logger → Watchdog)
+- **Enhanced Watchdog Intelligence**: Feed structured traces/logs directly into Watchdog Agent—no fragile tailing
+- **Security Auditing**: Export immutable, tamper-evident telemetry for compliance or forensics
+- **Performance Insights**: Measure ceremony latency, mode transition times, scan durations
+- **Future-Proofing**: Standard format enables integration with enterprise observability stacks
+
+**Architecture Integration**:
+```
+Primary Program (Daemon Core)
+        │
+        ▼
+OpenTelemetry SDK (TracerProvider, MeterProvider, LoggerProvider)
+        │
+        ├─► Traces → Span events (e.g., "mode_transition", "ceremony_start")
+        ├─► Metrics → Counters/Gauges (e.g., violations_total, current_mode)
+        └─► Logs → Structured records (replaces raw file appends optionally)
+        │
+        ▼
+OTLP Exporter (configurable)
+  ├─► Console (default, local-only)
+  ├─► File (local JSON/Proto)
+  └─► Remote Endpoint (only if allowed by mode + contract)
+```
+
+**Key Integration Points**:
+
+1. **Event Logger**
+   - Augment or replace hash-chain file with OTel Logs (structured + correlated to traces)
+   - Maintain backward compatibility: continue writing hash-chained file for immutability proof
+
+2. **Log Watchdog Agent** (Plan 8)
+   - Subscribe directly to OTel Log Pipeline (no `tail -f` needed)
+   - Receive structured records with trace/span IDs for richer context
+   - Example: Correlate a "network_violation" log with the exact `mode_transition` span that triggered it
+
+3. **Policy Engine & Tripwire**
+   - Instrument decisions as spans: `policy.check_recall`, `tripwire.detect_usb`
+   - Add attributes: `mode=current`, `memory_class=3`, `violation_type=network_in_airgap`
+
+4. **Ceremony Manager**
+   - Span: `ceremony.perform` with duration metric and biometric result attribute
+
+5. **Code Vulnerability Advisor** (Plan 7)
+   - Span per scan: `security.scan_repository` with attributes like `repo_path`, `advisory_count`
+
+**Implementation**:
+
+#### Phase 1: Core Instrumentation (2-3 weeks)
+```python
+# daemon/telemetry/otel_setup.py
+
+from opentelemetry import trace, metrics, logs
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.logs import LoggerProvider, LoggingHandler
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.logs_exporter import OTLPLogExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.logs import BatchLogRecordProcessor
+import logging
+
+def init_telemetry(daemon):
+    """Initialize OpenTelemetry for the Boundary Daemon"""
+    resource = Resource(attributes={
+        "service.name": "boundary-daemon",
+        "service.instance.id": daemon.instance_id,
+        "host.name": daemon.hostname
+    })
+
+    # Traces
+    trace.set_tracer_provider(TracerProvider(resource=resource))
+    tracer = trace.get_tracer(__name__)
+
+    # Metrics
+    metrics.set_meter_provider(MeterProvider(resource=resource))
+    meter = metrics.get_meter(__name__)
+    violations_counter = meter.create_counter(
+        "boundary.violations", description="Number of security violations"
+    )
+    mode_duration = meter.create_histogram(
+        "boundary.mode.duration", unit="s", description="Time spent in each mode"
+    )
+
+    # Logs
+    logs.set_logger_provider(LoggerProvider(resource=resource))
+    logger = logs.get_logger(__name__)
+
+    # Console exporter (always on)
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+    trace.get_tracer_provider().add_span_processor(
+        BatchSpanProcessor(ConsoleSpanExporter())
+    )
+
+    # Conditional remote export
+    if daemon.policy.check_telemetry_export():  # Requires TRUSTED+ mode + Contract
+        trace.get_tracer_provider().add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint="otel-collector:4317"))
+        )
+        # Add metrics and logs exporters similarly
+
+    # Integrate with Python logging
+    handler = LoggingHandler(level=logging.INFO, logger_provider=logs.get_logger_provider())
+    logging.getLogger().addHandler(handler)
+
+    return tracer, meter, logger
+```
+
+#### Phase 2: Subsystem Instrumentation (1-2 weeks)
+- Wrap key methods with `@tracer.start_as_current_span("name")`
+- Emit metrics on violations, mode changes, ceremony outcomes
+- Replace raw print/file logs with `logging.getLogger()` → OTel structured logs
+
+#### Phase 3: Watchdog Enhancement (1 week)
+```python
+# Watchdog now consumes OTel logs directly
+class LogWatchdog:
+    def __init__(self, ..., log_processor):
+        self.log_processor = log_processor  # Subscribe to OTel log pipeline
+
+    def on_log_record(self, log_record):
+        """Callback for new log records"""
+        if log_record.attributes.get('level') in ['ERROR', 'WARNING']:
+            self.analyze_record(log_record)
+```
+
+**Configuration** (in `boundary.conf`):
+```ini
+[telemetry]
+enabled = true
+export_remote = false  # Requires explicit Learning Contract
+otel_endpoint = http://localhost:4318  # OTLP/gRPC
+console_export = true
+log_correlation = true
+```
+
+**Security & Privacy Controls**:
+- Export disabled by default (AIRGAP/COLDROOM block it entirely)
+- Requires explicit Learning Contract: "Allow telemetry export to monitoring endpoint"
+- All exported data redacted of sensitive attributes (e.g., memory contents) via OTel processor
+- Custom SpanProcessor chain for redaction of sensitive fields
+
+**Custom Resource Attributes**:
+```python
+{
+    "boundary.mode": daemon.current_mode,
+    "boundary.contract.id": daemon.contract_id,
+    "boundary.user.confirmed": True
+}
+```
+
+**Extended Metrics**:
+- `boundary.watchdog.alerts_total`
+- `boundary.lookup.requests_total`
+- `boundary.ceremony.latency_histogram`
+
+**Testing**:
+- Use OTel In-Memory Exporter in CI to assert trace/metric emission counts
+- Verify redaction of sensitive fields in exported spans
+- Test mode restrictions prevent unauthorized export
+
+**Deliverables**:
+- `daemon/telemetry/otel_setup.py`
+- Instrumentation across all major subsystems
+- Updated CLI with telemetry commands
+- Learning Contract templates for export approval
+- Documentation in `TELEMETRY.md`
+
+**Benefits**:
+- **Richer Debugging**: Trace an override ceremony back to the exact recall attempt
+- **Security Analytics**: Query violation patterns over time
+- **Interoperability**: Export to any OTel-compatible backend
+- **Watchdog Supercharged**: No parsing fragility; full context from traces
 
 ---
 
@@ -1643,17 +2001,23 @@ psutil==5.9.0        # System monitoring
 
 **Optional** (for enhancements):
 ```
-tpm2-pytss           # TPM integration
-PyNaCl               # Cryptographic signing
-python-fprint        # Fingerprint reader
-face-recognition     # Face recognition
-opencv-python        # Camera access
-python-etcd3         # Distributed deployment
-ollama               # Local LLM inference for code vulnerability advisor
-presidio-analyzer    # PII detection engine
-presidio-anonymizer  # PII redaction engine
-spacy                # NER for enhanced PII detection
-dlib                 # Face landmark detection for liveness checks
+tpm2-pytss                              # TPM integration
+PyNaCl                                  # Cryptographic signing
+python-fprint                           # Fingerprint reader
+face-recognition                        # Face recognition
+opencv-python                           # Camera access
+python-etcd3                            # Distributed deployment
+ollama                                  # Local LLM inference for code vulnerability advisor and log watchdog
+presidio-analyzer                       # PII detection engine
+presidio-anonymizer                     # PII redaction engine
+spacy                                   # NER for enhanced PII detection
+dlib                                    # Face landmark detection for liveness checks
+aiofiles                                # Async file reading for log watchdog
+sentry-sdk                              # Optional enhanced tracing for log watchdog
+opentelemetry-api                       # OpenTelemetry core API
+opentelemetry-sdk                       # OpenTelemetry SDK implementation
+opentelemetry-exporter-otlp-proto-grpc  # OTLP gRPC exporter for telemetry
+opentelemetry-instrumentation-logging   # Logging instrumentation for OTel
 ```
 
 ---
@@ -1677,6 +2041,9 @@ dlib                 # Face landmark detection for liveness checks
 | BIOMETRIC_ATTEMPT | Biometric verification attempt | method, score, success |
 | PII_DETECTED | PII detected in content | entity_type, action, confidence |
 | EXPOSURE_ALERT | External exposure detected | asset_label, exposure_type, details |
+| WATCHDOG_ALERT | Log watchdog detected anomaly | severity, summary, lookup_performed |
+| WATCHDOG_RECOMMEND | Watchdog suggestion generated | severity, summary, lookup_status |
+| TELEMETRY_EXPORT | Telemetry data exported | endpoint, mode, contract_id |
 
 ### B. Memory Class to Mode Mapping
 
@@ -1723,6 +2090,7 @@ class ViolationType(Enum):
 |---------|------|---------|
 | 1.0 | 2025-12-19 | Initial comprehensive specification |
 | 1.1 | 2025-12-21 | Added Plan 7 (LLM-Powered Code Vulnerability Advisor), expanded Plan 6 (Biometric Authentication) with detailed implementation, added PII Detection & Redaction Pipeline, added Proactive Exposure Monitoring, added new event types |
+| 1.2 | 2025-12-21 | Added Plan 8 (Log Watchdog Agent) for real-time log monitoring and anomaly detection, added Plan 9 (OpenTelemetry Integration) for enterprise-grade observability, updated event types (WATCHDOG_ALERT, WATCHDOG_RECOMMEND, TELEMETRY_EXPORT), expanded dependencies for new features |
 
 ---
 
