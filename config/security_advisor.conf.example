@@ -1,0 +1,89 @@
+[security_advisor]
+# Enable code vulnerability advisor
+enabled = false
+
+# Ollama model for security scanning
+# Options: llama3.1:8b-instruct-q6_K, codellama:13b, etc.
+model = llama3.1:8b-instruct-q6_K
+
+# Storage directory for scan results and advisories
+storage_dir = /var/lib/boundary-daemon/security/
+
+# Maximum file size to scan (bytes)
+# Files larger than this will be skipped
+max_file_size = 1048576  # 1MB
+
+# File extensions to scan (comma-separated)
+scannable_extensions = .py,.js,.ts,.jsx,.tsx,.java,.c,.cpp,.go,.rs,.rb,.php
+
+# Minimum confidence threshold to report (0.0 - 1.0)
+# Advisories with confidence below this will be filtered out
+min_confidence = 0.5
+
+# Severity levels to report (comma-separated)
+# Options: INFO, LOW, MEDIUM, HIGH, CRITICAL
+report_severities = MEDIUM,HIGH,CRITICAL
+
+# Scan on code import (requires Learning Contract)
+scan_on_import = false
+
+# Learning Contract required for scanning
+# Explicit user consent needed before any scanning
+require_learning_contract = true
+
+# Privacy settings
+[security_advisor.privacy]
+# Never send code to external services
+local_only = true
+
+# Log all scan events
+log_scans = true
+
+# Include code snippets in advisories (for context)
+include_code_snippets = true
+
+# Continuous monitoring
+[security_advisor.monitoring]
+# Enable continuous monitoring of watched repositories
+enable_continuous_monitoring = false
+
+# Re-scan interval when model is updated (hours)
+rescan_interval_hours = 168  # 1 week
+
+# Background scan priority (low/normal/high)
+scan_priority = low
+
+# Decentralized auditing (for distributed deployments)
+[security_advisor.distributed]
+# Enable decentralized node auditing
+enable_distributed_auditing = false
+
+# Share advisory summaries with cluster nodes
+share_advisories = false
+
+# Advisory consensus threshold (number of nodes)
+consensus_threshold = 2
+
+# Boundary mode compatibility
+[security_advisor.boundary_modes]
+# Modes where security scanning is allowed
+# In AIRGAP/COLDROOM, only offline models can be used
+allowed_modes = OPEN,RESTRICTED,TRUSTED,AIRGAP,COLDROOM
+
+# Require explicit ceremony for scanning in sensitive modes
+require_ceremony_airgap = true
+require_ceremony_coldroom = true
+
+# Alerts and notifications
+[security_advisor.alerts]
+# Alert on CRITICAL findings
+alert_on_critical = true
+
+# Alert on HIGH findings
+alert_on_high = false
+
+# Maximum alerts per scan
+max_alerts_per_scan = 10
+
+# Alert cooldown (seconds)
+alert_cooldown = 3600  # 1 hour
