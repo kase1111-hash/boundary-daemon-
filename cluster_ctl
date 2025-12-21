@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+cluster_ctl - Boundary Daemon Cluster Control CLI
+Command-line interface for managing distributed boundary daemon clusters.
+"""
+
+import sys
+import argparse
+import json
+from daemon.distributed.cluster_manager import ClusterManager, ClusterNode
+from daemon.distributed.coordinators import FileCoordinator
+
+
+def cmd_status(args):
+    """Show cluster status"""
+    coordinator = FileCoordinator(args.data_dir)
+
+    # Get all nodes
+    nodes_data = coordinator.get_prefix('/boundary/nodes/')
+
+    if not nodes_data:
+        print("No active nodes in cluster.")
+        return 0
+
+    print("\n" + "=" * 70)
+    print("CLUSTER STATUS")
+    print("=" * 70)
+
+    nodes = {}
+    for key, value in nodes_data.items():
+        try:
+            node_dict = json.loads(value)
+            node = ClusterNode(**node_dict)
+            nodes[node.node_id] = node
+        except Exception as e:
+            print(f"Error parsing node {key}: {e}")
+
+    print(f"\nTotal Nodes: {len(nodes)}")
+
+    # Calculate cluster mode (most restrictive)
+    from daemon.policy_engine import BoundaryMode
+    if nodes:
+        modes = [BoundaryMode[node.mode] for node in nodes.values()]
+        cluster_mode = max(modes).name
+        print(f"Cluster Mode: {cluster_mode}")
+
+    # Calculate total violations
+    total_violations = sum(node.violations for node in nodes.values())
+    print(f"Total Violations: {total_violations}")
+
+    print("\nNodes:")
+    for node in nodes.values():
+        import time
+        age = time.time() - node.last_heartbeat
+        healthy = "✓" if age < 30 else "✗"
+        lockdown_str = " [LOCKDOWN]" if node.lockdown else ""
+        print(f"  {healthy} {node.node_id} ({node.hostname}): {node.mode}{lockdown_str}")
+        print(f"      Last seen: {int(age)}s ago, Violations: {node.violations}")
+
+    print("=" * 70 + "\n")
+    return 0
+
+
+def cmd_violations(args):
+    """Show cluster violations"""
+    coordinator = FileCoordinator(args.data_dir)
+
+    violations_data = coordinator.get_prefix('/boundary/violations/')
+
+    if not violations_data:
+        print("No violations recorded in cluster.")
+        return 0
+
+    print("\n" + "=" * 70)
+    print("CLUSTER VIOLATIONS")
+    print("=" * 70 + "\n")
+
+    violations = []
+    for key, value in violations_data.items():
+        try:
+            violation = json.loads(value)
+            violations.append(violation)
+        except Exception as e:
+            print(f"Error parsing violation from {key}: {e}")
+
+    # Sort by timestamp (newest first)
+    violations.sort(key=lambda v: v.get('timestamp', 0), reverse=True)
+
+    # Limit to recent violations
+    if args.limit:
+        violations = violations[:args.limit]
+
+    for v in violations:
+        import datetime
+        try:
+            timestamp = float(v['timestamp'])
+            ts = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        except (ValueError, TypeError):
+            ts = str(v.get('timestamp', 'unknown'))
+
+        print(f"[{ts}] {v['node_id']}")
+        print(f"  Type: {v['violation_type']}")
+        print(f"  Details: {v['details']}")
+        print()
+
+    print("=" * 70 + "\n")
+    return 0
+
+
+def cmd_clear(args):
+    """Clear cluster state"""
+    coordinator = FileCoordinator(args.data_dir)
+
+    if not args.force:
+        response = input("This will delete all cluster state. Are you sure? (yes/no): ")
+        if response.lower() != 'yes':
+            print("Aborted.")
+            return 0
+
+    # Delete all cluster data
+    keys_to_delete = []
+    keys_to_delete.extend(coordinator.get_prefix('/boundary/nodes/').keys())
+    keys_to_delete.extend(coordinator.get_prefix('/boundary/violations/').keys())
+    keys_to_delete.extend(coordinator.get_prefix('/boundary/cluster/').keys())
+
+    for key in keys_to_delete:
+        coordinator.delete(key)
+
+    print(f"Deleted {len(keys_to_delete)} cluster entries.")
+    return 0
+
+
+def cmd_info(args):
+    """Show cluster information"""
+    coordinator = FileCoordinator(args.data_dir)
+
+    print("\n" + "=" * 70)
+    print("CLUSTER INFORMATION")
+    print("=" * 70 + "\n")
+
+    print(f"Coordinator: FileCoordinator")
+    print(f"Data Directory: {args.data_dir}")
+
+    # Count entries by prefix
+    nodes = coordinator.get_prefix('/boundary/nodes/')
+    violations = coordinator.get_prefix('/boundary/violations/')
+
+    print(f"\nEntries:")
+    print(f"  Nodes: {len(nodes)}")
+    print(f"  Violations: {len(violations)}")
+
+    print("\n" + "=" * 70 + "\n")
+    return 0
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='Boundary Daemon Cluster Control CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  cluster_ctl status                         # Show cluster status
+  cluster_ctl violations --limit 10          # Show recent 10 violations
+  cluster_ctl info                           # Show cluster information
+  cluster_ctl clear --force                  # Clear all cluster state
+"""
+    )
+
+    parser.add_argument('--data-dir', type=str, default='/tmp/boundary-cluster',
+                       help='Cluster data directory (default: /tmp/boundary-cluster)')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+
+    # status
+    parser_status = subparsers.add_parser('status', help='Show cluster status')
+    parser_status.set_defaults(func=cmd_status)
+
+    # violations
+    parser_violations = subparsers.add_parser('violations', help='Show cluster violations')
+    parser_violations.add_argument('--limit', type=int, default=20,
+                                   help='Limit number of violations shown')
+    parser_violations.set_defaults(func=cmd_violations)
+
+    # clear
+    parser_clear = subparsers.add_parser('clear', help='Clear cluster state')
+    parser_clear.add_argument('--force', action='store_true',
+                             help='Skip confirmation prompt')
+    parser_clear.set_defaults(func=cmd_clear)
+
+    # info
+    parser_info = subparsers.add_parser('info', help='Show cluster information')
+    parser_info.set_defaults(func=cmd_info)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    # Execute command
+    try:
+        return args.func(args) or 0
+    except Exception as e:
+        print(f"\nError: {e}\n")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
