@@ -11,7 +11,7 @@ import threading
 from typing import Optional, List, Dict, Tuple
 from pathlib import Path
 
-from daemon.event_logger import EventLogger, EventType, BoundaryEvent
+from .event_logger import EventLogger, EventType, BoundaryEvent
 
 
 class SignedEventLogger(EventLogger):

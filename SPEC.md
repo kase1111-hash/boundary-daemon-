@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.6
+**Version:** 1.8
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -184,7 +184,7 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes udev rules on daemon shutdown
 
-#### 11. Process Enforcer (`daemon/enforcement/process_enforcer.py`) ✅ NEW
+#### 11. Process Enforcer (`daemon/enforcement/process_enforcer.py`) ✅
 - **Process Isolation**: seccomp-bpf syscall filtering and container isolation
 - **Container Runtime**: Supports podman (preferred) and docker
 - **Mode-Based Profiles**: Automatic seccomp profile application on mode transitions
@@ -196,6 +196,29 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Container Management**: Tracks and terminates managed containers on cleanup
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes seccomp profiles and stops containers on daemon shutdown
+
+#### 12. TPM Manager (`daemon/hardware/tpm_manager.py`) ✅
+- **Hardware Integration**: TPM 2.0 support via tpm2-tools or tpm2-pytss
+- **Backend Detection**: Auto-detects available TPM backend (hardware, simulator, or none)
+- **Mode Attestation**: Binds boundary mode transitions to TPM PCR (Platform Configuration Register)
+- **Secret Sealing**: Seal secrets to specific boundary modes
+- **Secret Unsealing**: Unseal secrets only when in correct or higher security mode
+- **Mode Verification**: Verify current mode matches TPM PCR state
+- **Attestation Chain**: Maintains chronological record of all mode transitions
+- **Tamper Detection**: Detects unauthorized mode changes via PCR mismatch
+- **Graceful Degradation**: Continues operation if TPM not available
+- **Cleanup**: Releases TPM resources on daemon shutdown
+
+#### 13. Signed Event Logger (`daemon/signed_event_logger.py`) ✅ NEW
+- **Cryptographic Signatures**: Ed25519 signatures (via PyNaCl/libsodium) for each event
+- **Non-Repudiation**: Events are cryptographically signed for external verification
+- **Key Management**: Auto-generates and persists signing key with secure permissions
+- **Separate Signature File**: Signatures stored in `.sig` file alongside log
+- **Signature Verification**: `verify_signatures()` validates all event signatures
+- **Full Integrity Check**: `verify_full_integrity()` validates hash chain + signatures
+- **Public Key Export**: Export verification key for third-party auditing
+- **Graceful Fallback**: Falls back to basic EventLogger if PyNaCl not available
+- **Daemon Integration**: BoundaryDaemon automatically uses SignedEventLogger when available
 
 ### ⚠️ Partially Implemented / Limited
 
@@ -533,23 +556,21 @@ class BoundaryWatchdog:
 
 ---
 
-### Plan 2: TPM Integration (Priority: HIGH)
+### Plan 2: TPM Integration (Priority: HIGH) ✅ IMPLEMENTED
 
 **Goal**: Hardware-backed mode attestation and secret sealing.
 
-**Duration**: 4-6 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/hardware/tpm_manager.py`
 
 **Dependencies**:
-- tpm2-tools installed
-- TPM 2.0 chip present
-- tpm2-pytss Python library
+- tpm2-tools installed (optional, auto-detected)
+- TPM 2.0 chip present (optional, graceful degradation)
+- tpm2-pytss Python library (optional, auto-detected)
 
 **Implementation**:
 
 ```python
-# New module: daemon/hardware/tpm_manager.py
-
-import tpm2_pytss
+# Implemented: daemon/hardware/tpm_manager.py
 
 class TPMManager:
     """Manages TPM-backed security features"""
@@ -608,11 +629,11 @@ class TPMManager:
 
 ---
 
-### Plan 3: Cryptographic Log Signing (Priority: MEDIUM)
+### Plan 3: Cryptographic Log Signing (Priority: MEDIUM) ✅ IMPLEMENTED
 
 **Goal**: Non-repudiable event logs with external verification.
 
-**Duration**: 2-3 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/signed_event_logger.py`
 
 **Implementation**:
 
@@ -2218,6 +2239,8 @@ class ViolationType(Enum):
 | 1.4 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 1 (Network Enforcement). Added `daemon/enforcement/network_enforcer.py` with iptables/nftables support. Network-based exfiltration now blocked in AIRGAP/COLDROOM/LOCKDOWN modes. Updated implementation status. |
 | 1.5 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 2 (USB Enforcement). Added `daemon/enforcement/usb_enforcer.py` with udev rules support. USB mass storage now blocked in TRUSTED+ modes, all USB blocked in COLDROOM. Device ejection and baseline tracking implemented. |
 | 1.6 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 3 (Process Enforcement). Added `daemon/enforcement/process_enforcer.py` with seccomp-bpf syscall filtering, container isolation (podman/docker), and external watchdog. **Plan 1 COMPLETE**: System now provides actual kernel-level enforcement across network, USB, and process layers. |
+| 1.7 | 2025-12-22 | **MAJOR**: Implemented Plan 2 (TPM Integration). Added `daemon/hardware/tpm_manager.py` with TPM 2.0 support for mode attestation and secret sealing. Mode transitions now cryptographically bound to TPM PCR. Secrets can be sealed to specific boundary modes and only unsealed when in correct security posture. |
+| 1.8 | 2025-12-22 | **MAJOR**: Integrated Plan 3 (Cryptographic Log Signing). SignedEventLogger now integrated with BoundaryDaemon. Ed25519 signatures (via PyNaCl) for each event provide non-repudiation. Public key export for external verification. Full integrity check combines hash chain + signature verification. |
 
 ---
 
