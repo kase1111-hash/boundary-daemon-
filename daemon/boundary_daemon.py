@@ -56,6 +56,14 @@ except ImportError:
     ClusterManager = None
     FileCoordinator = None
 
+# Import custom policy module (Plan 5: Custom Policy Language)
+try:
+    from .policy import CustomPolicyEngine
+    CUSTOM_POLICY_AVAILABLE = True
+except ImportError:
+    CUSTOM_POLICY_AVAILABLE = False
+    CustomPolicyEngine = None
+
 
 class BoundaryDaemon:
     """
@@ -179,6 +187,25 @@ class BoundaryDaemon:
                 print("Cluster coordination: not enabled (set BOUNDARY_CLUSTER_DIR to enable)")
         else:
             print("Cluster coordination module not loaded")
+
+        # Initialize custom policy engine (Plan 5: Custom Policy Language)
+        self.custom_policy_engine = None
+        self.custom_policy_enabled = False
+        if CUSTOM_POLICY_AVAILABLE and CustomPolicyEngine:
+            # Custom policies can be enabled via environment variable
+            policy_dir = os.environ.get('BOUNDARY_POLICY_DIR', None)
+            if policy_dir:
+                try:
+                    self.custom_policy_engine = CustomPolicyEngine(policy_dir)
+                    self.custom_policy_enabled = True
+                    policy_count = len(self.custom_policy_engine.get_enabled_policies())
+                    print(f"Custom policy engine available ({policy_count} policies from {policy_dir})")
+                except Exception as e:
+                    print(f"Warning: Custom policy engine failed to initialize: {e}")
+            else:
+                print("Custom policy engine: not enabled (set BOUNDARY_POLICY_DIR to enable)")
+        else:
+            print("Custom policy engine module not loaded")
 
         # Daemon state
         self._running = False
@@ -557,8 +584,18 @@ class BoundaryDaemon:
             memory_class=memory_class
         )
 
-        # Evaluate policy
-        decision = self.policy_engine.evaluate_policy(request, env_state)
+        # Evaluate custom policies first (Plan 5)
+        decision = None
+        custom_policy_matched = False
+        if self.custom_policy_engine and self.custom_policy_enabled:
+            current_mode = self.policy_engine.get_current_mode()
+            decision = self.custom_policy_engine.evaluate(request, env_state, current_mode)
+            if decision:
+                custom_policy_matched = True
+
+        # Fall back to default policy if no custom policy matched
+        if decision is None:
+            decision = self.policy_engine.evaluate_policy(request, env_state)
 
         # Log the attempt
         self.event_logger.log_event(
@@ -567,7 +604,8 @@ class BoundaryDaemon:
             metadata={
                 'memory_class': memory_class.value,
                 'decision': decision.value,
-                'current_mode': self.policy_engine.get_current_mode().name
+                'current_mode': self.policy_engine.get_current_mode().name,
+                'custom_policy_matched': custom_policy_matched
             }
         )
 
@@ -610,7 +648,18 @@ class BoundaryDaemon:
             requires_usb=requires_usb
         )
 
-        decision = self.policy_engine.evaluate_policy(request, env_state)
+        # Evaluate custom policies first (Plan 5)
+        decision = None
+        custom_policy_matched = False
+        if self.custom_policy_engine and self.custom_policy_enabled:
+            current_mode = self.policy_engine.get_current_mode()
+            decision = self.custom_policy_engine.evaluate(request, env_state, current_mode)
+            if decision:
+                custom_policy_matched = True
+
+        # Fall back to default policy if no custom policy matched
+        if decision is None:
+            decision = self.policy_engine.evaluate_policy(request, env_state)
 
         self.event_logger.log_event(
             EventType.TOOL_REQUEST,
@@ -620,7 +669,8 @@ class BoundaryDaemon:
                 'decision': decision.value,
                 'requires_network': requires_network,
                 'requires_filesystem': requires_filesystem,
-                'requires_usb': requires_usb
+                'requires_usb': requires_usb,
+                'custom_policy_matched': custom_policy_matched
             }
         )
 
@@ -665,6 +715,20 @@ class BoundaryDaemon:
                 }
             except Exception as e:
                 status['cluster'] = {'error': str(e)}
+
+        # Add custom policy information if enabled (Plan 5)
+        status['custom_policy_enabled'] = self.custom_policy_enabled
+        if self.custom_policy_engine and self.custom_policy_enabled:
+            try:
+                enabled_policies = self.custom_policy_engine.get_enabled_policies()
+                status['custom_policy'] = {
+                    'policy_dir': str(self.custom_policy_engine.policy_dir),
+                    'total_policies': len(self.custom_policy_engine.policies),
+                    'enabled_policies': len(enabled_policies),
+                    'policy_names': [p.name for p in enabled_policies]
+                }
+            except Exception as e:
+                status['custom_policy'] = {'error': str(e)}
 
         return status
 
@@ -718,6 +782,28 @@ class BoundaryDaemon:
             (success, message)
         """
         return self.policy_engine.transition_mode(new_mode, operator, reason)
+
+    def reload_custom_policies(self) -> tuple[bool, str]:
+        """
+        Reload custom policy files from disk (Plan 5).
+
+        Returns:
+            (success, message)
+        """
+        if not self.custom_policy_engine or not self.custom_policy_enabled:
+            return (False, "Custom policy engine not enabled")
+
+        try:
+            self.custom_policy_engine.reload_policies()
+            policy_count = len(self.custom_policy_engine.get_enabled_policies())
+            self.event_logger.log_event(
+                EventType.POLICY_DECISION,
+                f"Custom policies reloaded: {policy_count} enabled policies",
+                metadata={'policy_count': policy_count, 'action': 'reload'}
+            )
+            return (True, f"Reloaded {policy_count} custom policies")
+        except Exception as e:
+            return (False, f"Failed to reload policies: {e}")
 
 
 def main():
