@@ -318,7 +318,7 @@ class TripwireSystem:
         Returns:
             The simulated violation
         """
-        from state_monitor import EnvironmentState, NetworkState, HardwareTrust
+        from .state_monitor import EnvironmentState, NetworkState, HardwareTrust
 
         # Create a dummy environment state
         env_state = EnvironmentState(
