@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.5
+**Version:** 1.6
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -173,7 +173,7 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes rules on daemon shutdown
 
-#### 10. USB Enforcer (`daemon/enforcement/usb_enforcer.py`) ✅ NEW
+#### 10. USB Enforcer (`daemon/enforcement/usb_enforcer.py`) ✅
 - **USB Enforcement**: udev rules and sysfs device authorization
 - **Mode-Based Rules**: Automatic rule application on mode transitions
 - **TRUSTED/AIRGAP Mode**: Blocks USB mass storage, allows HID
@@ -184,13 +184,26 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes udev rules on daemon shutdown
 
+#### 11. Process Enforcer (`daemon/enforcement/process_enforcer.py`) ✅ NEW
+- **Process Isolation**: seccomp-bpf syscall filtering and container isolation
+- **Container Runtime**: Supports podman (preferred) and docker
+- **Mode-Based Profiles**: Automatic seccomp profile application on mode transitions
+- **AIRGAP Mode**: Blocks network syscalls, dangerous filesystem operations
+- **COLDROOM Mode**: Minimal syscalls only (read, write, exit, etc.)
+- **LOCKDOWN Mode**: Maximum restriction, blocks nearly all syscalls
+- **External Watchdog**: Independent process monitors daemon health
+- **Emergency Lockdown**: Watchdog triggers system lockdown if daemon fails
+- **Container Management**: Tracks and terminates managed containers on cleanup
+- **Fail-Closed**: Triggers lockdown on enforcement failure
+- **Cleanup**: Removes seccomp profiles and stops containers on daemon shutdown
+
 ### ⚠️ Partially Implemented / Limited
 
 #### 1. Enforcement Mechanism
-- **Status**: Network + USB enforcement implemented (Plan 1 Phases 1-2), process enforcement pending
-- **What Works**: Network blocking via iptables/nftables, USB blocking via udev, logging, policy decisions
-- **What's Missing**: Process isolation (Phase 3)
-- **Impact**: Network and USB exfiltration now blocked; process-level attacks still possible
+- **Status**: ✅ Plan 1 COMPLETE (Network + USB + Process Enforcement all implemented)
+- **What Works**: Network blocking via iptables/nftables, USB blocking via udev, process isolation via seccomp-bpf + containers, external watchdog
+- **What's Done**: All three phases of kernel-level enforcement complete
+- **Impact**: System now provides actual enforcement, not just detection
 
 #### 2. Human Presence Verification
 - **Status**: Basic keyboard input only
@@ -338,10 +351,12 @@ See [Unimplemented Features](#unimplemented-features) section below.
 **Goal**: Transform from detection-only to actual enforcement system.
 
 **Components**:
-1. **SELinux/AppArmor Policy Generator** - Planned
-2. **iptables/nftables Rule Manager** - ✅ **IMPLEMENTED**
-3. **udev USB Rule Manager** - ✅ **IMPLEMENTED**
-4. **seccomp-bpf Filter Installer** - Planned
+1. **SELinux/AppArmor Policy Generator** - Planned (future enhancement)
+2. **iptables/nftables Rule Manager** - ✅ **IMPLEMENTED** (Phase 1)
+3. **udev USB Rule Manager** - ✅ **IMPLEMENTED** (Phase 2)
+4. **seccomp-bpf Filter Installer** - ✅ **IMPLEMENTED** (Phase 3)
+5. **Container Isolation** - ✅ **IMPLEMENTED** (Phase 3)
+6. **External Watchdog** - ✅ **IMPLEMENTED** (Phase 3)
 
 **Implementation Steps**:
 
@@ -455,11 +470,11 @@ ACTION=="add", SUBSYSTEMS=="usb", ATTRS{bDeviceClass}=="08", RUN+="/bin/sh -c 'e
 
 ---
 
-#### Phase 3: Process Isolation (5-7 weeks)
+#### Phase 3: Process Isolation ✅ IMPLEMENTED
 ```python
-# New module: daemon/enforcement/container_enforcer.py
+# Implemented: daemon/enforcement/process_enforcer.py
 
-class ContainerEnforcer:
+class ProcessEnforcer:
     """Runs protected workloads in isolated containers"""
 
     def __init__(self, daemon):
@@ -2202,6 +2217,7 @@ class ViolationType(Enum):
 | 1.3 | 2025-12-22 | Consolidated all feature documentation into single spec. Added Plan 9 Extension (Prometheus Metrics Export). Removed obsolete documents: Spec_1.1.md, Additional-Specs.md, Future-Features.md, Future-Feature-framework.md |
 | 1.4 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 1 (Network Enforcement). Added `daemon/enforcement/network_enforcer.py` with iptables/nftables support. Network-based exfiltration now blocked in AIRGAP/COLDROOM/LOCKDOWN modes. Updated implementation status. |
 | 1.5 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 2 (USB Enforcement). Added `daemon/enforcement/usb_enforcer.py` with udev rules support. USB mass storage now blocked in TRUSTED+ modes, all USB blocked in COLDROOM. Device ejection and baseline tracking implemented. |
+| 1.6 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 3 (Process Enforcement). Added `daemon/enforcement/process_enforcer.py` with seccomp-bpf syscall filtering, container isolation (podman/docker), and external watchdog. **Plan 1 COMPLETE**: System now provides actual kernel-level enforcement across network, USB, and process layers. |
 
 ---
 

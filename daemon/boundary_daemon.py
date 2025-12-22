@@ -23,12 +23,13 @@ from .event_logger import EventLogger, EventType
 
 # Import enforcement module (Plan 1: Kernel-Level Enforcement)
 try:
-    from .enforcement import NetworkEnforcer, USBEnforcer
+    from .enforcement import NetworkEnforcer, USBEnforcer, ProcessEnforcer
     ENFORCEMENT_AVAILABLE = True
 except ImportError:
     ENFORCEMENT_AVAILABLE = False
     NetworkEnforcer = None
     USBEnforcer = None
+    ProcessEnforcer = None
 
 
 class BoundaryDaemon:
@@ -86,6 +87,21 @@ class BoundaryDaemon:
                 print("USB enforcement: not available (requires root and udev)")
         else:
             print("USB enforcement module not loaded")
+
+        # Initialize process enforcer (Plan 1 Phase 3: Process Enforcement)
+        self.process_enforcer = None
+        if ENFORCEMENT_AVAILABLE and ProcessEnforcer:
+            self.process_enforcer = ProcessEnforcer(
+                daemon=self,
+                event_logger=self.event_logger
+            )
+            if self.process_enforcer.is_available:
+                runtime = self.process_enforcer.container_runtime.value
+                print(f"Process enforcement available (seccomp + container: {runtime})")
+            else:
+                print("Process enforcement: not available (requires root)")
+        else:
+            print("Process enforcement module not loaded")
 
         # Daemon state
         self._running = False
@@ -176,6 +192,24 @@ class BoundaryDaemon:
                             metadata={'error': str(e)}
                         )
 
+            # Apply process enforcement for the new mode (Plan 1 Phase 3)
+            if self.process_enforcer and self.process_enforcer.is_available:
+                try:
+                    success, msg = self.process_enforcer.enforce_mode(new_mode, reason)
+                    if success:
+                        print(f"Process enforcement applied: {msg}")
+                    else:
+                        print(f"Process enforcement warning: {msg}")
+                except Exception as e:
+                    print(f"Process enforcement error: {e}")
+                    # On enforcement failure, trigger lockdown (fail-closed)
+                    if new_mode != BoundaryMode.LOCKDOWN:
+                        self.event_logger.log_event(
+                            EventType.VIOLATION,
+                            f"Process enforcement failed, triggering lockdown: {e}",
+                            metadata={'error': str(e)}
+                        )
+
         self.policy_engine.register_transition_callback(on_mode_transition)
 
         # Tripwire violation callback
@@ -248,6 +282,20 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Initial USB enforcement failed: {e}")
 
+        # Process enforcement (Phase 3)
+        if self.process_enforcer and self.process_enforcer.is_available:
+            try:
+                success, msg = self.process_enforcer.enforce_mode(
+                    current_mode,
+                    reason="Initial enforcement on daemon start"
+                )
+                if success:
+                    print(f"Initial process enforcement applied for {current_mode.name} mode")
+                else:
+                    print(f"Warning: {msg}")
+            except Exception as e:
+                print(f"Warning: Initial process enforcement failed: {e}")
+
         # Start state monitoring
         self.state_monitor.start()
 
@@ -288,6 +336,13 @@ class BoundaryDaemon:
                 print("USB enforcement rules cleaned up")
             except Exception as e:
                 print(f"Warning: Failed to cleanup USB rules: {e}")
+
+        if self.process_enforcer and self.process_enforcer.is_available:
+            try:
+                self.process_enforcer.cleanup()
+                print("Process enforcement cleaned up")
+            except Exception as e:
+                print(f"Warning: Failed to cleanup process enforcement: {e}")
 
         # Log daemon shutdown
         self.event_logger.log_event(

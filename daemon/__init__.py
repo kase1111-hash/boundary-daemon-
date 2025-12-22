@@ -12,7 +12,8 @@ from .boundary_daemon import BoundaryDaemon
 try:
     from .enforcement import (
         NetworkEnforcer, FirewallBackend, NetworkEnforcementError,
-        USBEnforcer, USBEnforcementError, USBDeviceClass
+        USBEnforcer, USBEnforcementError, USBDeviceClass,
+        ProcessEnforcer, ProcessEnforcementError, ContainerRuntime, IsolationLevel, ContainerConfig, ExternalWatchdog
     )
     ENFORCEMENT_AVAILABLE = True
 except ImportError:
@@ -23,6 +24,12 @@ except ImportError:
     USBEnforcer = None
     USBEnforcementError = None
     USBDeviceClass = None
+    ProcessEnforcer = None
+    ProcessEnforcementError = None
+    ContainerRuntime = None
+    IsolationLevel = None
+    ContainerConfig = None
+    ExternalWatchdog = None
 
 __all__ = [
     'StateMonitor', 'EnvironmentState', 'NetworkState', 'HardwareTrust',
@@ -33,5 +40,6 @@ __all__ = [
     # Enforcement (Plan 1)
     'NetworkEnforcer', 'FirewallBackend', 'NetworkEnforcementError',
     'USBEnforcer', 'USBEnforcementError', 'USBDeviceClass',
+    'ProcessEnforcer', 'ProcessEnforcementError', 'ContainerRuntime', 'IsolationLevel', 'ContainerConfig', 'ExternalWatchdog',
     'ENFORCEMENT_AVAILABLE'
 ]

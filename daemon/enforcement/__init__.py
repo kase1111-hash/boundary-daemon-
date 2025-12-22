@@ -7,7 +7,7 @@ detection and logging to actually prevent unauthorized operations.
 Components:
 - NetworkEnforcer: iptables/nftables firewall management for network isolation
 - USBEnforcer: udev rules for USB device prevention
-- ProcessEnforcer: seccomp/container isolation (planned)
+- ProcessEnforcer: seccomp/container isolation for process restriction
 """
 
 from .network_enforcer import (
@@ -22,6 +22,15 @@ from .usb_enforcer import (
     USBDeviceClass,
 )
 
+from .process_enforcer import (
+    ProcessEnforcer,
+    ProcessEnforcementError,
+    ContainerRuntime,
+    IsolationLevel,
+    ContainerConfig,
+    ExternalWatchdog,
+)
+
 __all__ = [
     # Network Enforcement (Plan 1 Phase 1)
     'NetworkEnforcer',
@@ -31,4 +40,11 @@ __all__ = [
     'USBEnforcer',
     'USBEnforcementError',
     'USBDeviceClass',
+    # Process Enforcement (Plan 1 Phase 3)
+    'ProcessEnforcer',
+    'ProcessEnforcementError',
+    'ContainerRuntime',
+    'IsolationLevel',
+    'ContainerConfig',
+    'ExternalWatchdog',
 ]
