@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.8
+**Version:** 1.9
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -209,7 +209,7 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Graceful Degradation**: Continues operation if TPM not available
 - **Cleanup**: Releases TPM resources on daemon shutdown
 
-#### 13. Signed Event Logger (`daemon/signed_event_logger.py`) ✅ NEW
+#### 13. Signed Event Logger (`daemon/signed_event_logger.py`) ✅
 - **Cryptographic Signatures**: Ed25519 signatures (via PyNaCl/libsodium) for each event
 - **Non-Repudiation**: Events are cryptographically signed for external verification
 - **Key Management**: Auto-generates and persists signing key with secure permissions
@@ -219,6 +219,17 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Public Key Export**: Export verification key for third-party auditing
 - **Graceful Fallback**: Falls back to basic EventLogger if PyNaCl not available
 - **Daemon Integration**: BoundaryDaemon automatically uses SignedEventLogger when available
+
+#### 14. Cluster Manager (`daemon/distributed/cluster_manager.py`) ✅ NEW
+- **Distributed Coordination**: Manages cluster-wide boundary mode synchronization
+- **Node Registration**: Auto-registers nodes with heartbeat and TTL
+- **Sync Policies**: MOST_RESTRICTIVE, LEAST_RESTRICTIVE, MAJORITY, LEADER
+- **Mode Broadcasting**: Broadcast mode changes to all cluster nodes
+- **Violation Reporting**: Report tripwire violations to cluster
+- **Health Monitoring**: Track healthy vs unhealthy nodes via heartbeat
+- **Coordinator Backends**: FileCoordinator (dev) and EtcdCoordinator (production)
+- **Environment-Based Config**: Enable via BOUNDARY_CLUSTER_DIR environment variable
+- **Daemon Integration**: BoundaryDaemon starts/stops cluster coordination automatically
 
 ### ⚠️ Partially Implemented / Limited
 
@@ -712,11 +723,11 @@ class SignedEventLogger(EventLogger):
 
 ---
 
-### Plan 4: Distributed Deployment (Priority: LOW)
+### Plan 4: Distributed Deployment (Priority: LOW) ✅ IMPLEMENTED
 
 **Goal**: Coordinate boundary policies across multiple hosts.
 
-**Duration**: 8-12 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/distributed/cluster_manager.py` & `daemon/distributed/coordinators.py`
 
 **Architecture**:
 ```
@@ -2241,6 +2252,7 @@ class ViolationType(Enum):
 | 1.6 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 3 (Process Enforcement). Added `daemon/enforcement/process_enforcer.py` with seccomp-bpf syscall filtering, container isolation (podman/docker), and external watchdog. **Plan 1 COMPLETE**: System now provides actual kernel-level enforcement across network, USB, and process layers. |
 | 1.7 | 2025-12-22 | **MAJOR**: Implemented Plan 2 (TPM Integration). Added `daemon/hardware/tpm_manager.py` with TPM 2.0 support for mode attestation and secret sealing. Mode transitions now cryptographically bound to TPM PCR. Secrets can be sealed to specific boundary modes and only unsealed when in correct security posture. |
 | 1.8 | 2025-12-22 | **MAJOR**: Integrated Plan 3 (Cryptographic Log Signing). SignedEventLogger now integrated with BoundaryDaemon. Ed25519 signatures (via PyNaCl) for each event provide non-repudiation. Public key export for external verification. Full integrity check combines hash chain + signature verification. |
+| 1.9 | 2025-12-22 | **MAJOR**: Integrated Plan 4 (Distributed Deployment). ClusterManager now integrated with BoundaryDaemon. Supports multiple sync policies (MOST_RESTRICTIVE, LEAST_RESTRICTIVE, MAJORITY, LEADER). Enable via BOUNDARY_CLUSTER_DIR environment variable. FileCoordinator for dev, EtcdCoordinator for production. Node heartbeat, health monitoring, and violation reporting across cluster. |
 
 ---
 

@@ -49,6 +49,21 @@ except ImportError:
     TPMAttestationError = None
     SealedSecret = None
 
+# Import distributed module (Plan 4: Distributed Deployment)
+try:
+    from .distributed import (
+        ClusterManager, ClusterNode, ClusterState,
+        FileCoordinator, Coordinator
+    )
+    DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    DISTRIBUTED_AVAILABLE = False
+    ClusterManager = None
+    ClusterNode = None
+    ClusterState = None
+    FileCoordinator = None
+    Coordinator = None
+
 __all__ = [
     'StateMonitor', 'EnvironmentState', 'NetworkState', 'HardwareTrust',
     'PolicyEngine', 'BoundaryMode', 'PolicyRequest', 'PolicyDecision', 'Operator', 'MemoryClass',
@@ -64,5 +79,9 @@ __all__ = [
     # Hardware (Plan 2: TPM)
     'TPMManager', 'TPMError', 'TPMNotAvailableError',
     'TPMSealingError', 'TPMUnsealingError', 'TPMAttestationError', 'SealedSecret',
-    'TPM_AVAILABLE'
+    'TPM_AVAILABLE',
+    # Distributed (Plan 4)
+    'ClusterManager', 'ClusterNode', 'ClusterState',
+    'FileCoordinator', 'Coordinator',
+    'DISTRIBUTED_AVAILABLE'
 ]

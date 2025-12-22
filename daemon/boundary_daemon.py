@@ -47,6 +47,15 @@ except ImportError:
     TPM_MODULE_AVAILABLE = False
     TPMManager = None
 
+# Import distributed module (Plan 4: Distributed Deployment)
+try:
+    from .distributed import ClusterManager, FileCoordinator
+    DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    DISTRIBUTED_AVAILABLE = False
+    ClusterManager = None
+    FileCoordinator = None
+
 
 class BoundaryDaemon:
     """
@@ -148,6 +157,28 @@ class BoundaryDaemon:
                 print("TPM integration: not available (no TPM hardware or tools)")
         else:
             print("TPM integration module not loaded")
+
+        # Initialize cluster manager (Plan 4: Distributed Deployment)
+        self.cluster_manager = None
+        self.cluster_enabled = False
+        if DISTRIBUTED_AVAILABLE and ClusterManager and FileCoordinator:
+            # Cluster mode can be enabled via environment variable or config
+            cluster_data_dir = os.environ.get('BOUNDARY_CLUSTER_DIR', None)
+            if cluster_data_dir:
+                try:
+                    coordinator = FileCoordinator(cluster_data_dir)
+                    self.cluster_manager = ClusterManager(
+                        daemon=self,
+                        coordinator=coordinator
+                    )
+                    self.cluster_enabled = True
+                    print(f"Cluster coordination available (node: {self.cluster_manager.node_id})")
+                except Exception as e:
+                    print(f"Warning: Cluster coordination failed to initialize: {e}")
+            else:
+                print("Cluster coordination: not enabled (set BOUNDARY_CLUSTER_DIR to enable)")
+        else:
+            print("Cluster coordination module not loaded")
 
         # Daemon state
         self._running = False
@@ -358,6 +389,14 @@ class BoundaryDaemon:
         self._enforcement_thread = threading.Thread(target=self._enforcement_loop, daemon=False)
         self._enforcement_thread.start()
 
+        # Start cluster coordination (Plan 4)
+        if self.cluster_manager and self.cluster_enabled:
+            try:
+                self.cluster_manager.start()
+                print(f"Cluster coordination started (node: {self.cluster_manager.node_id})")
+            except Exception as e:
+                print(f"Warning: Cluster coordination failed to start: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -406,6 +445,14 @@ class BoundaryDaemon:
                 print("TPM resources cleaned up")
             except Exception as e:
                 print(f"Warning: Failed to cleanup TPM resources: {e}")
+
+        # Stop cluster coordination (Plan 4)
+        if self.cluster_manager and self.cluster_enabled:
+            try:
+                self.cluster_manager.stop()
+                print("Cluster coordination stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop cluster coordination: {e}")
 
         # Log daemon shutdown
         self.event_logger.log_event(
@@ -603,6 +650,21 @@ class BoundaryDaemon:
         # Add public key if signed logging is enabled
         if self.signed_logging and hasattr(self.event_logger, 'get_public_key_hex'):
             status['public_verification_key'] = self.event_logger.get_public_key_hex()
+
+        # Add cluster information if enabled
+        status['cluster_enabled'] = self.cluster_enabled
+        if self.cluster_manager and self.cluster_enabled:
+            try:
+                cluster_state = self.cluster_manager.get_cluster_state()
+                status['cluster'] = {
+                    'node_id': self.cluster_manager.node_id,
+                    'cluster_mode': cluster_state.cluster_mode,
+                    'total_nodes': len(cluster_state.nodes),
+                    'healthy_nodes': len(self.cluster_manager.get_healthy_nodes()),
+                    'total_violations': cluster_state.total_violations
+                }
+            except Exception as e:
+                status['cluster'] = {'error': str(e)}
 
         return status
 
