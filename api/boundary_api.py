@@ -366,6 +366,24 @@ class BoundaryAPIClient:
             sock.close()
             return response
 
+        except FileNotFoundError:
+            return {
+                'success': False,
+                'error': f'Daemon not running - socket not found at {self.socket_path}\n'
+                         f'Start the daemon with: python -m daemon.boundary_daemon'
+            }
+        except ConnectionRefusedError:
+            return {
+                'success': False,
+                'error': f'Daemon not responding - connection refused at {self.socket_path}\n'
+                         f'The daemon may have crashed. Check logs and restart.'
+            }
+        except PermissionError:
+            return {
+                'success': False,
+                'error': f'Permission denied - cannot access socket at {self.socket_path}\n'
+                         f'Check socket permissions or run with appropriate privileges.'
+            }
         except Exception as e:
             return {'success': False, 'error': str(e)}
 

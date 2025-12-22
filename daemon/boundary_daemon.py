@@ -21,6 +21,16 @@ from .policy_engine import PolicyEngine, BoundaryMode, PolicyRequest, PolicyDeci
 from .tripwires import TripwireSystem, LockdownManager, TripwireViolation
 from .event_logger import EventLogger, EventType
 
+# Import API server for external CLI tools
+try:
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from api.boundary_api import BoundaryAPIServer
+    API_SERVER_AVAILABLE = True
+except ImportError:
+    API_SERVER_AVAILABLE = False
+    BoundaryAPIServer = None
+
 # Import signed event logger (Plan 3: Cryptographic Log Signing)
 try:
     from .signed_event_logger import SignedEventLogger
@@ -378,6 +388,15 @@ class BoundaryDaemon:
         self._shutdown_event = threading.Event()
         self._enforcement_thread: Optional[threading.Thread] = None
 
+        # Initialize API server for CLI tools
+        self.api_server = None
+        if API_SERVER_AVAILABLE and BoundaryAPIServer:
+            socket_path = os.path.join(os.path.dirname(log_dir), 'api', 'boundary.sock')
+            self.api_server = BoundaryAPIServer(daemon=self, socket_path=socket_path)
+            print(f"API server initialized (socket: {socket_path})")
+        else:
+            print("API server: not available")
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -598,6 +617,13 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Log watchdog failed to start: {e}")
 
+        # Start API server for CLI tools
+        if self.api_server:
+            try:
+                self.api_server.start()
+            except Exception as e:
+                print(f"Warning: Failed to start API server: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -612,6 +638,14 @@ class BoundaryDaemon:
 
         # Stop state monitor
         self.state_monitor.stop()
+
+        # Stop API server
+        if self.api_server:
+            try:
+                self.api_server.stop()
+                print("API server stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop API server: {e}")
 
         # Wait for enforcement thread
         if self._enforcement_thread:
