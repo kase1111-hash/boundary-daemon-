@@ -94,6 +94,16 @@ except ImportError:
     WatchdogSeverity = None
     WatchdogStatus = None
 
+# Import telemetry module (Plan 9: OpenTelemetry Integration)
+try:
+    from .telemetry import TelemetryManager, TelemetryConfig, ExportMode
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    TelemetryManager = None
+    TelemetryConfig = None
+    ExportMode = None
+
 
 class BoundaryDaemon:
     """
@@ -333,6 +343,35 @@ class BoundaryDaemon:
                 print("Log watchdog: not enabled (set BOUNDARY_WATCHDOG_DIR to enable)")
         else:
             print("Log watchdog module not loaded")
+
+        # Initialize telemetry (Plan 9: OpenTelemetry Integration)
+        self.telemetry_manager = None
+        self.telemetry_enabled = False
+        if TELEMETRY_AVAILABLE and TelemetryManager:
+            # Telemetry can be enabled via environment variable
+            telemetry_dir = os.environ.get('BOUNDARY_TELEMETRY_DIR', None)
+            if telemetry_dir:
+                try:
+                    config = TelemetryConfig.from_env()
+                    self.telemetry_manager = TelemetryManager(
+                        daemon=self,
+                        config=config
+                    )
+                    if self.telemetry_manager.initialize():
+                        self.telemetry_enabled = True
+                        stats = self.telemetry_manager.get_summary_stats()
+                        print(f"Telemetry available (OTel: {stats['otel_available']}, OTLP: {stats['otlp_available']})")
+                        print(f"  Export mode: {stats['export_mode']}")
+                        print(f"  Instance ID: {stats['instance_id']}")
+                    else:
+                        print("Telemetry: initialized in fallback mode")
+                        self.telemetry_enabled = True
+                except Exception as e:
+                    print(f"Warning: Telemetry failed to initialize: {e}")
+            else:
+                print("Telemetry: not enabled (set BOUNDARY_TELEMETRY_DIR to enable)")
+        else:
+            print("Telemetry module not loaded")
 
         # Daemon state
         self._running = False
@@ -623,6 +662,14 @@ class BoundaryDaemon:
                 print("Log watchdog stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop log watchdog: {e}")
+
+        # Shutdown telemetry (Plan 9)
+        if self.telemetry_manager and self.telemetry_enabled:
+            try:
+                self.telemetry_manager.shutdown()
+                print("Telemetry shutdown complete")
+            except Exception as e:
+                print(f"Warning: Failed to shutdown telemetry: {e}")
 
         # Log daemon shutdown
         self.event_logger.log_event(
@@ -924,6 +971,23 @@ class BoundaryDaemon:
                 }
             except Exception as e:
                 status['watchdog'] = {'error': str(e)}
+
+        # Add telemetry information if enabled (Plan 9)
+        status['telemetry_enabled'] = self.telemetry_enabled
+        if self.telemetry_manager and self.telemetry_enabled:
+            try:
+                stats = self.telemetry_manager.get_summary_stats()
+                status['telemetry'] = {
+                    'otel_available': stats['otel_available'],
+                    'otlp_available': stats['otlp_available'],
+                    'export_mode': stats['export_mode'],
+                    'instance_id': stats['instance_id'],
+                    'hostname': stats['hostname'],
+                    'metrics_count': stats['metrics_count'],
+                    'spans_recorded': stats['spans_recorded']
+                }
+            except Exception as e:
+                status['telemetry'] = {'error': str(e)}
 
         return status
 
@@ -1545,6 +1609,100 @@ class BoundaryDaemon:
                 return (True, "No issues detected", {})
         except Exception as e:
             return (False, f"Analysis error: {e}", {})
+
+    # Telemetry API methods (Plan 9)
+
+    def get_telemetry_summary(self) -> dict:
+        """
+        Get a summary of telemetry status (Plan 9).
+
+        Returns:
+            Dictionary with telemetry summary statistics
+        """
+        if not self.telemetry_manager or not self.telemetry_enabled:
+            return {'enabled': False, 'error': 'Telemetry not enabled'}
+
+        try:
+            return self.telemetry_manager.get_summary_stats()
+        except Exception as e:
+            return {'enabled': True, 'error': str(e)}
+
+    def record_telemetry_span(self, name: str, attributes: dict = None) -> tuple[bool, str]:
+        """
+        Record a custom telemetry span (Plan 9).
+
+        Args:
+            name: Span name
+            attributes: Optional span attributes
+
+        Returns:
+            (success, message)
+        """
+        if not self.telemetry_manager or not self.telemetry_enabled:
+            return (False, "Telemetry not enabled")
+
+        try:
+            with self.telemetry_manager.start_span(name, attributes) as span:
+                span.add_event("custom_span_created")
+            return (True, f"Span '{name}' recorded")
+        except Exception as e:
+            return (False, f"Failed to record span: {e}")
+
+    def record_telemetry_metric(self, name: str, value: float, attributes: dict = None) -> tuple[bool, str]:
+        """
+        Record a custom telemetry metric (Plan 9).
+
+        Args:
+            name: Metric name
+            value: Metric value
+            attributes: Optional metric attributes
+
+        Returns:
+            (success, message)
+        """
+        if not self.telemetry_manager or not self.telemetry_enabled:
+            return (False, "Telemetry not enabled")
+
+        try:
+            self.telemetry_manager.record_metric(name, value, attributes)
+            return (True, f"Metric '{name}' recorded with value {value}")
+        except Exception as e:
+            return (False, f"Failed to record metric: {e}")
+
+    def get_recent_telemetry_spans(self, limit: int = 100) -> list:
+        """
+        Get recently recorded telemetry spans (Plan 9).
+
+        Args:
+            limit: Maximum number of spans to return
+
+        Returns:
+            List of span dictionaries
+        """
+        if not self.telemetry_manager or not self.telemetry_enabled:
+            return []
+
+        try:
+            return self.telemetry_manager.get_recent_spans(limit)
+        except Exception as e:
+            print(f"Error getting recent spans: {e}")
+            return []
+
+    def get_telemetry_metrics(self) -> dict:
+        """
+        Get telemetry metrics snapshot (Plan 9).
+
+        Returns:
+            Dictionary with metrics data
+        """
+        if not self.telemetry_manager or not self.telemetry_enabled:
+            return {}
+
+        try:
+            return self.telemetry_manager.get_metrics_snapshot()
+        except Exception as e:
+            print(f"Error getting metrics: {e}")
+            return {}
 
 
 def main():

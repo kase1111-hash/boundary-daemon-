@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 2.3
+**Version:** 2.4
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -287,6 +287,22 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Model Flexibility**: Configurable LLM model via BOUNDARY_WATCHDOG_MODEL env var
 - **Log Path Config**: Configure log paths via BOUNDARY_WATCHDOG_LOGS (colon-separated)
 - **Daemon Integration**: BoundaryDaemon provides start_watchdog(), stop_watchdog(), get_watchdog_alerts(), acknowledge_watchdog_alert(), resolve_watchdog_alert(), dismiss_watchdog_alert(), add_watchdog_log_path(), get_watchdog_summary(), analyze_log_entry()
+
+#### 19. OpenTelemetry Integration (`daemon/telemetry/`) ✅ NEW
+- **Distributed Tracing**: TracerProvider with span events for operations
+- **Metrics Collection**: MeterProvider with counters, histograms, gauges
+- **Standard Metrics**: violations_total, mode_transitions, ceremonies, policy_decisions, watchdog_alerts, security_scans
+- **Standard Histograms**: ceremony_latency, scan_duration, mode_duration
+- **Graceful Fallback**: Works without OpenTelemetry package installed
+- **Multiple Exporters**: Console (default), File (JSON Lines), Remote (OTLP/gRPC)
+- **Mode-Aware Export**: Remote export blocked in AIRGAP/COLDROOM/LOCKDOWN modes
+- **Sensitive Data Redaction**: Automatic redaction of passwords, tokens, secrets
+- **Resource Attributes**: service.name, instance.id, host.name, boundary.version
+- **Span Context**: Automatic trace/span ID correlation
+- **Environment-Based Config**: Enable via BOUNDARY_TELEMETRY_DIR environment variable
+- **Export Config**: BOUNDARY_TELEMETRY_CONSOLE, BOUNDARY_TELEMETRY_FILE, BOUNDARY_TELEMETRY_REMOTE
+- **Remote Endpoint**: BOUNDARY_TELEMETRY_ENDPOINT for OTLP collector
+- **Daemon Integration**: BoundaryDaemon provides get_telemetry_summary(), record_telemetry_span(), record_telemetry_metric(), get_recent_telemetry_spans(), get_telemetry_metrics()
 
 ### ⚠️ Partially Implemented / Limited
 
@@ -1390,11 +1406,11 @@ notification_channels = []  # e.g., ['slack', 'email']
 
 ---
 
-### Plan 9: OpenTelemetry Integration (Priority: HIGH - Observability)
+### Plan 9: OpenTelemetry Integration (Priority: HIGH - Observability) ✅ IMPLEMENTED
 
 **Goal**: Add native OpenTelemetry (OTel) integration to enable structured, standardized observability across traces, metrics, and logs, elevating the system from ad-hoc log tailing to professional-grade, vendor-neutral telemetry.
 
-**Duration**: 4-6 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/telemetry/otel_setup.py`
 
 **Dependencies**:
 - `opentelemetry-api`
@@ -2314,6 +2330,7 @@ class ViolationType(Enum):
 | 2.1 | 2025-12-22 | **MAJOR**: Integrated Plan 6 (Biometric Authentication). BiometricVerifier and EnhancedCeremonyManager now integrated with BoundaryDaemon. Fingerprint and facial recognition with liveness detection. Enable via BOUNDARY_BIOMETRIC_DIR environment variable. Template management, cooldown on failures, graceful fallback to keyboard. Full ceremony with biometric + keyboard + cooldown. |
 | 2.2 | 2025-12-22 | **MAJOR**: Integrated Plan 7 (LLM-Powered Code Vulnerability Advisor). CodeVulnerabilityAdvisor now integrated with BoundaryDaemon. Privacy-first code scanning using local Ollama LLMs. Enable via BOUNDARY_SECURITY_DIR and BOUNDARY_SECURITY_MODEL environment variables. Daemon provides scan_code(), get_security_advisories(), update_security_advisory(), get_security_summary() methods. Advisory storage with severity classification and status tracking workflow. |
 | 2.3 | 2025-12-22 | **MAJOR**: Implemented Plan 8 (Log Watchdog Agent). Created `daemon/watchdog/` module with LogWatchdog class. Real-time log monitoring with LLM-powered analysis using local Ollama models. Enable via BOUNDARY_WATCHDOG_DIR, BOUNDARY_WATCHDOG_MODEL, and BOUNDARY_WATCHDOG_LOGS environment variables. Daemon provides start_watchdog(), stop_watchdog(), get_watchdog_alerts(), acknowledge_watchdog_alert(), resolve_watchdog_alert(), dismiss_watchdog_alert(), add_watchdog_log_path(), get_watchdog_summary(), analyze_log_entry() methods. Alert storage with severity classification (LOW/MEDIUM/HIGH/CRITICAL) and status tracking (NEW/ACKNOWLEDGED/RESOLVED/DISMISSED). |
+| 2.4 | 2025-12-22 | **MAJOR**: Implemented Plan 9 (OpenTelemetry Integration). Created `daemon/telemetry/` module with TelemetryManager class. Native OpenTelemetry support for distributed tracing, metrics, and structured logs. Enable via BOUNDARY_TELEMETRY_DIR, BOUNDARY_TELEMETRY_CONSOLE, BOUNDARY_TELEMETRY_FILE, BOUNDARY_TELEMETRY_REMOTE, and BOUNDARY_TELEMETRY_ENDPOINT environment variables. Graceful fallback when opentelemetry package not installed. Standard metrics for violations, mode_transitions, ceremonies, policy_decisions, watchdog_alerts, security_scans. Mode-aware remote export (blocked in AIRGAP/COLDROOM/LOCKDOWN). Automatic sensitive data redaction. Daemon provides get_telemetry_summary(), record_telemetry_span(), record_telemetry_metric(), get_recent_telemetry_spans(), get_telemetry_metrics() methods. |
 
 ---
 

@@ -121,6 +121,24 @@ except ImportError:
     AlertSeverity = None
     AlertStatus = None
 
+# Import telemetry module (Plan 9: OpenTelemetry Integration)
+try:
+    from .telemetry import (
+        TelemetryManager, TelemetryConfig, ExportMode,
+        RedactionProcessor, instrument,
+        OTEL_AVAILABLE, OTLP_AVAILABLE
+    )
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    TelemetryManager = None
+    TelemetryConfig = None
+    ExportMode = None
+    RedactionProcessor = None
+    instrument = None
+    OTEL_AVAILABLE = False
+    OTLP_AVAILABLE = False
+
 __all__ = [
     'StateMonitor', 'EnvironmentState', 'NetworkState', 'HardwareTrust',
     'PolicyEngine', 'BoundaryMode', 'PolicyRequest', 'PolicyDecision', 'Operator', 'MemoryClass',
@@ -155,5 +173,10 @@ __all__ = [
     # Log Watchdog (Plan 8)
     'LogWatchdog', 'WatchdogAlert', 'WatchdogConfig',
     'AlertSeverity', 'AlertStatus',
-    'WATCHDOG_AVAILABLE'
+    'WATCHDOG_AVAILABLE',
+    # Telemetry (Plan 9)
+    'TelemetryManager', 'TelemetryConfig', 'ExportMode',
+    'RedactionProcessor', 'instrument',
+    'OTEL_AVAILABLE', 'OTLP_AVAILABLE',
+    'TELEMETRY_AVAILABLE'
 ]
