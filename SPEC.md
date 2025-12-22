@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 2.0
+**Version:** 2.1
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -244,6 +244,20 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Hot Reload**: Reload policies at runtime via `reload_custom_policies()`
 - **Environment-Based Config**: Enable via BOUNDARY_POLICY_DIR environment variable
 - **Daemon Integration**: BoundaryDaemon evaluates custom policies before default policy
+
+#### 16. Biometric Authentication (`daemon/auth/`) ✅ NEW
+- **Fingerprint Recognition**: Enrollment and verification via libfprint (mock for dev)
+- **Facial Recognition**: Enrollment and verification via face_recognition + OpenCV
+- **Liveness Detection**: Blink detection for face, device-level for fingerprint
+- **Template Storage**: Encrypted templates with optional TPM sealing
+- **Threshold Matching**: Configurable match thresholds (70% fingerprint, 0.4 face distance)
+- **Cooldown System**: 30s cooldown after failed attempts to prevent brute-force
+- **Enhanced Ceremony Manager**: Full ceremony with biometric + keyboard + cooldown
+- **Quick Ceremony**: Biometric-only verification for less critical operations
+- **Template Management**: Enroll, list, and delete biometric templates
+- **Graceful Fallback**: Falls back to keyboard when hardware unavailable
+- **Environment-Based Config**: Enable via BOUNDARY_BIOMETRIC_DIR environment variable
+- **Daemon Integration**: BoundaryDaemon provides enroll_biometric(), perform_override_ceremony(), list_biometric_templates(), delete_biometric_template()
 
 ### ⚠️ Partially Implemented / Limited
 
@@ -878,11 +892,11 @@ class CustomPolicyEngine:
 
 ---
 
-### Plan 6: Biometric Authentication (Priority: MEDIUM)
+### Plan 6: Biometric Authentication (Priority: MEDIUM) ✅ IMPLEMENTED
 
 **Goal**: Enhance human override ceremonies by replacing simple keyboard input with robust biometric verification (fingerprint and facial recognition), ensuring stronger proof of human presence and preventing automation or scripting attacks.
 
-**Duration**: 3-4 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/auth/biometric_verifier.py` & `daemon/auth/enhanced_ceremony.py`
 
 **Dependencies**:
 - `libfprint` (for fingerprint scanning and matching)
@@ -2268,6 +2282,7 @@ class ViolationType(Enum):
 | 1.8 | 2025-12-22 | **MAJOR**: Integrated Plan 3 (Cryptographic Log Signing). SignedEventLogger now integrated with BoundaryDaemon. Ed25519 signatures (via PyNaCl) for each event provide non-repudiation. Public key export for external verification. Full integrity check combines hash chain + signature verification. |
 | 1.9 | 2025-12-22 | **MAJOR**: Integrated Plan 4 (Distributed Deployment). ClusterManager now integrated with BoundaryDaemon. Supports multiple sync policies (MOST_RESTRICTIVE, LEAST_RESTRICTIVE, MAJORITY, LEADER). Enable via BOUNDARY_CLUSTER_DIR environment variable. FileCoordinator for dev, EtcdCoordinator for production. Node heartbeat, health monitoring, and violation reporting across cluster. |
 | 2.0 | 2025-12-22 | **MAJOR**: Integrated Plan 5 (Custom Policy Language). CustomPolicyEngine now integrated with BoundaryDaemon. Supports YAML policy files with conditions (mode, environment, memory class, tool, time). Enable via BOUNDARY_POLICY_DIR environment variable. Priority-based policy matching with fallback to default policy. Hot reload support via reload_custom_policies(). |
+| 2.1 | 2025-12-22 | **MAJOR**: Integrated Plan 6 (Biometric Authentication). BiometricVerifier and EnhancedCeremonyManager now integrated with BoundaryDaemon. Fingerprint and facial recognition with liveness detection. Enable via BOUNDARY_BIOMETRIC_DIR environment variable. Template management, cooldown on failures, graceful fallback to keyboard. Full ceremony with biometric + keyboard + cooldown. |
 
 ---
 

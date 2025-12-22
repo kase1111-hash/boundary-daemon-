@@ -76,6 +76,21 @@ except ImportError:
     PolicyRule = None
     PolicyAction = None
 
+# Import auth module (Plan 6: Biometric Authentication)
+try:
+    from .auth import (
+        BiometricVerifier, BiometricType, BiometricResult,
+        EnhancedCeremonyManager, BiometricCeremonyConfig
+    )
+    BIOMETRIC_AVAILABLE = True
+except ImportError:
+    BIOMETRIC_AVAILABLE = False
+    BiometricVerifier = None
+    BiometricType = None
+    BiometricResult = None
+    EnhancedCeremonyManager = None
+    BiometricCeremonyConfig = None
+
 __all__ = [
     'StateMonitor', 'EnvironmentState', 'NetworkState', 'HardwareTrust',
     'PolicyEngine', 'BoundaryMode', 'PolicyRequest', 'PolicyDecision', 'Operator', 'MemoryClass',
@@ -98,5 +113,9 @@ __all__ = [
     'DISTRIBUTED_AVAILABLE',
     # Custom Policy (Plan 5)
     'CustomPolicyEngine', 'PolicyRule', 'PolicyAction',
-    'CUSTOM_POLICY_AVAILABLE'
+    'CUSTOM_POLICY_AVAILABLE',
+    # Biometric Authentication (Plan 6)
+    'BiometricVerifier', 'BiometricType', 'BiometricResult',
+    'EnhancedCeremonyManager', 'BiometricCeremonyConfig',
+    'BIOMETRIC_AVAILABLE'
 ]

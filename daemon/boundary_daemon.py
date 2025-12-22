@@ -64,6 +64,16 @@ except ImportError:
     CUSTOM_POLICY_AVAILABLE = False
     CustomPolicyEngine = None
 
+# Import auth module (Plan 6: Biometric Authentication)
+try:
+    from .auth import BiometricVerifier, EnhancedCeremonyManager, BiometricCeremonyConfig
+    BIOMETRIC_AVAILABLE = True
+except ImportError:
+    BIOMETRIC_AVAILABLE = False
+    BiometricVerifier = None
+    EnhancedCeremonyManager = None
+    BiometricCeremonyConfig = None
+
 
 class BoundaryDaemon:
     """
@@ -206,6 +216,41 @@ class BoundaryDaemon:
                 print("Custom policy engine: not enabled (set BOUNDARY_POLICY_DIR to enable)")
         else:
             print("Custom policy engine module not loaded")
+
+        # Initialize biometric authentication (Plan 6: Biometric Authentication)
+        self.biometric_verifier = None
+        self.ceremony_manager = None
+        self.biometric_enabled = False
+        if BIOMETRIC_AVAILABLE and BiometricVerifier and EnhancedCeremonyManager:
+            # Biometric auth can be enabled via environment variable
+            biometric_dir = os.environ.get('BOUNDARY_BIOMETRIC_DIR', None)
+            if biometric_dir:
+                try:
+                    # Create biometric verifier with optional TPM integration
+                    self.biometric_verifier = BiometricVerifier(
+                        template_dir=biometric_dir,
+                        tpm_manager=self.tpm_manager
+                    )
+                    # Create enhanced ceremony manager with biometric support
+                    biometric_config = BiometricCeremonyConfig()
+                    biometric_config.enabled = True
+                    biometric_config.fallback_to_keyboard = True
+                    self.ceremony_manager = EnhancedCeremonyManager(
+                        daemon=self,
+                        biometric_verifier=self.biometric_verifier,
+                        config=biometric_config
+                    )
+                    self.biometric_enabled = True
+                    caps = self.biometric_verifier.get_capabilities()
+                    print(f"Biometric authentication available ({caps['enrolled_count']} templates enrolled)")
+                    print(f"  Fingerprint: {'Available' if caps['fingerprint_available'] else 'Not available'}")
+                    print(f"  Face: {'Available' if caps['face_available'] else 'Not available'}")
+                except Exception as e:
+                    print(f"Warning: Biometric authentication failed to initialize: {e}")
+            else:
+                print("Biometric authentication: not enabled (set BOUNDARY_BIOMETRIC_DIR to enable)")
+        else:
+            print("Biometric authentication module not loaded")
 
         # Daemon state
         self._running = False
@@ -730,6 +775,25 @@ class BoundaryDaemon:
             except Exception as e:
                 status['custom_policy'] = {'error': str(e)}
 
+        # Add biometric authentication information if enabled (Plan 6)
+        status['biometric_enabled'] = self.biometric_enabled
+        if self.biometric_verifier and self.biometric_enabled:
+            try:
+                caps = self.biometric_verifier.get_capabilities()
+                status['biometric'] = {
+                    'template_dir': str(self.biometric_verifier.template_dir),
+                    'fingerprint_available': caps['fingerprint_available'],
+                    'face_available': caps['face_available'],
+                    'enrolled_count': caps['enrolled_count'],
+                    'fingerprint_enrolled': caps['fingerprint_enrolled'],
+                    'face_enrolled': caps['face_enrolled']
+                }
+                if self.ceremony_manager:
+                    ceremony_stats = self.ceremony_manager.get_ceremony_stats()
+                    status['biometric']['ceremony_stats'] = ceremony_stats
+            except Exception as e:
+                status['biometric'] = {'error': str(e)}
+
         return status
 
     def verify_log_integrity(self) -> tuple[bool, str]:
@@ -804,6 +868,140 @@ class BoundaryDaemon:
             return (True, f"Reloaded {policy_count} custom policies")
         except Exception as e:
             return (False, f"Failed to reload policies: {e}")
+
+    def enroll_biometric(self, biometric_type: str = 'fingerprint') -> tuple[bool, str]:
+        """
+        Enroll a new biometric template (Plan 6).
+
+        Args:
+            biometric_type: 'fingerprint' or 'face'
+
+        Returns:
+            (success, message)
+        """
+        if not self.biometric_verifier or not self.biometric_enabled:
+            return (False, "Biometric authentication not enabled")
+
+        try:
+            if biometric_type == 'fingerprint':
+                success, error = self.biometric_verifier.enroll_fingerprint()
+            elif biometric_type == 'face':
+                success, error = self.biometric_verifier.enroll_face()
+            else:
+                return (False, f"Unknown biometric type: {biometric_type}")
+
+            if success:
+                self.event_logger.log_event(
+                    EventType.BIOMETRIC_ATTEMPT,
+                    f"Biometric enrollment success: {biometric_type}",
+                    metadata={'biometric_type': biometric_type, 'action': 'enroll', 'success': True}
+                )
+                return (True, f"{biometric_type.capitalize()} enrolled successfully")
+            else:
+                self.event_logger.log_event(
+                    EventType.BIOMETRIC_ATTEMPT,
+                    f"Biometric enrollment failed: {biometric_type}",
+                    metadata={'biometric_type': biometric_type, 'action': 'enroll', 'success': False, 'error': error}
+                )
+                return (False, error or "Enrollment failed")
+        except Exception as e:
+            return (False, f"Enrollment error: {e}")
+
+    def perform_override_ceremony(self, action: str, reason: str,
+                                  require_biometric: bool = True) -> tuple[bool, str]:
+        """
+        Perform a human override ceremony with optional biometric verification (Plan 6).
+
+        Args:
+            action: Description of the action being overridden
+            reason: Reason for the override
+            require_biometric: Whether to require biometric verification
+
+        Returns:
+            (success, message)
+        """
+        if self.ceremony_manager and self.biometric_enabled:
+            return self.ceremony_manager.initiate_override(
+                action=action,
+                reason=reason,
+                require_biometric=require_biometric
+            )
+        else:
+            # Fall back to basic keyboard ceremony
+            print(f"\nOverride ceremony for: {action}")
+            print(f"Reason: {reason}")
+            print("\nBiometric not available. Using keyboard ceremony.")
+            print("Type 'CONFIRM' to proceed:")
+            user_input = input("> ")
+            if user_input == "CONFIRM":
+                self.event_logger.log_event(
+                    EventType.OVERRIDE,
+                    f"Override ceremony success (keyboard): {action}",
+                    metadata={'action': action, 'reason': reason, 'method': 'keyboard'}
+                )
+                return (True, "Override ceremony completed")
+            else:
+                self.event_logger.log_event(
+                    EventType.OVERRIDE,
+                    f"Override ceremony failed (keyboard): {action}",
+                    metadata={'action': action, 'reason': reason, 'method': 'keyboard'}
+                )
+                return (False, "Confirmation failed")
+
+    def list_biometric_templates(self) -> list:
+        """
+        List enrolled biometric templates (Plan 6).
+
+        Returns:
+            List of enrolled template metadata
+        """
+        if not self.biometric_verifier or not self.biometric_enabled:
+            return []
+
+        templates = self.biometric_verifier.list_enrolled()
+        return [
+            {
+                'template_id': t.template_id,
+                'type': t.biometric_type.value,
+                'created_at': t.created_at,
+                'last_used': t.last_used,
+                'use_count': t.use_count
+            }
+            for t in templates
+        ]
+
+    def delete_biometric_template(self, template_id: str) -> tuple[bool, str]:
+        """
+        Delete a biometric template (Plan 6).
+
+        Args:
+            template_id: ID of template to delete
+
+        Returns:
+            (success, message)
+        """
+        if not self.biometric_verifier or not self.biometric_enabled:
+            return (False, "Biometric authentication not enabled")
+
+        # Require ceremony to delete templates
+        success, msg = self.perform_override_ceremony(
+            action=f"Delete biometric template {template_id}",
+            reason="User requested template deletion",
+            require_biometric=True
+        )
+
+        if not success:
+            return (False, f"Ceremony failed: {msg}")
+
+        if self.biometric_verifier.delete_template(template_id):
+            self.event_logger.log_event(
+                EventType.BIOMETRIC_ATTEMPT,
+                f"Biometric template deleted: {template_id}",
+                metadata={'template_id': template_id, 'action': 'delete'}
+            )
+            return (True, f"Template {template_id} deleted")
+        else:
+            return (False, f"Template {template_id} not found")
 
 
 def main():
