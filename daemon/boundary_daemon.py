@@ -21,6 +21,14 @@ from .policy_engine import PolicyEngine, BoundaryMode, PolicyRequest, PolicyDeci
 from .tripwires import TripwireSystem, LockdownManager, TripwireViolation
 from .event_logger import EventLogger, EventType
 
+# Import enforcement module (Plan 1: Kernel-Level Enforcement)
+try:
+    from .enforcement import NetworkEnforcer
+    ENFORCEMENT_AVAILABLE = True
+except ImportError:
+    ENFORCEMENT_AVAILABLE = False
+    NetworkEnforcer = None
+
 
 class BoundaryDaemon:
     """
@@ -49,6 +57,20 @@ class BoundaryDaemon:
         self.policy_engine = PolicyEngine(initial_mode=initial_mode)
         self.tripwire_system = TripwireSystem()
         self.lockdown_manager = LockdownManager()
+
+        # Initialize network enforcer (Plan 1: Kernel-Level Enforcement)
+        self.network_enforcer = None
+        if ENFORCEMENT_AVAILABLE and NetworkEnforcer:
+            self.network_enforcer = NetworkEnforcer(
+                daemon=self,
+                event_logger=self.event_logger
+            )
+            if self.network_enforcer.is_available:
+                print(f"Network enforcement available (backend: {self.network_enforcer.backend.value})")
+            else:
+                print("Network enforcement: not available (requires root and iptables/nftables)")
+        else:
+            print("Network enforcement module not loaded")
 
         # Daemon state
         self._running = False
@@ -103,6 +125,24 @@ class BoundaryDaemon:
             )
             print(f"Mode transition: {old_mode.name} → {new_mode.name} ({operator.value})")
 
+            # Apply network enforcement for the new mode (Plan 1)
+            if self.network_enforcer and self.network_enforcer.is_available:
+                try:
+                    success, msg = self.network_enforcer.enforce_mode(new_mode, reason)
+                    if success:
+                        print(f"Network enforcement applied: {msg}")
+                    else:
+                        print(f"Network enforcement warning: {msg}")
+                except Exception as e:
+                    print(f"Network enforcement error: {e}")
+                    # On enforcement failure, trigger lockdown (fail-closed)
+                    if new_mode != BoundaryMode.LOCKDOWN:
+                        self.event_logger.log_event(
+                            EventType.VIOLATION,
+                            f"Network enforcement failed, triggering lockdown: {e}",
+                            metadata={'error': str(e)}
+                        )
+
         self.policy_engine.register_transition_callback(on_mode_transition)
 
         # Tripwire violation callback
@@ -144,6 +184,21 @@ class BoundaryDaemon:
         print("Starting Boundary Daemon...")
         self._running = True
 
+        # Apply initial network enforcement (Plan 1)
+        if self.network_enforcer and self.network_enforcer.is_available:
+            current_mode = self.policy_engine.get_current_mode()
+            try:
+                success, msg = self.network_enforcer.enforce_mode(
+                    current_mode,
+                    reason="Initial enforcement on daemon start"
+                )
+                if success:
+                    print(f"Initial network enforcement applied for {current_mode.name} mode")
+                else:
+                    print(f"Warning: {msg}")
+            except Exception as e:
+                print(f"Warning: Initial network enforcement failed: {e}")
+
         # Start state monitoring
         self.state_monitor.start()
 
@@ -169,6 +224,14 @@ class BoundaryDaemon:
         # Wait for enforcement thread
         if self._enforcement_thread:
             self._enforcement_thread.join(timeout=5.0)
+
+        # Cleanup network enforcement rules (Plan 1)
+        if self.network_enforcer and self.network_enforcer.is_available:
+            try:
+                self.network_enforcer.cleanup()
+                print("Network enforcement rules cleaned up")
+            except Exception as e:
+                print(f"Warning: Failed to cleanup network rules: {e}")
 
         # Log daemon shutdown
         self.event_logger.log_event(

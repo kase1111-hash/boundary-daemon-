@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.3
+**Version:** 1.4
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -164,13 +164,22 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Signal Handling**: Graceful shutdown (SIGINT/SIGTERM)
 - **Public API**: check_recall_permission, check_tool_permission, get_status
 
+#### 9. Network Enforcer (`daemon/enforcement/network_enforcer.py`) ✅ NEW
+- **Network Enforcement**: iptables/nftables firewall rule management
+- **Mode-Based Rules**: Automatic rule application on mode transitions
+- **AIRGAP Enforcement**: Blocks all network except loopback
+- **TRUSTED Mode**: Allows only VPN interfaces
+- **LOCKDOWN Mode**: Blocks all traffic including loopback
+- **Fail-Closed**: Triggers lockdown on enforcement failure
+- **Cleanup**: Removes rules on daemon shutdown
+
 ### ⚠️ Partially Implemented / Limited
 
 #### 1. Enforcement Mechanism
-- **Status**: Detection-only, no actual prevention
-- **What Works**: Logging, policy decisions, denial responses
-- **What's Missing**: Cannot physically block operations (network, USB, filesystem)
-- **Impact**: System is voluntary - components can ignore denials
+- **Status**: Network enforcement implemented (Plan 1 Phase 1), USB/process enforcement pending
+- **What Works**: Network blocking via iptables/nftables, logging, policy decisions
+- **What's Missing**: USB prevention (Phase 2), process isolation (Phase 3)
+- **Impact**: Network-based exfiltration now blocked; USB/process attacks still possible
 
 #### 2. Human Presence Verification
 - **Status**: Basic keyboard input only
@@ -318,14 +327,14 @@ See [Unimplemented Features](#unimplemented-features) section below.
 **Goal**: Transform from detection-only to actual enforcement system.
 
 **Components**:
-1. **SELinux/AppArmor Policy Generator**
-2. **iptables/nftables Rule Manager**
-3. **udev USB Rule Manager**
-4. **seccomp-bpf Filter Installer**
+1. **SELinux/AppArmor Policy Generator** - Planned
+2. **iptables/nftables Rule Manager** - ✅ **IMPLEMENTED**
+3. **udev USB Rule Manager** - Planned
+4. **seccomp-bpf Filter Installer** - Planned
 
 **Implementation Steps**:
 
-#### Phase 1: Network Enforcement (4-6 weeks)
+#### Phase 1: Network Enforcement ✅ IMPLEMENTED
 ```python
 # New module: daemon/enforcement/network_enforcer.py
 
@@ -2180,6 +2189,7 @@ class ViolationType(Enum):
 | 1.1 | 2025-12-21 | Added Plan 7 (LLM-Powered Code Vulnerability Advisor), expanded Plan 6 (Biometric Authentication) with detailed implementation, added PII Detection & Redaction Pipeline, added Proactive Exposure Monitoring, added new event types |
 | 1.2 | 2025-12-21 | Added Plan 8 (Log Watchdog Agent) for real-time log monitoring and anomaly detection, added Plan 9 (OpenTelemetry Integration) for enterprise-grade observability, updated event types (WATCHDOG_ALERT, WATCHDOG_RECOMMEND, TELEMETRY_EXPORT), expanded dependencies for new features |
 | 1.3 | 2025-12-22 | Consolidated all feature documentation into single spec. Added Plan 9 Extension (Prometheus Metrics Export). Removed obsolete documents: Spec_1.1.md, Additional-Specs.md, Future-Features.md, Future-Feature-framework.md |
+| 1.4 | 2025-12-22 | **MAJOR**: Implemented Plan 1 Phase 1 (Network Enforcement). Added `daemon/enforcement/network_enforcer.py` with iptables/nftables support. Network-based exfiltration now blocked in AIRGAP/COLDROOM/LOCKDOWN modes. Updated implementation status. |
 
 ---
 
