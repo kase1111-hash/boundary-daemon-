@@ -64,6 +64,18 @@ except ImportError:
     FileCoordinator = None
     Coordinator = None
 
+# Import custom policy module (Plan 5: Custom Policy Language)
+try:
+    from .policy import (
+        CustomPolicyEngine, PolicyRule, PolicyAction
+    )
+    CUSTOM_POLICY_AVAILABLE = True
+except ImportError:
+    CUSTOM_POLICY_AVAILABLE = False
+    CustomPolicyEngine = None
+    PolicyRule = None
+    PolicyAction = None
+
 __all__ = [
     'StateMonitor', 'EnvironmentState', 'NetworkState', 'HardwareTrust',
     'PolicyEngine', 'BoundaryMode', 'PolicyRequest', 'PolicyDecision', 'Operator', 'MemoryClass',
@@ -83,5 +95,8 @@ __all__ = [
     # Distributed (Plan 4)
     'ClusterManager', 'ClusterNode', 'ClusterState',
     'FileCoordinator', 'Coordinator',
-    'DISTRIBUTED_AVAILABLE'
+    'DISTRIBUTED_AVAILABLE',
+    # Custom Policy (Plan 5)
+    'CustomPolicyEngine', 'PolicyRule', 'PolicyAction',
+    'CUSTOM_POLICY_AVAILABLE'
 ]

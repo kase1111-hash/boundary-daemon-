@@ -1,6 +1,6 @@
 # Boundary Daemon - Complete Technical Specification
 
-**Version:** 1.9
+**Version:** 2.0
 **Status:** Active Development
 **Last Updated:** 2025-12-22
 
@@ -230,6 +230,20 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Coordinator Backends**: FileCoordinator (dev) and EtcdCoordinator (production)
 - **Environment-Based Config**: Enable via BOUNDARY_CLUSTER_DIR environment variable
 - **Daemon Integration**: BoundaryDaemon starts/stops cluster coordination automatically
+
+#### 15. Custom Policy Engine (`daemon/policy/custom_policy_engine.py`) ✅ NEW
+- **YAML Policy Files**: User-defined policies loaded from YAML files
+- **Condition Matching**: Mode, environment, memory class, tool, time-based conditions
+- **Priority System**: Lower priority number = higher precedence
+- **Mode Conditions**: Match against single mode or list of modes
+- **Environment Conditions**: VPN status, internet, network state, processes, USB devices
+- **Memory Class Conditions**: Filter by memory classification level
+- **Tool Conditions**: Match tool name patterns and requirements (network, filesystem, USB)
+- **Time-Based Conditions**: Day of week and hour range restrictions
+- **Policy Validation**: Validate YAML syntax and structure before loading
+- **Hot Reload**: Reload policies at runtime via `reload_custom_policies()`
+- **Environment-Based Config**: Enable via BOUNDARY_POLICY_DIR environment variable
+- **Daemon Integration**: BoundaryDaemon evaluates custom policies before default policy
 
 ### ⚠️ Partially Implemented / Limited
 
@@ -787,11 +801,11 @@ class ClusterManager:
 
 ---
 
-### Plan 5: Custom Policy Language (Priority: LOW)
+### Plan 5: Custom Policy Language (Priority: LOW) ✅ IMPLEMENTED
 
 **Goal**: User-defined policy rules beyond hardcoded logic.
 
-**Duration**: 6-8 weeks
+**Status**: ✅ **IMPLEMENTED** - `daemon/policy/custom_policy_engine.py`
 
 **Example Policy Syntax**:
 ```yaml
@@ -2253,6 +2267,7 @@ class ViolationType(Enum):
 | 1.7 | 2025-12-22 | **MAJOR**: Implemented Plan 2 (TPM Integration). Added `daemon/hardware/tpm_manager.py` with TPM 2.0 support for mode attestation and secret sealing. Mode transitions now cryptographically bound to TPM PCR. Secrets can be sealed to specific boundary modes and only unsealed when in correct security posture. |
 | 1.8 | 2025-12-22 | **MAJOR**: Integrated Plan 3 (Cryptographic Log Signing). SignedEventLogger now integrated with BoundaryDaemon. Ed25519 signatures (via PyNaCl) for each event provide non-repudiation. Public key export for external verification. Full integrity check combines hash chain + signature verification. |
 | 1.9 | 2025-12-22 | **MAJOR**: Integrated Plan 4 (Distributed Deployment). ClusterManager now integrated with BoundaryDaemon. Supports multiple sync policies (MOST_RESTRICTIVE, LEAST_RESTRICTIVE, MAJORITY, LEADER). Enable via BOUNDARY_CLUSTER_DIR environment variable. FileCoordinator for dev, EtcdCoordinator for production. Node heartbeat, health monitoring, and violation reporting across cluster. |
+| 2.0 | 2025-12-22 | **MAJOR**: Integrated Plan 5 (Custom Policy Language). CustomPolicyEngine now integrated with BoundaryDaemon. Supports YAML policy files with conditions (mode, environment, memory class, tool, time). Enable via BOUNDARY_POLICY_DIR environment variable. Priority-based policy matching with fallback to default policy. Hot reload support via reload_custom_policies(). |
 
 ---
 
