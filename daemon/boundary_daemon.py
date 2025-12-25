@@ -114,6 +114,17 @@ except ImportError:
     TelemetryConfig = None
     ExportMode = None
 
+# Import message checking module (Plan 10: Message Checking for NatLangChain/Agent-OS)
+try:
+    from .messages import MessageChecker, MessageSource, NatLangChainEntry, AgentOSMessage
+    MESSAGE_CHECKER_AVAILABLE = True
+except ImportError:
+    MESSAGE_CHECKER_AVAILABLE = False
+    MessageChecker = None
+    MessageSource = None
+    NatLangChainEntry = None
+    AgentOSMessage = None
+
 
 class BoundaryDaemon:
     """
@@ -382,6 +393,24 @@ class BoundaryDaemon:
                 print("Telemetry: not enabled (set BOUNDARY_TELEMETRY_DIR to enable)")
         else:
             print("Telemetry module not loaded")
+
+        # Initialize message checker (Plan 10: Message Checking for NatLangChain/Agent-OS)
+        self.message_checker = None
+        self.message_checker_enabled = False
+        if MESSAGE_CHECKER_AVAILABLE and MessageChecker:
+            try:
+                # Check if strict mode is enabled via environment
+                strict_mode = os.environ.get('BOUNDARY_MESSAGE_STRICT', 'false').lower() == 'true'
+                self.message_checker = MessageChecker(daemon=self, strict_mode=strict_mode)
+                self.message_checker_enabled = True
+                mode_str = "strict" if strict_mode else "permissive"
+                print(f"Message checker available (mode: {mode_str})")
+                print(f"  NatLangChain: Enabled")
+                print(f"  Agent-OS: Enabled")
+            except Exception as e:
+                print(f"Warning: Message checker failed to initialize: {e}")
+        else:
+            print("Message checker module not loaded")
 
         # Daemon state
         self._running = False
@@ -905,6 +934,166 @@ class BoundaryDaemon:
         else:
             return (False, "Tool requires human override ceremony")
 
+    def check_message(self, content: str, source: str = 'unknown',
+                     context: Optional[dict] = None) -> tuple[bool, str, Optional[dict]]:
+        """
+        Check message content for policy compliance.
+
+        Args:
+            content: Message content to check
+            source: Source system ('natlangchain', 'agent_os', or other)
+            context: Optional additional context
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if self.lockdown_manager.is_in_lockdown():
+            return (False, "System in LOCKDOWN mode", None)
+
+        if not self.message_checker:
+            return (False, "Message checker not available", None)
+
+        # Map source string to enum
+        if MESSAGE_CHECKER_AVAILABLE and MessageSource:
+            source_map = {
+                'natlangchain': MessageSource.NATLANGCHAIN,
+                'agent_os': MessageSource.AGENT_OS,
+                'agent-os': MessageSource.AGENT_OS,
+                'agentos': MessageSource.AGENT_OS,
+            }
+            msg_source = source_map.get(source.lower(), MessageSource.UNKNOWN)
+        else:
+            return (False, "Message source types not available", None)
+
+        result = self.message_checker.check_message(content, msg_source, context)
+
+        # Log the check
+        self.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"Message check ({source}): {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': source,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
+    def check_natlangchain_entry(self, author: str, intent: str, timestamp: str,
+                                  signature: Optional[str] = None,
+                                  previous_hash: Optional[str] = None,
+                                  metadata: Optional[dict] = None) -> tuple[bool, str, Optional[dict]]:
+        """
+        Check a NatLangChain blockchain entry.
+
+        Args:
+            author: Entry author
+            intent: Intent description (prose)
+            timestamp: Entry timestamp (ISO format)
+            signature: Optional cryptographic signature
+            previous_hash: Optional hash of previous entry
+            metadata: Optional additional metadata
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if self.lockdown_manager.is_in_lockdown():
+            return (False, "System in LOCKDOWN mode", None)
+
+        if not self.message_checker or not MESSAGE_CHECKER_AVAILABLE:
+            return (False, "Message checker not available", None)
+
+        entry = NatLangChainEntry(
+            author=author,
+            intent=intent,
+            timestamp=timestamp,
+            signature=signature,
+            previous_hash=previous_hash,
+            metadata=metadata or {}
+        )
+
+        result = self.message_checker.check_natlangchain_entry(entry)
+
+        # Log the check
+        self.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"NatLangChain entry check: {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': 'natlangchain',
+                'author': author,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
+    def check_agentos_message(self, sender_agent: str, recipient_agent: str,
+                               content: str, message_type: str = 'request',
+                               authority_level: int = 0,
+                               timestamp: Optional[str] = None,
+                               requires_consent: bool = False,
+                               metadata: Optional[dict] = None) -> tuple[bool, str, Optional[dict]]:
+        """
+        Check an Agent-OS inter-agent message.
+
+        Args:
+            sender_agent: Sending agent identifier
+            recipient_agent: Receiving agent identifier
+            content: Message content
+            message_type: Type of message (request, response, notification, command)
+            authority_level: Authority level (0-5)
+            timestamp: Message timestamp (ISO format)
+            requires_consent: Whether consent is required
+            metadata: Optional additional metadata
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if self.lockdown_manager.is_in_lockdown():
+            return (False, "System in LOCKDOWN mode", None)
+
+        if not self.message_checker or not MESSAGE_CHECKER_AVAILABLE:
+            return (False, "Message checker not available", None)
+
+        from datetime import datetime as dt
+        if timestamp is None:
+            timestamp = dt.utcnow().isoformat() + "Z"
+
+        message = AgentOSMessage(
+            sender_agent=sender_agent,
+            recipient_agent=recipient_agent,
+            content=content,
+            message_type=message_type,
+            authority_level=authority_level,
+            timestamp=timestamp,
+            requires_consent=requires_consent,
+            metadata=metadata or {}
+        )
+
+        result = self.message_checker.check_agentos_message(message)
+
+        # Log the check
+        self.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"Agent-OS message check: {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': 'agent_os',
+                'sender': sender_agent,
+                'recipient': recipient_agent,
+                'message_type': message_type,
+                'authority_level': authority_level,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
     def get_status(self) -> dict:
         """Get current daemon status"""
         boundary_state = self.policy_engine.get_current_state()
@@ -1022,6 +1211,17 @@ class BoundaryDaemon:
                 }
             except Exception as e:
                 status['telemetry'] = {'error': str(e)}
+
+        # Add message checker information if enabled (Plan 10)
+        status['message_checker_enabled'] = self.message_checker_enabled
+        if self.message_checker and self.message_checker_enabled:
+            status['message_checker'] = {
+                'strict_mode': self.message_checker.strict_mode,
+                'natlangchain_support': True,
+                'agentos_support': True,
+                'pii_detection': True,
+                'ambiguity_detection': True,
+            }
 
         return status
 

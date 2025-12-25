@@ -1,15 +1,33 @@
 """
-Integration Interfaces - Memory Vault, Tool Enforcement, and Ceremony
+Integration Interfaces - Memory Vault, Tool Enforcement, Message Checking, and Ceremony
 Provides high-level interfaces for integrating with other Agent OS components.
 """
 
 import time
 import getpass
-from typing import Optional, Callable
+from typing import Optional, Callable, Union, List, Dict, Any
 from datetime import datetime, timedelta
 
 from .policy_engine import MemoryClass, BoundaryMode
 from .event_logger import EventLogger, EventType
+
+# Import message checking components
+try:
+    from .messages import (
+        MessageChecker,
+        MessageSource,
+        MessageCheckResult,
+        NatLangChainEntry,
+        AgentOSMessage,
+    )
+    MESSAGE_CHECKER_AVAILABLE = True
+except ImportError:
+    MESSAGE_CHECKER_AVAILABLE = False
+    MessageChecker = None
+    MessageSource = None
+    MessageCheckResult = None
+    NatLangChainEntry = None
+    AgentOSMessage = None
 
 
 class RecallGate:
@@ -164,6 +182,195 @@ class ToolGate:
             capabilities['filesystem_tools'] = True
 
         return capabilities
+
+
+class MessageGate:
+    """
+    Message validation interface for NatLangChain and Agent-OS.
+    All messages MUST pass through this gate for content validation.
+    """
+
+    def __init__(self, daemon, strict_mode: bool = False):
+        """
+        Initialize message gate.
+
+        Args:
+            daemon: Reference to BoundaryDaemon instance
+            strict_mode: If True, block on any potential issue
+        """
+        self.daemon = daemon
+        self.strict_mode = strict_mode
+
+        if MESSAGE_CHECKER_AVAILABLE and MessageChecker:
+            self.checker = MessageChecker(daemon=daemon, strict_mode=strict_mode)
+        else:
+            self.checker = None
+
+    def check_natlangchain(
+        self,
+        author: str,
+        intent: str,
+        timestamp: str,
+        signature: Optional[str] = None,
+        previous_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check a NatLangChain blockchain entry.
+
+        Args:
+            author: Entry author
+            intent: Intent description (prose)
+            timestamp: Entry timestamp (ISO format)
+            signature: Optional cryptographic signature
+            previous_hash: Optional hash of previous entry
+            metadata: Optional additional metadata
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if not self.checker:
+            return (False, "Message checker not available", None)
+
+        entry = NatLangChainEntry(
+            author=author,
+            intent=intent,
+            timestamp=timestamp,
+            signature=signature,
+            previous_hash=previous_hash,
+            metadata=metadata or {}
+        )
+
+        result = self.checker.check_natlangchain_entry(entry)
+
+        # Log the check
+        self.daemon.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"NatLangChain entry check: {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': 'natlangchain',
+                'author': author,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
+    def check_agentos(
+        self,
+        sender_agent: str,
+        recipient_agent: str,
+        content: str,
+        message_type: str = 'request',
+        authority_level: int = 0,
+        timestamp: Optional[str] = None,
+        requires_consent: bool = False,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check an Agent-OS inter-agent message.
+
+        Args:
+            sender_agent: Sending agent identifier
+            recipient_agent: Receiving agent identifier
+            content: Message content
+            message_type: Type of message (request, response, notification, command)
+            authority_level: Authority level (0-5)
+            timestamp: Message timestamp (ISO format)
+            requires_consent: Whether consent is required
+            metadata: Optional additional metadata
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if not self.checker:
+            return (False, "Message checker not available", None)
+
+        if timestamp is None:
+            timestamp = datetime.utcnow().isoformat() + "Z"
+
+        message = AgentOSMessage(
+            sender_agent=sender_agent,
+            recipient_agent=recipient_agent,
+            content=content,
+            message_type=message_type,
+            authority_level=authority_level,
+            timestamp=timestamp,
+            requires_consent=requires_consent,
+            metadata=metadata or {}
+        )
+
+        result = self.checker.check_agentos_message(message)
+
+        # Log the check
+        self.daemon.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"Agent-OS message check: {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': 'agent_os',
+                'sender': sender_agent,
+                'recipient': recipient_agent,
+                'message_type': message_type,
+                'authority_level': authority_level,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
+    def check_message(
+        self,
+        content: str,
+        source: str = 'unknown',
+        context: Optional[Dict[str, Any]] = None
+    ) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check any message content.
+
+        Args:
+            content: Message content to check
+            source: Source identifier ('natlangchain', 'agent_os', or other)
+            context: Optional additional context
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        if not self.checker:
+            return (False, "Message checker not available", None)
+
+        # Map source string to enum
+        source_map = {
+            'natlangchain': MessageSource.NATLANGCHAIN,
+            'agent_os': MessageSource.AGENT_OS,
+            'agent-os': MessageSource.AGENT_OS,
+            'agentos': MessageSource.AGENT_OS,
+        }
+        msg_source = source_map.get(source.lower(), MessageSource.UNKNOWN)
+
+        result = self.checker.check_message(content, msg_source, context)
+
+        # Log the check
+        self.daemon.event_logger.log_event(
+            EventType.MESSAGE_CHECK,
+            f"Message check ({source}): {'allowed' if result.allowed else 'blocked'}",
+            metadata={
+                'source': source,
+                'allowed': result.allowed,
+                'result_type': result.result_type.value,
+                'violations': result.violations,
+                'has_redaction': result.redacted_content is not None,
+            }
+        )
+
+        return (result.allowed, result.reason, result.to_dict())
+
+    def is_available(self) -> bool:
+        """Check if message checking is available"""
+        return self.checker is not None
 
 
 class CeremonyManager:
@@ -379,4 +586,6 @@ if __name__ == '__main__':
     print("\nThese interfaces must be used by:")
     print("- Memory Vault (RecallGate)")
     print("- Agent-OS (ToolGate)")
+    print("- NatLangChain/Agent-OS messages (MessageGate)")
     print("- Human operators (CeremonyManager)")
+    print(f"\nMessage checker available: {MESSAGE_CHECKER_AVAILABLE}")

@@ -143,7 +143,7 @@ class BoundaryAPIServer:
 
         Request format:
         {
-            "command": "status|check_recall|check_tool|set_mode|get_events",
+            "command": "status|check_recall|check_tool|set_mode|get_events|verify_log|check_message|check_natlangchain|check_agentos",
             "params": {...}
         }
         """
@@ -167,6 +167,15 @@ class BoundaryAPIServer:
 
         elif command == 'verify_log':
             return self._handle_verify_log()
+
+        elif command == 'check_message':
+            return self._handle_check_message(params)
+
+        elif command == 'check_natlangchain':
+            return self._handle_check_natlangchain(params)
+
+        elif command == 'check_agentos':
+            return self._handle_check_agentos(params)
 
         else:
             return {'error': f'Unknown command: {command}'}
@@ -324,6 +333,148 @@ class BoundaryAPIServer:
                 'success': True,
                 'valid': is_valid,
                 'error': error
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_check_message(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check message content for policy compliance.
+
+        Params:
+            content: str - Message content to check
+            source: str - Source system ('natlangchain', 'agent_os', or 'unknown')
+            context: dict (optional) - Additional context
+        """
+        try:
+            content = params.get('content')
+            if content is None:
+                return {'success': False, 'error': 'content parameter required'}
+
+            source = params.get('source', 'unknown')
+            context = params.get('context')
+
+            # Check if message checker is available
+            if not hasattr(self.daemon, 'check_message'):
+                return {'success': False, 'error': 'Message checking not available'}
+
+            permitted, reason, result = self.daemon.check_message(content, source, context)
+
+            return {
+                'success': True,
+                'permitted': permitted,
+                'reason': reason,
+                'source': source,
+                'result': result
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_check_natlangchain(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check a NatLangChain blockchain entry.
+
+        Params:
+            author: str - Entry author
+            intent: str - Intent description (prose)
+            timestamp: str - Entry timestamp (ISO format)
+            signature: str (optional) - Cryptographic signature
+            previous_hash: str (optional) - Hash of previous entry
+            metadata: dict (optional) - Additional metadata
+        """
+        try:
+            author = params.get('author')
+            intent = params.get('intent')
+            timestamp = params.get('timestamp')
+
+            if not author:
+                return {'success': False, 'error': 'author parameter required'}
+            if not intent:
+                return {'success': False, 'error': 'intent parameter required'}
+            if not timestamp:
+                return {'success': False, 'error': 'timestamp parameter required'}
+
+            signature = params.get('signature')
+            previous_hash = params.get('previous_hash')
+            metadata = params.get('metadata')
+
+            # Check if message checker is available
+            if not hasattr(self.daemon, 'check_natlangchain_entry'):
+                return {'success': False, 'error': 'NatLangChain checking not available'}
+
+            permitted, reason, result = self.daemon.check_natlangchain_entry(
+                author=author,
+                intent=intent,
+                timestamp=timestamp,
+                signature=signature,
+                previous_hash=previous_hash,
+                metadata=metadata
+            )
+
+            return {
+                'success': True,
+                'permitted': permitted,
+                'reason': reason,
+                'author': author,
+                'result': result
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_check_agentos(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check an Agent-OS inter-agent message.
+
+        Params:
+            sender_agent: str - Sending agent identifier
+            recipient_agent: str - Receiving agent identifier
+            content: str - Message content
+            message_type: str - Type of message (request, response, notification, command)
+            authority_level: int - Authority level (0-5)
+            timestamp: str (optional) - Message timestamp (ISO format)
+            requires_consent: bool (optional) - Whether consent is required
+            metadata: dict (optional) - Additional metadata
+        """
+        try:
+            sender_agent = params.get('sender_agent')
+            recipient_agent = params.get('recipient_agent')
+            content = params.get('content')
+
+            if not sender_agent:
+                return {'success': False, 'error': 'sender_agent parameter required'}
+            if not recipient_agent:
+                return {'success': False, 'error': 'recipient_agent parameter required'}
+            if not content:
+                return {'success': False, 'error': 'content parameter required'}
+
+            message_type = params.get('message_type', 'request')
+            authority_level = params.get('authority_level', 0)
+            timestamp = params.get('timestamp')
+            requires_consent = params.get('requires_consent', False)
+            metadata = params.get('metadata')
+
+            # Check if message checker is available
+            if not hasattr(self.daemon, 'check_agentos_message'):
+                return {'success': False, 'error': 'Agent-OS checking not available'}
+
+            permitted, reason, result = self.daemon.check_agentos_message(
+                sender_agent=sender_agent,
+                recipient_agent=recipient_agent,
+                content=content,
+                message_type=message_type,
+                authority_level=authority_level,
+                timestamp=timestamp,
+                requires_consent=requires_consent,
+                metadata=metadata
+            )
+
+            return {
+                'success': True,
+                'permitted': permitted,
+                'reason': reason,
+                'sender_agent': sender_agent,
+                'recipient_agent': recipient_agent,
+                'result': result
             }
         except Exception as e:
             return {'success': False, 'error': str(e)}
@@ -492,6 +643,122 @@ class BoundaryAPIClient:
 
         return (response.get('valid', False), response.get('error'))
 
+    def check_message(self, content: str, source: str = 'unknown',
+                      context: Optional[Dict[str, Any]] = None) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check message content for policy compliance.
+
+        Args:
+            content: Message content to check
+            source: Source system ('natlangchain', 'agent_os', or 'unknown')
+            context: Additional context (optional)
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        params = {
+            'content': content,
+            'source': source
+        }
+        if context:
+            params['context'] = context
+
+        response = self._send_request('check_message', params)
+
+        if not response.get('success'):
+            return (False, response.get('error', 'Unknown error'), None)
+
+        return (
+            response.get('permitted', False),
+            response.get('reason', ''),
+            response.get('result')
+        )
+
+    def check_natlangchain(self, author: str, intent: str, timestamp: str,
+                           signature: Optional[str] = None,
+                           previous_hash: Optional[str] = None,
+                           metadata: Optional[Dict[str, Any]] = None) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check a NatLangChain blockchain entry.
+
+        Args:
+            author: Entry author
+            intent: Intent description (prose)
+            timestamp: Entry timestamp (ISO format)
+            signature: Cryptographic signature (optional)
+            previous_hash: Hash of previous entry (optional)
+            metadata: Additional metadata (optional)
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        params = {
+            'author': author,
+            'intent': intent,
+            'timestamp': timestamp
+        }
+        if signature:
+            params['signature'] = signature
+        if previous_hash:
+            params['previous_hash'] = previous_hash
+        if metadata:
+            params['metadata'] = metadata
+
+        response = self._send_request('check_natlangchain', params)
+
+        if not response.get('success'):
+            return (False, response.get('error', 'Unknown error'), None)
+
+        return (
+            response.get('permitted', False),
+            response.get('reason', ''),
+            response.get('result')
+        )
+
+    def check_agentos(self, sender_agent: str, recipient_agent: str, content: str,
+                      message_type: str = 'request', authority_level: int = 0,
+                      timestamp: Optional[str] = None, requires_consent: bool = False,
+                      metadata: Optional[Dict[str, Any]] = None) -> tuple[bool, str, Optional[Dict]]:
+        """
+        Check an Agent-OS inter-agent message.
+
+        Args:
+            sender_agent: Sending agent identifier
+            recipient_agent: Receiving agent identifier
+            content: Message content
+            message_type: Type of message (request, response, notification, command)
+            authority_level: Authority level (0-5)
+            timestamp: Message timestamp (optional, ISO format)
+            requires_consent: Whether consent is required
+            metadata: Additional metadata (optional)
+
+        Returns:
+            (permitted, reason, result_data)
+        """
+        params = {
+            'sender_agent': sender_agent,
+            'recipient_agent': recipient_agent,
+            'content': content,
+            'message_type': message_type,
+            'authority_level': authority_level,
+            'requires_consent': requires_consent
+        }
+        if timestamp:
+            params['timestamp'] = timestamp
+        if metadata:
+            params['metadata'] = metadata
+
+        response = self._send_request('check_agentos', params)
+
+        if not response.get('success'):
+            return (False, response.get('error', 'Unknown error'), None)
+
+        return (
+            response.get('permitted', False),
+            response.get('reason', ''),
+            response.get('result')
+        )
+
 
 if __name__ == '__main__':
     # Test client
@@ -512,6 +779,35 @@ if __name__ == '__main__':
     # Test tool check
     print("\nChecking tool permission...")
     permitted, reason = client.check_tool('test_tool', requires_network=True)
+    print(f"Permitted: {permitted}, Reason: {reason}")
+
+    # Test message check
+    print("\nChecking message content...")
+    permitted, reason, result = client.check_message(
+        content="Test message content",
+        source="natlangchain"
+    )
+    print(f"Permitted: {permitted}, Reason: {reason}")
+
+    # Test NatLangChain entry check
+    print("\nChecking NatLangChain entry...")
+    from datetime import datetime
+    permitted, reason, result = client.check_natlangchain(
+        author="user@example.com",
+        intent="I want to share my research with the team",
+        timestamp=datetime.utcnow().isoformat() + "Z"
+    )
+    print(f"Permitted: {permitted}, Reason: {reason}")
+
+    # Test Agent-OS message check
+    print("\nChecking Agent-OS message...")
+    permitted, reason, result = client.check_agentos(
+        sender_agent="orchestrator",
+        recipient_agent="executor",
+        content="Process the approved request",
+        message_type="request",
+        authority_level=1
+    )
     print(f"Permitted: {permitted}, Reason: {reason}")
 
     print("\nAPI client test complete.")

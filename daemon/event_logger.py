@@ -27,6 +27,7 @@ class EventType(Enum):
     DAEMON_START = "daemon_start"
     DAEMON_STOP = "daemon_stop"
     HEALTH_CHECK = "health_check"
+    MESSAGE_CHECK = "message_check"  # NatLangChain/Agent-OS message validation
 
 
 @dataclass
