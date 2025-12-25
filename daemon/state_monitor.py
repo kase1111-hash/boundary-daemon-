@@ -6,9 +6,10 @@ Continuously monitors network, hardware, software, and human presence signals.
 import os
 import psutil
 import socket
+import subprocess
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional, Set
 from enum import Enum
 from datetime import datetime
@@ -29,7 +30,65 @@ class NetworkType(Enum):
     VPN = "vpn"                # tun*, vpn*, wg*, tap* interfaces
     BLUETOOTH = "bluetooth"    # bt*, bnep* interfaces
     BRIDGE = "bridge"          # br*, virbr*, docker* interfaces
+    # IoT and specialty network types
+    LORA = "lora"              # LoRa/LoRaWAN - Long-range IoT
+    THREAD = "thread"          # Thread/Matter - Smart home mesh
+    WIMAX = "wimax"            # WiMAX - Mostly obsolete
+    IRDA = "irda"              # Infrared (IrDA) - Legacy
+    ANT_PLUS = "ant_plus"      # ANT+ - Fitness devices
     UNKNOWN = "unknown"        # Unclassified interfaces
+
+
+class CellularSecurityAlert(Enum):
+    """Cellular security alert types (IMSI catcher/Stingray detection)"""
+    NONE = "none"
+    TOWER_CHANGE = "tower_change"           # Unexpected cell tower change
+    WEAK_ENCRYPTION = "weak_encryption"     # 2G/no encryption forced
+    SIGNAL_ANOMALY = "signal_anomaly"       # Unusual signal strength pattern
+    IMSI_CATCHER = "imsi_catcher"           # Suspected IMSI catcher
+    DOWNGRADE_ATTACK = "downgrade_attack"   # Forced protocol downgrade
+
+
+@dataclass
+class SpecialtyNetworkStatus:
+    """Status of specialty/IoT network interfaces"""
+    lora_devices: List[str]          # Detected LoRa/LoRaWAN devices
+    thread_devices: List[str]        # Thread/Matter mesh devices
+    wimax_interfaces: List[str]      # WiMAX interfaces (legacy)
+    irda_devices: List[str]          # IrDA infrared devices
+    ant_plus_devices: List[str]      # ANT+ fitness devices
+    cellular_alerts: List[str]       # Security alerts for cellular
+
+    def to_dict(self) -> Dict:
+        return {
+            'lora_devices': self.lora_devices,
+            'thread_devices': self.thread_devices,
+            'wimax_interfaces': self.wimax_interfaces,
+            'irda_devices': self.irda_devices,
+            'ant_plus_devices': self.ant_plus_devices,
+            'cellular_alerts': self.cellular_alerts
+        }
+
+
+@dataclass
+class MonitoringConfig:
+    """Configuration for which network types to monitor"""
+    monitor_lora: bool = True
+    monitor_thread: bool = True
+    monitor_cellular_security: bool = True
+    monitor_wimax: bool = False      # Disabled by default (obsolete)
+    monitor_irda: bool = False       # Disabled by default (legacy)
+    monitor_ant_plus: bool = True
+
+    def to_dict(self) -> Dict:
+        return {
+            'monitor_lora': self.monitor_lora,
+            'monitor_thread': self.monitor_thread,
+            'monitor_cellular_security': self.monitor_cellular_security,
+            'monitor_wimax': self.monitor_wimax,
+            'monitor_irda': self.monitor_irda,
+            'monitor_ant_plus': self.monitor_ant_plus
+        }
 
 
 class HardwareTrust(Enum):
@@ -52,6 +111,9 @@ class EnvironmentState:
     has_internet: bool
     vpn_active: bool
     dns_available: bool
+
+    # Specialty/IoT network details
+    specialty_networks: SpecialtyNetworkStatus
 
     # Hardware details
     usb_devices: Set[str]
@@ -76,6 +138,7 @@ class EnvironmentState:
         result['network'] = self.network.value
         result['hardware_trust'] = self.hardware_trust.value
         result['interface_types'] = {k: v.value for k, v in self.interface_types.items()}
+        result['specialty_networks'] = self.specialty_networks.to_dict()
         result['usb_devices'] = list(self.usb_devices)
         result['block_devices'] = list(self.block_devices)
         return result
@@ -87,12 +150,13 @@ class StateMonitor:
     Detects network state, hardware changes, software anomalies, and human presence.
     """
 
-    def __init__(self, poll_interval: float = 1.0):
+    def __init__(self, poll_interval: float = 1.0, monitoring_config: Optional[MonitoringConfig] = None):
         """
         Initialize state monitor.
 
         Args:
             poll_interval: How frequently to poll environment (seconds)
+            monitoring_config: Configuration for which network types to monitor
         """
         self.poll_interval = poll_interval
         self._running = False
@@ -101,10 +165,50 @@ class StateMonitor:
         self._state_lock = threading.Lock()
         self._callbacks: List[callable] = []
 
+        # Monitoring configuration
+        self.monitoring_config = monitoring_config or MonitoringConfig()
+
         # Baseline state for detecting changes
         self._baseline_usb: Optional[Set[str]] = None
         self._baseline_block_devices: Optional[Set[str]] = None
         self._last_network_state: Optional[NetworkState] = None
+
+        # Cellular security tracking (for IMSI catcher detection)
+        self._last_cell_tower: Optional[str] = None
+        self._cell_tower_history: List[Dict] = []
+        self._signal_strength_history: List[int] = []
+
+    def get_monitoring_config(self) -> MonitoringConfig:
+        """Get the current monitoring configuration"""
+        return self.monitoring_config
+
+    def set_monitoring_config(self, config: MonitoringConfig):
+        """Set the monitoring configuration"""
+        self.monitoring_config = config
+
+    def set_monitor_lora(self, enabled: bool):
+        """Enable or disable LoRa/LoRaWAN monitoring"""
+        self.monitoring_config.monitor_lora = enabled
+
+    def set_monitor_thread(self, enabled: bool):
+        """Enable or disable Thread/Matter monitoring"""
+        self.monitoring_config.monitor_thread = enabled
+
+    def set_monitor_cellular_security(self, enabled: bool):
+        """Enable or disable cellular security (IMSI catcher) monitoring"""
+        self.monitoring_config.monitor_cellular_security = enabled
+
+    def set_monitor_wimax(self, enabled: bool):
+        """Enable or disable WiMAX monitoring"""
+        self.monitoring_config.monitor_wimax = enabled
+
+    def set_monitor_irda(self, enabled: bool):
+        """Enable or disable IrDA monitoring"""
+        self.monitoring_config.monitor_irda = enabled
+
+    def set_monitor_ant_plus(self, enabled: bool):
+        """Enable or disable ANT+ monitoring"""
+        self.monitoring_config.monitor_ant_plus = enabled
 
     def register_callback(self, callback: callable):
         """
@@ -165,6 +269,9 @@ class StateMonitor:
         # Network sensing
         network_info = self._check_network()
 
+        # Specialty/IoT network sensing
+        specialty_info = self._check_specialty_networks()
+
         # Hardware sensing
         hardware_info = self._check_hardware()
 
@@ -191,6 +298,7 @@ class StateMonitor:
             has_internet=network_info['has_internet'],
             vpn_active=network_info['vpn_active'],
             dns_available=network_info['dns_available'],
+            specialty_networks=specialty_info,
             usb_devices=hardware_info['usb_devices'],
             block_devices=hardware_info['block_devices'],
             camera_available=hardware_info['camera'],
@@ -392,6 +500,489 @@ class StateMonitor:
             'dns_available': dns_available
         }
 
+    def _check_specialty_networks(self) -> SpecialtyNetworkStatus:
+        """Check for specialty/IoT network devices based on monitoring config"""
+        lora_devices = []
+        thread_devices = []
+        wimax_interfaces = []
+        irda_devices = []
+        ant_plus_devices = []
+        cellular_alerts = []
+
+        # LoRa/LoRaWAN detection
+        if self.monitoring_config.monitor_lora:
+            lora_devices = self._detect_lora_devices()
+
+        # Thread/Matter mesh detection
+        if self.monitoring_config.monitor_thread:
+            thread_devices = self._detect_thread_devices()
+
+        # WiMAX detection (legacy)
+        if self.monitoring_config.monitor_wimax:
+            wimax_interfaces = self._detect_wimax_interfaces()
+
+        # IrDA infrared detection (legacy)
+        if self.monitoring_config.monitor_irda:
+            irda_devices = self._detect_irda_devices()
+
+        # ANT+ fitness device detection
+        if self.monitoring_config.monitor_ant_plus:
+            ant_plus_devices = self._detect_ant_plus_devices()
+
+        # Cellular security (IMSI catcher/Stingray detection)
+        if self.monitoring_config.monitor_cellular_security:
+            cellular_alerts = self._detect_cellular_security_threats()
+
+        return SpecialtyNetworkStatus(
+            lora_devices=lora_devices,
+            thread_devices=thread_devices,
+            wimax_interfaces=wimax_interfaces,
+            irda_devices=irda_devices,
+            ant_plus_devices=ant_plus_devices,
+            cellular_alerts=cellular_alerts
+        )
+
+    def _detect_lora_devices(self) -> List[str]:
+        """
+        Detect LoRa/LoRaWAN devices.
+
+        LoRa devices typically appear as:
+        - USB serial devices (SX127x, RFM9x chipsets)
+        - SPI devices (/dev/spidev*)
+        - Network interfaces for LoRaWAN gateways
+        """
+        devices = []
+
+        try:
+            # Check for LoRa USB devices via sysfs
+            if os.path.exists('/sys/bus/usb/devices'):
+                for device in os.listdir('/sys/bus/usb/devices'):
+                    device_path = f'/sys/bus/usb/devices/{device}'
+                    # Check for LoRa vendor/product IDs
+                    try:
+                        product_path = os.path.join(device_path, 'product')
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip().lower()
+                                if any(x in product for x in ['lora', 'sx127', 'rfm9', 'semtech']):
+                                    devices.append(f"USB: {product}")
+                    except Exception:
+                        pass
+
+            # Check for SPI-connected LoRa modules
+            spi_devices = [f'/dev/spidev{i}.{j}' for i in range(3) for j in range(3)]
+            for spi in spi_devices:
+                if os.path.exists(spi):
+                    # Check if it's a LoRa device via driver binding
+                    try:
+                        driver_path = f'/sys/class/spidev/{os.path.basename(spi)}/device/driver'
+                        if os.path.exists(driver_path):
+                            driver = os.path.basename(os.readlink(driver_path))
+                            if 'lora' in driver.lower() or 'sx127' in driver.lower():
+                                devices.append(f"SPI: {spi}")
+                    except Exception:
+                        pass
+
+            # Check for LoRaWAN gateway interfaces
+            if os.path.exists('/sys/class/net'):
+                for iface in os.listdir('/sys/class/net'):
+                    if 'lora' in iface.lower() or 'lorawan' in iface.lower():
+                        devices.append(f"Interface: {iface}")
+
+        except Exception as e:
+            print(f"Error detecting LoRa devices: {e}")
+
+        return devices
+
+    def _detect_thread_devices(self) -> List[str]:
+        """
+        Detect Thread/Matter mesh networking devices.
+
+        Thread devices typically appear as:
+        - IEEE 802.15.4 radio interfaces (wpan*)
+        - USB Thread border routers
+        - OpenThread daemon connections
+        """
+        devices = []
+
+        try:
+            # Check for IEEE 802.15.4 / Thread interfaces
+            if os.path.exists('/sys/class/net'):
+                for iface in os.listdir('/sys/class/net'):
+                    iface_lower = iface.lower()
+                    # wpan interfaces are 802.15.4 (used by Thread)
+                    if iface.startswith('wpan') or 'thread' in iface_lower:
+                        devices.append(f"Interface: {iface}")
+
+            # Check for Thread USB devices
+            if os.path.exists('/sys/bus/usb/devices'):
+                for device in os.listdir('/sys/bus/usb/devices'):
+                    device_path = f'/sys/bus/usb/devices/{device}'
+                    try:
+                        product_path = os.path.join(device_path, 'product')
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip().lower()
+                                if any(x in product for x in ['thread', 'matter', '802.15.4', 'zigbee']):
+                                    devices.append(f"USB: {product}")
+                    except Exception:
+                        pass
+
+            # Check for OpenThread daemon socket
+            otbr_sockets = ['/var/run/openthread.sock', '/tmp/openthread.sock']
+            for sock in otbr_sockets:
+                if os.path.exists(sock):
+                    devices.append(f"OpenThread: {sock}")
+
+            # Check for Matter controller processes
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-l', '-f', 'matter|chip-tool|otbr'],
+                    capture_output=True, timeout=2
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.decode().strip().split('\n'):
+                        if line:
+                            devices.append(f"Process: {line}")
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"Error detecting Thread devices: {e}")
+
+        return devices
+
+    def _detect_wimax_interfaces(self) -> List[str]:
+        """
+        Detect WiMAX interfaces (mostly obsolete technology).
+
+        WiMAX interfaces typically appear as:
+        - wmx* or wimax* interfaces
+        - USB WiMAX modems
+        """
+        interfaces = []
+
+        try:
+            if os.path.exists('/sys/class/net'):
+                for iface in os.listdir('/sys/class/net'):
+                    iface_lower = iface.lower()
+                    if 'wmx' in iface_lower or 'wimax' in iface_lower:
+                        interfaces.append(iface)
+
+            # Check for WiMAX USB devices
+            if os.path.exists('/sys/bus/usb/devices'):
+                for device in os.listdir('/sys/bus/usb/devices'):
+                    device_path = f'/sys/bus/usb/devices/{device}'
+                    try:
+                        product_path = os.path.join(device_path, 'product')
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip().lower()
+                                if 'wimax' in product:
+                                    interfaces.append(f"USB: {product}")
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"Error detecting WiMAX interfaces: {e}")
+
+        return interfaces
+
+    def _detect_irda_devices(self) -> List[str]:
+        """
+        Detect IrDA (Infrared Data Association) devices.
+
+        IrDA devices typically appear as:
+        - irda* interfaces
+        - /dev/ircomm* devices
+        - USB IrDA dongles
+        """
+        devices = []
+
+        try:
+            # Check for IrDA network interfaces
+            if os.path.exists('/sys/class/net'):
+                for iface in os.listdir('/sys/class/net'):
+                    if 'irda' in iface.lower() or iface.startswith('irlan'):
+                        devices.append(f"Interface: {iface}")
+
+            # Check for IrDA serial devices
+            irda_devs = ['/dev/ircomm0', '/dev/ircomm1', '/dev/irlpt0', '/dev/irlpt1']
+            for dev in irda_devs:
+                if os.path.exists(dev):
+                    devices.append(f"Device: {dev}")
+
+            # Check for IrDA USB dongles
+            if os.path.exists('/sys/bus/usb/devices'):
+                for device in os.listdir('/sys/bus/usb/devices'):
+                    device_path = f'/sys/bus/usb/devices/{device}'
+                    try:
+                        product_path = os.path.join(device_path, 'product')
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip().lower()
+                                if 'irda' in product or 'infrared' in product:
+                                    devices.append(f"USB: {product}")
+                    except Exception:
+                        pass
+
+            # Check for IrDA kernel module
+            try:
+                with open('/proc/modules', 'r') as f:
+                    modules = f.read().lower()
+                    if 'irda' in modules or 'ircomm' in modules:
+                        devices.append("Kernel: IrDA modules loaded")
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"Error detecting IrDA devices: {e}")
+
+        return devices
+
+    def _detect_ant_plus_devices(self) -> List[str]:
+        """
+        Detect ANT+ fitness and sports devices.
+
+        ANT+ devices typically appear as:
+        - USB ANT+ sticks (Garmin, Dynastream)
+        - ANT+ network adapters
+        """
+        devices = []
+
+        try:
+            # ANT+ USB vendor/product IDs
+            # Dynastream (ANT+): 0fcf
+            # Common product IDs: 1004 (ANT+ stick), 1008 (ANT+ stick mini)
+            ant_vendor_ids = ['0fcf']
+            ant_product_ids = ['1004', '1008', '1009']
+
+            if os.path.exists('/sys/bus/usb/devices'):
+                for device in os.listdir('/sys/bus/usb/devices'):
+                    device_path = f'/sys/bus/usb/devices/{device}'
+                    try:
+                        # Check vendor ID
+                        vendor_path = os.path.join(device_path, 'idVendor')
+                        product_id_path = os.path.join(device_path, 'idProduct')
+
+                        if os.path.exists(vendor_path) and os.path.exists(product_id_path):
+                            with open(vendor_path, 'r') as f:
+                                vendor = f.read().strip().lower()
+                            with open(product_id_path, 'r') as f:
+                                prod_id = f.read().strip().lower()
+
+                            if vendor in ant_vendor_ids or prod_id in ant_product_ids:
+                                # Get product name
+                                product_name = "ANT+ Device"
+                                product_path = os.path.join(device_path, 'product')
+                                if os.path.exists(product_path):
+                                    with open(product_path, 'r') as f:
+                                        product_name = f.read().strip()
+                                devices.append(f"USB: {product_name} ({vendor}:{prod_id})")
+
+                        # Also check product string
+                        product_path = os.path.join(device_path, 'product')
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip().lower()
+                                if 'ant+' in product or 'ant stick' in product or 'dynastream' in product:
+                                    if f"USB: {product}" not in [d.lower() for d in devices]:
+                                        devices.append(f"USB: {product}")
+                    except Exception:
+                        pass
+
+            # Check for ANT-related processes
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-l', '-f', 'antfs|garmin|ant+'],
+                    capture_output=True, timeout=2
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.decode().strip().split('\n'):
+                        if line:
+                            devices.append(f"Process: {line}")
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"Error detecting ANT+ devices: {e}")
+
+        return devices
+
+    def _detect_cellular_security_threats(self) -> List[str]:
+        """
+        Detect potential IMSI catcher (Stingray) threats on cellular connections.
+
+        Detection heuristics:
+        1. Unexpected cell tower changes
+        2. Downgrade to 2G (weaker/no encryption)
+        3. Unusual signal strength patterns
+        4. Unknown or suspicious cell tower IDs
+        """
+        alerts = []
+
+        try:
+            # Try to read cellular modem info via ModemManager or sysfs
+            cell_info = self._get_cellular_info()
+
+            if cell_info:
+                # Check for forced 2G downgrade (weak encryption risk)
+                if cell_info.get('technology') == '2G':
+                    if cell_info.get('has_4g_capability', False):
+                        alerts.append(f"{CellularSecurityAlert.DOWNGRADE_ATTACK.value}: Forced to 2G despite 4G capability")
+
+                # Check for weak/no encryption
+                cipher = cell_info.get('cipher_algorithm', '')
+                if cipher in ['A5/0', 'none', ''] or 'no cipher' in cipher.lower():
+                    alerts.append(f"{CellularSecurityAlert.WEAK_ENCRYPTION.value}: No encryption or weak cipher ({cipher})")
+
+                # Check for suspicious cell tower changes
+                current_tower = cell_info.get('cell_id', '')
+                if current_tower and self._last_cell_tower:
+                    if current_tower != self._last_cell_tower:
+                        # Record tower change
+                        self._cell_tower_history.append({
+                            'from': self._last_cell_tower,
+                            'to': current_tower,
+                            'time': datetime.utcnow().isoformat()
+                        })
+
+                        # Too many tower changes in short time is suspicious
+                        recent_changes = [
+                            c for c in self._cell_tower_history[-10:]
+                            if (datetime.utcnow() - datetime.fromisoformat(c['time'])).seconds < 300
+                        ]
+                        if len(recent_changes) > 5:
+                            alerts.append(f"{CellularSecurityAlert.IMSI_CATCHER.value}: Rapid cell tower switching detected")
+
+                self._last_cell_tower = current_tower
+
+                # Check signal strength anomalies
+                signal = cell_info.get('signal_strength')
+                if signal is not None:
+                    self._signal_strength_history.append(signal)
+                    if len(self._signal_strength_history) > 10:
+                        self._signal_strength_history = self._signal_strength_history[-20:]
+
+                    # Sudden massive signal increase can indicate fake tower
+                    if len(self._signal_strength_history) >= 2:
+                        prev_signal = self._signal_strength_history[-2]
+                        if signal - prev_signal > 30:  # 30dB sudden increase
+                            alerts.append(f"{CellularSecurityAlert.SIGNAL_ANOMALY.value}: Sudden signal strength spike (+{signal - prev_signal}dB)")
+
+                # Check for LAC (Location Area Code) anomalies
+                lac = cell_info.get('lac', '')
+                expected_lacs = cell_info.get('expected_lacs', [])
+                if lac and expected_lacs and lac not in expected_lacs:
+                    alerts.append(f"{CellularSecurityAlert.TOWER_CHANGE.value}: Unexpected LAC: {lac}")
+
+        except Exception as e:
+            print(f"Error detecting cellular security threats: {e}")
+
+        return alerts
+
+    def _get_cellular_info(self) -> Optional[Dict]:
+        """
+        Get cellular modem information from system.
+
+        Attempts to read from:
+        1. ModemManager via D-Bus (if available)
+        2. sysfs entries for WWAN devices
+        3. QMI/MBIM interfaces
+        """
+        info = {}
+
+        try:
+            # Try sysfs for WWAN devices
+            if os.path.exists('/sys/class/net'):
+                for iface in os.listdir('/sys/class/net'):
+                    if any(p in iface.lower() for p in ['wwan', 'wwp', 'rmnet']):
+                        device_path = f'/sys/class/net/{iface}/device'
+
+                        # Try to get modem info
+                        if os.path.exists(device_path):
+                            # Check for QMI device
+                            qmi_path = os.path.join(device_path, 'qmi')
+                            if os.path.exists(qmi_path):
+                                info['type'] = 'QMI'
+                                info['interface'] = iface
+
+                            # Check for MBIM device
+                            mbim_path = os.path.join(device_path, 'mbim')
+                            if os.path.exists(mbim_path):
+                                info['type'] = 'MBIM'
+                                info['interface'] = iface
+
+            # Try to get signal strength from /proc or sysfs
+            # This is hardware-specific; common paths for various modems
+            signal_paths = [
+                '/sys/class/net/wwan0/device/signal_quality',
+                '/proc/net/wwan/signal',
+            ]
+            for path in signal_paths:
+                if os.path.exists(path):
+                    try:
+                        with open(path, 'r') as f:
+                            content = f.read().strip()
+                            # Parse signal value (format varies by driver)
+                            if content.isdigit():
+                                info['signal_strength'] = int(content)
+                    except Exception:
+                        pass
+
+            # Try mmcli (ModemManager CLI) if available
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['mmcli', '-m', '0', '--output-keyvalue'],
+                    capture_output=True, timeout=5
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode()
+                    for line in output.split('\n'):
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            key = key.strip().lower().replace(' ', '_').replace('.', '_')
+                            value = value.strip()
+
+                            if 'access_technology' in key:
+                                if '5g' in value.lower() or 'nr' in value.lower():
+                                    info['technology'] = '5G'
+                                    info['has_4g_capability'] = True
+                                elif '4g' in value.lower() or 'lte' in value.lower():
+                                    info['technology'] = '4G'
+                                    info['has_4g_capability'] = True
+                                elif '3g' in value.lower():
+                                    info['technology'] = '3G'
+                                    info['has_4g_capability'] = True
+                                elif '2g' in value.lower() or 'gsm' in value.lower():
+                                    info['technology'] = '2G'
+
+                            if 'signal_quality' in key and value.isdigit():
+                                info['signal_strength'] = int(value)
+
+                            if 'cell_id' in key or 'cid' in key:
+                                info['cell_id'] = value
+
+                            if 'location_area_code' in key or 'lac' in key:
+                                info['lac'] = value
+
+            except FileNotFoundError:
+                # mmcli not installed
+                pass
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception:
+                pass
+
+            return info if info else None
+
+        except Exception as e:
+            print(f"Error getting cellular info: {e}")
+            return None
+
     def _check_hardware(self) -> Dict:
         """Check hardware state"""
         usb_devices = set()
@@ -570,7 +1161,17 @@ class StateMonitor:
 if __name__ == '__main__':
     # Test the state monitor
     print("Starting State Monitor test...")
-    monitor = StateMonitor(poll_interval=2.0)
+
+    # Create monitoring config with all options enabled for testing
+    config = MonitoringConfig(
+        monitor_lora=True,
+        monitor_thread=True,
+        monitor_cellular_security=True,
+        monitor_wimax=True,    # Enable for testing
+        monitor_irda=True,     # Enable for testing
+        monitor_ant_plus=True
+    )
+    monitor = StateMonitor(poll_interval=2.0, monitoring_config=config)
 
     def on_state_change(old_state, new_state):
         print(f"\n=== State Change Detected ===")
@@ -583,11 +1184,32 @@ if __name__ == '__main__':
         print(f"USB devices: {len(new_state.usb_devices)}")
         print(f"Internet: {new_state.has_internet}")
 
+        # Display specialty network status
+        specialty = new_state.specialty_networks
+        print(f"\n--- Specialty Networks ---")
+        print(f"LoRa devices: {specialty.lora_devices}")
+        print(f"Thread/Matter devices: {specialty.thread_devices}")
+        print(f"WiMAX interfaces: {specialty.wimax_interfaces}")
+        print(f"IrDA devices: {specialty.irda_devices}")
+        print(f"ANT+ devices: {specialty.ant_plus_devices}")
+        if specialty.cellular_alerts:
+            print(f"Cellular security alerts: {specialty.cellular_alerts}")
+
     monitor.register_callback(on_state_change)
+
+    # Show monitoring config
+    print(f"\nMonitoring Configuration:")
+    print(f"  LoRa: {config.monitor_lora}")
+    print(f"  Thread/Matter: {config.monitor_thread}")
+    print(f"  Cellular Security: {config.monitor_cellular_security}")
+    print(f"  WiMAX: {config.monitor_wimax}")
+    print(f"  IrDA: {config.monitor_irda}")
+    print(f"  ANT+: {config.monitor_ant_plus}")
+
     monitor.start()
 
     try:
-        print("Monitoring environment. Press Ctrl+C to stop...")
+        print("\nMonitoring environment. Press Ctrl+C to stop...")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
