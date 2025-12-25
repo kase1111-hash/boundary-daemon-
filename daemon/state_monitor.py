@@ -79,6 +79,7 @@ class MonitoringConfig:
     monitor_wimax: bool = False      # Disabled by default (obsolete)
     monitor_irda: bool = False       # Disabled by default (legacy)
     monitor_ant_plus: bool = True
+    monitor_dns_security: bool = True  # DNS security monitoring
 
     def to_dict(self) -> Dict:
         return {
@@ -87,7 +88,8 @@ class MonitoringConfig:
             'monitor_cellular_security': self.monitor_cellular_security,
             'monitor_wimax': self.monitor_wimax,
             'monitor_irda': self.monitor_irda,
-            'monitor_ant_plus': self.monitor_ant_plus
+            'monitor_ant_plus': self.monitor_ant_plus,
+            'monitor_dns_security': self.monitor_dns_security
         }
 
 
@@ -115,6 +117,9 @@ class EnvironmentState:
     # Specialty/IoT network details
     specialty_networks: SpecialtyNetworkStatus
 
+    # DNS security details
+    dns_security_alerts: List[str]
+
     # Hardware details
     usb_devices: Set[str]
     block_devices: Set[str]
@@ -139,6 +144,7 @@ class EnvironmentState:
         result['hardware_trust'] = self.hardware_trust.value
         result['interface_types'] = {k: v.value for k, v in self.interface_types.items()}
         result['specialty_networks'] = self.specialty_networks.to_dict()
+        result['dns_security_alerts'] = self.dns_security_alerts
         result['usb_devices'] = list(self.usb_devices)
         result['block_devices'] = list(self.block_devices)
         return result
@@ -178,6 +184,9 @@ class StateMonitor:
         self._cell_tower_history: List[Dict] = []
         self._signal_strength_history: List[int] = []
 
+        # DNS security monitor (lazy initialization)
+        self._dns_security_monitor = None
+
     def get_monitoring_config(self) -> MonitoringConfig:
         """Get the current monitoring configuration"""
         return self.monitoring_config
@@ -209,6 +218,20 @@ class StateMonitor:
     def set_monitor_ant_plus(self, enabled: bool):
         """Enable or disable ANT+ monitoring"""
         self.monitoring_config.monitor_ant_plus = enabled
+
+    def set_monitor_dns_security(self, enabled: bool):
+        """Enable or disable DNS security monitoring"""
+        self.monitoring_config.monitor_dns_security = enabled
+
+    def _get_dns_security_monitor(self):
+        """Get or create DNS security monitor (lazy initialization)"""
+        if self._dns_security_monitor is None:
+            try:
+                from daemon.security.dns_security import DNSSecurityMonitor
+                self._dns_security_monitor = DNSSecurityMonitor()
+            except ImportError:
+                return None
+        return self._dns_security_monitor
 
     def register_callback(self, callback: callable):
         """
@@ -272,6 +295,9 @@ class StateMonitor:
         # Specialty/IoT network sensing
         specialty_info = self._check_specialty_networks()
 
+        # DNS security sensing
+        dns_security_alerts = self._check_dns_security()
+
         # Hardware sensing
         hardware_info = self._check_hardware()
 
@@ -299,6 +325,7 @@ class StateMonitor:
             vpn_active=network_info['vpn_active'],
             dns_available=network_info['dns_available'],
             specialty_networks=specialty_info,
+            dns_security_alerts=dns_security_alerts,
             usb_devices=hardware_info['usb_devices'],
             block_devices=hardware_info['block_devices'],
             camera_available=hardware_info['camera'],
@@ -541,6 +568,23 @@ class StateMonitor:
             ant_plus_devices=ant_plus_devices,
             cellular_alerts=cellular_alerts
         )
+
+    def _check_dns_security(self) -> List[str]:
+        """Check for DNS security threats if monitoring is enabled"""
+        if not self.monitoring_config.monitor_dns_security:
+            return []
+
+        try:
+            dns_monitor = self._get_dns_security_monitor()
+            if dns_monitor is None:
+                return []
+
+            # Get current DNS security status
+            status = dns_monitor.get_status()
+            return status.alerts
+        except Exception as e:
+            print(f"Error checking DNS security: {e}")
+            return []
 
     def _detect_lora_devices(self) -> List[str]:
         """

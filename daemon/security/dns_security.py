@@ -1,0 +1,759 @@
+"""
+DNS Security Monitor - Detects DNS-based attacks and anomalies.
+
+Features:
+- DNS spoofing/cache poisoning detection
+- DNS tunneling/exfiltration detection
+- DoH/DoT (secure DNS) enforcement verification
+- DNS query anomaly detection
+"""
+
+import os
+import re
+import socket
+import subprocess
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Set, Tuple
+from enum import Enum
+from collections import defaultdict
+import hashlib
+
+
+class DNSSecurityAlert(Enum):
+    """Types of DNS security alerts"""
+    NONE = "none"
+    SPOOFING_DETECTED = "spoofing_detected"
+    CACHE_POISONING = "cache_poisoning"
+    TUNNELING_DETECTED = "tunneling_detected"
+    EXFILTRATION_SUSPECTED = "exfiltration_suspected"
+    INSECURE_DNS = "insecure_dns"
+    HIGH_QUERY_RATE = "high_query_rate"
+    SUSPICIOUS_TLD = "suspicious_tld"
+    DNS_REBINDING = "dns_rebinding"
+
+
+@dataclass
+class DNSQueryRecord:
+    """Record of a DNS query for analysis"""
+    domain: str
+    query_type: str  # A, AAAA, TXT, MX, etc.
+    timestamp: datetime
+    response_ips: List[str]
+    response_time_ms: float
+    resolver: str
+
+
+@dataclass
+class DNSSecurityConfig:
+    """Configuration for DNS security monitoring"""
+    # Detection toggles
+    detect_spoofing: bool = True
+    detect_tunneling: bool = True
+    detect_exfiltration: bool = True
+    enforce_secure_dns: bool = False  # Warn if not using DoH/DoT
+
+    # Thresholds
+    max_subdomain_length: int = 50  # Longer subdomains may indicate tunneling
+    max_label_count: int = 10  # Too many labels may indicate tunneling
+    max_queries_per_minute: int = 100  # High query rate threshold
+    max_txt_record_size: int = 255  # Large TXT records may indicate exfiltration
+
+    # Known safe resolvers (DoH/DoT)
+    secure_resolvers: List[str] = field(default_factory=lambda: [
+        "1.1.1.1",        # Cloudflare
+        "1.0.0.1",        # Cloudflare
+        "8.8.8.8",        # Google
+        "8.8.4.4",        # Google
+        "9.9.9.9",        # Quad9
+        "149.112.112.112", # Quad9
+        "208.67.222.222",  # OpenDNS
+        "208.67.220.220",  # OpenDNS
+    ])
+
+    # Suspicious TLDs often used in attacks
+    suspicious_tlds: List[str] = field(default_factory=lambda: [
+        ".tk", ".ml", ".ga", ".cf", ".gq",  # Free TLDs often abused
+        ".top", ".xyz", ".club", ".work",   # Commonly abused TLDs
+        ".zip", ".mov",  # Confusing TLDs
+    ])
+
+    def to_dict(self) -> Dict:
+        return {
+            'detect_spoofing': self.detect_spoofing,
+            'detect_tunneling': self.detect_tunneling,
+            'detect_exfiltration': self.detect_exfiltration,
+            'enforce_secure_dns': self.enforce_secure_dns,
+            'max_subdomain_length': self.max_subdomain_length,
+            'max_queries_per_minute': self.max_queries_per_minute,
+        }
+
+
+@dataclass
+class DNSSecurityStatus:
+    """Current DNS security status"""
+    alerts: List[str]
+    is_secure_dns: bool
+    current_resolver: str
+    query_rate_per_minute: float
+    suspicious_domains: List[str]
+    potential_tunneling_domains: List[str]
+    last_check: str
+
+    def to_dict(self) -> Dict:
+        return {
+            'alerts': self.alerts,
+            'is_secure_dns': self.is_secure_dns,
+            'current_resolver': self.current_resolver,
+            'query_rate_per_minute': self.query_rate_per_minute,
+            'suspicious_domains': self.suspicious_domains,
+            'potential_tunneling_domains': self.potential_tunneling_domains,
+            'last_check': self.last_check,
+        }
+
+
+class DNSSecurityMonitor:
+    """
+    Monitors DNS traffic for security threats.
+
+    Detection capabilities:
+    1. DNS Spoofing: Detects when DNS responses don't match expected values
+    2. Cache Poisoning: Monitors for suspicious DNS cache changes
+    3. DNS Tunneling: Detects encoded data in DNS queries (exfiltration)
+    4. Secure DNS: Verifies DoH/DoT usage
+    """
+
+    def __init__(self, config: Optional[DNSSecurityConfig] = None):
+        self.config = config or DNSSecurityConfig()
+
+        # Query tracking
+        self._query_history: List[DNSQueryRecord] = []
+        self._query_counts: Dict[str, int] = defaultdict(int)  # domain -> count
+        self._last_minute_queries: List[datetime] = []
+
+        # Baseline DNS responses for spoofing detection
+        self._dns_baseline: Dict[str, Set[str]] = {}  # domain -> known good IPs
+
+        # Known legitimate high-entropy domains (CDNs, cloud services)
+        self._legitimate_high_entropy: Set[str] = {
+            "cloudfront.net", "amazonaws.com", "akamaiedge.net",
+            "cloudflare.com", "fastly.net", "azureedge.net",
+            "googleusercontent.com", "gstatic.com",
+        }
+
+        # Tracking for rebinding detection
+        self._domain_ip_history: Dict[str, List[Tuple[str, datetime]]] = defaultdict(list)
+
+        # Thread safety
+        self._lock = threading.Lock()
+
+        # Monitoring state
+        self._running = False
+        self._monitor_thread: Optional[threading.Thread] = None
+
+    def start(self):
+        """Start continuous DNS monitoring"""
+        if self._running:
+            return
+
+        self._running = True
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread.start()
+
+    def stop(self):
+        """Stop DNS monitoring"""
+        self._running = False
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5.0)
+
+    def _monitor_loop(self):
+        """Main monitoring loop"""
+        while self._running:
+            try:
+                # Periodic checks
+                self._check_resolver_security()
+                self._cleanup_old_records()
+                time.sleep(10)  # Check every 10 seconds
+            except Exception as e:
+                print(f"Error in DNS monitor loop: {e}")
+                time.sleep(10)
+
+    def get_status(self) -> DNSSecurityStatus:
+        """Get current DNS security status"""
+        with self._lock:
+            alerts = self._get_current_alerts()
+            is_secure, resolver = self._check_resolver_security()
+            query_rate = self._calculate_query_rate()
+            suspicious = self._get_suspicious_domains()
+            tunneling = self._get_potential_tunneling_domains()
+
+            return DNSSecurityStatus(
+                alerts=alerts,
+                is_secure_dns=is_secure,
+                current_resolver=resolver,
+                query_rate_per_minute=query_rate,
+                suspicious_domains=suspicious[:10],  # Top 10
+                potential_tunneling_domains=tunneling[:10],
+                last_check=datetime.utcnow().isoformat() + "Z"
+            )
+
+    def analyze_query(self, domain: str, query_type: str = "A") -> List[str]:
+        """
+        Analyze a DNS query for security issues.
+
+        Args:
+            domain: The domain being queried
+            query_type: DNS record type (A, AAAA, TXT, etc.)
+
+        Returns:
+            List of alert messages
+        """
+        alerts = []
+
+        # Check for tunneling indicators
+        if self.config.detect_tunneling:
+            tunneling_alerts = self._detect_tunneling(domain)
+            alerts.extend(tunneling_alerts)
+
+        # Check for suspicious TLDs
+        tld_alerts = self._check_suspicious_tld(domain)
+        alerts.extend(tld_alerts)
+
+        # Track query rate
+        self._record_query(domain, query_type)
+
+        # Check for high query rate
+        if self._calculate_query_rate() > self.config.max_queries_per_minute:
+            alerts.append(f"{DNSSecurityAlert.HIGH_QUERY_RATE.value}: "
+                         f"Query rate exceeds {self.config.max_queries_per_minute}/min")
+
+        return alerts
+
+    def analyze_response(self, domain: str, response_ips: List[str],
+                        response_time_ms: float) -> List[str]:
+        """
+        Analyze a DNS response for spoofing/poisoning.
+
+        Args:
+            domain: The queried domain
+            response_ips: IP addresses in the response
+            response_time_ms: Response time in milliseconds
+
+        Returns:
+            List of alert messages
+        """
+        alerts = []
+
+        if not self.config.detect_spoofing:
+            return alerts
+
+        # Check for DNS rebinding (rapid IP changes)
+        rebinding_alert = self._detect_rebinding(domain, response_ips)
+        if rebinding_alert:
+            alerts.append(rebinding_alert)
+
+        # Check against baseline
+        spoofing_alert = self._detect_spoofing(domain, response_ips)
+        if spoofing_alert:
+            alerts.append(spoofing_alert)
+
+        # Unusually fast response might indicate local spoofing
+        if response_time_ms < 1.0 and not self._is_cached_response(domain):
+            alerts.append(f"{DNSSecurityAlert.SPOOFING_DETECTED.value}: "
+                         f"Suspiciously fast DNS response ({response_time_ms}ms) for {domain}")
+
+        # Update baseline
+        self._update_baseline(domain, response_ips)
+
+        return alerts
+
+    def check_dns_over_https(self) -> Tuple[bool, str]:
+        """
+        Check if the system is using DNS-over-HTTPS.
+
+        Returns:
+            (is_using_doh, resolver_info)
+        """
+        # Check for common DoH configurations
+        doh_indicators = []
+
+        # Check systemd-resolved for DoH
+        try:
+            result = subprocess.run(
+                ['resolvectl', 'status'],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                output = result.stdout.decode()
+                if 'DNSOverTLS' in output and 'yes' in output.lower():
+                    return True, "systemd-resolved with DoT enabled"
+                if 'DNS Servers' in output:
+                    for line in output.split('\n'):
+                        if 'DNS Servers' in line:
+                            doh_indicators.append(line.strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Check /etc/resolv.conf
+        try:
+            with open('/etc/resolv.conf', 'r') as f:
+                resolv_content = f.read()
+                for resolver in self.config.secure_resolvers:
+                    if resolver in resolv_content:
+                        return True, f"Using known secure resolver: {resolver}"
+        except Exception:
+            pass
+
+        # Check for running DoH clients
+        doh_clients = ['cloudflared', 'dnscrypt-proxy', 'stubby', 'doh-client']
+        for client in doh_clients:
+            try:
+                result = subprocess.run(['pgrep', '-f', client], capture_output=True, timeout=2)
+                if result.returncode == 0:
+                    return True, f"DoH client running: {client}"
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+        return False, "No secure DNS detected"
+
+    def check_dns_over_tls(self) -> Tuple[bool, str]:
+        """
+        Check if the system is using DNS-over-TLS.
+
+        Returns:
+            (is_using_dot, resolver_info)
+        """
+        # Check systemd-resolved for DoT
+        try:
+            result = subprocess.run(
+                ['resolvectl', 'status'],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                output = result.stdout.decode()
+                if 'DNSOverTLS' in output:
+                    if 'yes' in output.lower() or 'opportunistic' in output.lower():
+                        return True, "systemd-resolved with DoT"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Check for stubby (DoT client)
+        try:
+            result = subprocess.run(['pgrep', '-f', 'stubby'], capture_output=True, timeout=2)
+            if result.returncode == 0:
+                return True, "Stubby DoT client running"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        return False, "No DNS-over-TLS detected"
+
+    def _detect_tunneling(self, domain: str) -> List[str]:
+        """
+        Detect potential DNS tunneling/exfiltration.
+
+        Tunneling indicators:
+        - Very long subdomain names
+        - High entropy in subdomain (encoded data)
+        - Many subdomain labels
+        - Unusual characters patterns
+        """
+        alerts = []
+
+        # Skip known legitimate high-entropy domains
+        for legit in self._legitimate_high_entropy:
+            if domain.endswith(legit):
+                return alerts
+
+        parts = domain.split('.')
+
+        # Check total subdomain length
+        if len(parts) > 2:
+            subdomain = '.'.join(parts[:-2])
+            if len(subdomain) > self.config.max_subdomain_length:
+                alerts.append(f"{DNSSecurityAlert.TUNNELING_DETECTED.value}: "
+                             f"Unusually long subdomain ({len(subdomain)} chars): {domain[:50]}...")
+
+        # Check number of labels
+        if len(parts) > self.config.max_label_count:
+            alerts.append(f"{DNSSecurityAlert.TUNNELING_DETECTED.value}: "
+                         f"Too many subdomain labels ({len(parts)}): {domain[:50]}...")
+
+        # Check for high entropy (base64/hex encoded data)
+        for part in parts[:-2]:  # Exclude TLD and SLD
+            if len(part) > 10:
+                entropy = self._calculate_entropy(part)
+                if entropy > 4.0:  # High entropy threshold
+                    alerts.append(f"{DNSSecurityAlert.EXFILTRATION_SUSPECTED.value}: "
+                                 f"High entropy subdomain detected: {part[:30]}...")
+                    break
+
+        # Check for hex-like patterns
+        hex_pattern = re.compile(r'^[0-9a-f]{16,}$', re.IGNORECASE)
+        for part in parts[:-2]:
+            if hex_pattern.match(part):
+                alerts.append(f"{DNSSecurityAlert.TUNNELING_DETECTED.value}: "
+                             f"Hex-encoded subdomain detected: {part[:30]}...")
+                break
+
+        # Check for base64-like patterns
+        b64_pattern = re.compile(r'^[A-Za-z0-9+/]{20,}={0,2}$')
+        for part in parts[:-2]:
+            if b64_pattern.match(part):
+                alerts.append(f"{DNSSecurityAlert.TUNNELING_DETECTED.value}: "
+                             f"Base64-encoded subdomain detected: {part[:30]}...")
+                break
+
+        return alerts
+
+    def _calculate_entropy(self, text: str) -> float:
+        """Calculate Shannon entropy of a string"""
+        if not text:
+            return 0.0
+
+        freq = defaultdict(int)
+        for char in text.lower():
+            freq[char] += 1
+
+        length = len(text)
+        entropy = 0.0
+
+        import math
+        for count in freq.values():
+            probability = count / length
+            entropy -= probability * math.log2(probability)
+
+        return entropy
+
+    def _detect_spoofing(self, domain: str, response_ips: List[str]) -> Optional[str]:
+        """Detect DNS spoofing by comparing against baseline"""
+        if domain not in self._dns_baseline:
+            return None
+
+        known_ips = self._dns_baseline[domain]
+        new_ips = set(response_ips)
+
+        # If completely different IPs, might be spoofing
+        if known_ips and new_ips and not known_ips.intersection(new_ips):
+            # Could be legitimate CDN rotation, so just warn
+            return (f"{DNSSecurityAlert.SPOOFING_DETECTED.value}: "
+                   f"DNS response for {domain} differs from baseline. "
+                   f"Expected: {list(known_ips)[:3]}, Got: {list(new_ips)[:3]}")
+
+        return None
+
+    def _detect_rebinding(self, domain: str, response_ips: List[str]) -> Optional[str]:
+        """
+        Detect DNS rebinding attacks.
+
+        DNS rebinding: Attacker's domain initially resolves to their server,
+        then quickly switches to internal IP (127.0.0.1, 192.168.x.x, etc.)
+        """
+        now = datetime.utcnow()
+
+        with self._lock:
+            history = self._domain_ip_history[domain]
+
+            # Add current IPs to history
+            for ip in response_ips:
+                history.append((ip, now))
+
+            # Keep only last 10 minutes of history
+            cutoff = now - timedelta(minutes=10)
+            history[:] = [(ip, ts) for ip, ts in history if ts > cutoff]
+
+            # Check for rebinding pattern: external IP -> internal IP
+            internal_prefixes = ('127.', '10.', '192.168.', '172.16.', '172.17.',
+                                '172.18.', '172.19.', '172.20.', '172.21.',
+                                '172.22.', '172.23.', '172.24.', '172.25.',
+                                '172.26.', '172.27.', '172.28.', '172.29.',
+                                '172.30.', '172.31.', '169.254.', '::1', 'fe80:')
+
+            has_external = False
+            has_internal = False
+
+            for ip, _ in history:
+                if any(ip.startswith(prefix) for prefix in internal_prefixes):
+                    has_internal = True
+                else:
+                    has_external = True
+
+            if has_external and has_internal:
+                return (f"{DNSSecurityAlert.DNS_REBINDING.value}: "
+                       f"Domain {domain} resolved to both external and internal IPs")
+
+        return None
+
+    def _check_suspicious_tld(self, domain: str) -> List[str]:
+        """Check if domain uses a suspicious TLD"""
+        alerts = []
+
+        for tld in self.config.suspicious_tlds:
+            if domain.endswith(tld):
+                alerts.append(f"{DNSSecurityAlert.SUSPICIOUS_TLD.value}: "
+                             f"Domain uses suspicious TLD: {domain}")
+                break
+
+        return alerts
+
+    def _check_resolver_security(self) -> Tuple[bool, str]:
+        """Check if current DNS resolver is secure"""
+        # Try to determine current resolver
+        resolver = "unknown"
+        is_secure = False
+
+        try:
+            with open('/etc/resolv.conf', 'r') as f:
+                for line in f:
+                    if line.startswith('nameserver'):
+                        resolver = line.split()[1]
+                        break
+        except Exception:
+            pass
+
+        # Check DoH/DoT
+        doh_ok, doh_info = self.check_dns_over_https()
+        if doh_ok:
+            return True, doh_info
+
+        dot_ok, dot_info = self.check_dns_over_tls()
+        if dot_ok:
+            return True, dot_info
+
+        # Check if using known secure resolver
+        if resolver in self.config.secure_resolvers:
+            is_secure = True
+
+        return is_secure, resolver
+
+    def _record_query(self, domain: str, query_type: str):
+        """Record a DNS query for rate tracking"""
+        now = datetime.utcnow()
+
+        with self._lock:
+            self._last_minute_queries.append(now)
+            self._query_counts[domain] += 1
+
+            # Cleanup old entries
+            cutoff = now - timedelta(minutes=1)
+            self._last_minute_queries = [
+                ts for ts in self._last_minute_queries if ts > cutoff
+            ]
+
+    def _calculate_query_rate(self) -> float:
+        """Calculate queries per minute"""
+        with self._lock:
+            now = datetime.utcnow()
+            cutoff = now - timedelta(minutes=1)
+            recent = [ts for ts in self._last_minute_queries if ts > cutoff]
+            return float(len(recent))
+
+    def _update_baseline(self, domain: str, ips: List[str]):
+        """Update baseline DNS responses"""
+        with self._lock:
+            if domain not in self._dns_baseline:
+                self._dns_baseline[domain] = set()
+            self._dns_baseline[domain].update(ips)
+
+            # Keep baseline reasonable size
+            if len(self._dns_baseline[domain]) > 20:
+                # Keep most recent IPs
+                self._dns_baseline[domain] = set(list(self._dns_baseline[domain])[-20:])
+
+    def _is_cached_response(self, domain: str) -> bool:
+        """Check if domain is likely cached"""
+        with self._lock:
+            return self._query_counts.get(domain, 0) > 1
+
+    def _get_current_alerts(self) -> List[str]:
+        """Get current active alerts"""
+        alerts = []
+
+        # Check secure DNS
+        if self.config.enforce_secure_dns:
+            is_secure, resolver = self._check_resolver_security()
+            if not is_secure:
+                alerts.append(f"{DNSSecurityAlert.INSECURE_DNS.value}: "
+                             f"Not using secure DNS (DoH/DoT). Resolver: {resolver}")
+
+        # Check query rate
+        rate = self._calculate_query_rate()
+        if rate > self.config.max_queries_per_minute:
+            alerts.append(f"{DNSSecurityAlert.HIGH_QUERY_RATE.value}: "
+                         f"High DNS query rate: {rate:.0f}/min")
+
+        return alerts
+
+    def _get_suspicious_domains(self) -> List[str]:
+        """Get list of recently queried suspicious domains"""
+        suspicious = []
+
+        with self._lock:
+            for domain in self._query_counts.keys():
+                for tld in self.config.suspicious_tlds:
+                    if domain.endswith(tld):
+                        suspicious.append(domain)
+                        break
+
+        return suspicious
+
+    def _get_potential_tunneling_domains(self) -> List[str]:
+        """Get domains that show tunneling indicators"""
+        tunneling = []
+
+        with self._lock:
+            for domain in self._query_counts.keys():
+                alerts = self._detect_tunneling(domain)
+                if alerts:
+                    tunneling.append(domain)
+
+        return tunneling
+
+    def _cleanup_old_records(self):
+        """Clean up old tracking data"""
+        now = datetime.utcnow()
+        cutoff = now - timedelta(hours=1)
+
+        with self._lock:
+            # Clean query history
+            self._query_history = [
+                q for q in self._query_history if q.timestamp > cutoff
+            ]
+
+            # Reset query counts periodically
+            if len(self._query_counts) > 10000:
+                self._query_counts.clear()
+
+    def verify_dns_response(self, domain: str, expected_ips: Optional[List[str]] = None) -> Dict:
+        """
+        Verify a DNS response by querying multiple resolvers.
+
+        Args:
+            domain: Domain to verify
+            expected_ips: Optional list of expected IP addresses
+
+        Returns:
+            Dict with verification results
+        """
+        results = {
+            'domain': domain,
+            'consistent': True,
+            'responses': {},
+            'alerts': []
+        }
+
+        resolvers = [
+            ('1.1.1.1', 'Cloudflare'),
+            ('8.8.8.8', 'Google'),
+            ('9.9.9.9', 'Quad9'),
+        ]
+
+        all_ips = []
+
+        for resolver_ip, resolver_name in resolvers:
+            try:
+                # Query using specific resolver
+                result = subprocess.run(
+                    ['dig', f'@{resolver_ip}', domain, '+short', '+timeout=3'],
+                    capture_output=True, timeout=5
+                )
+                if result.returncode == 0:
+                    ips = [ip.strip() for ip in result.stdout.decode().split('\n') if ip.strip()]
+                    results['responses'][resolver_name] = ips
+                    all_ips.extend(ips)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                results['responses'][resolver_name] = ['error']
+
+        # Check consistency
+        unique_responses = set()
+        for resolver_name, ips in results['responses'].items():
+            if ips != ['error']:
+                unique_responses.add(tuple(sorted(ips)))
+
+        if len(unique_responses) > 1:
+            results['consistent'] = False
+            results['alerts'].append(
+                f"{DNSSecurityAlert.CACHE_POISONING.value}: "
+                f"Inconsistent DNS responses across resolvers for {domain}"
+            )
+
+        # Check against expected
+        if expected_ips:
+            expected_set = set(expected_ips)
+            actual_set = set(all_ips)
+            if not expected_set.intersection(actual_set):
+                results['alerts'].append(
+                    f"{DNSSecurityAlert.SPOOFING_DETECTED.value}: "
+                    f"DNS response doesn't match expected IPs for {domain}"
+                )
+
+        return results
+
+
+# Convenience function for quick DNS security check
+def quick_dns_security_check() -> DNSSecurityStatus:
+    """Perform a quick DNS security check and return status"""
+    monitor = DNSSecurityMonitor()
+    return monitor.get_status()
+
+
+if __name__ == '__main__':
+    # Test the DNS security monitor
+    print("DNS Security Monitor Test")
+    print("=" * 50)
+
+    monitor = DNSSecurityMonitor()
+
+    # Check secure DNS status
+    print("\n--- Secure DNS Check ---")
+    doh_ok, doh_info = monitor.check_dns_over_https()
+    print(f"DNS-over-HTTPS: {doh_ok} - {doh_info}")
+
+    dot_ok, dot_info = monitor.check_dns_over_tls()
+    print(f"DNS-over-TLS: {dot_ok} - {dot_info}")
+
+    # Test tunneling detection
+    print("\n--- Tunneling Detection Test ---")
+    test_domains = [
+        "normal.example.com",
+        "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHRlc3Q.evil.com",  # Base64-like
+        "4e6f772069732074686520746.ioc.io",  # Hex-like
+        "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.evil.com",  # Many labels
+        "thisisaverylongsubdomainthatmightindicatetunnelingactivity.bad.com",
+    ]
+
+    for domain in test_domains:
+        alerts = monitor.analyze_query(domain)
+        if alerts:
+            print(f"[ALERT] {domain[:40]}...")
+            for alert in alerts:
+                print(f"        {alert}")
+        else:
+            print(f"[OK] {domain[:40]}...")
+
+    # Test rebinding detection
+    print("\n--- DNS Rebinding Test ---")
+    alerts = monitor.analyze_response("test.evil.com", ["1.2.3.4"], 50)
+    alerts = monitor.analyze_response("test.evil.com", ["192.168.1.1"], 50)
+    if alerts:
+        for alert in alerts:
+            print(f"[ALERT] {alert}")
+    else:
+        print("[OK] No rebinding detected")
+
+    # Get overall status
+    print("\n--- Overall Status ---")
+    status = monitor.get_status()
+    print(f"Secure DNS: {status.is_secure_dns}")
+    print(f"Resolver: {status.current_resolver}")
+    print(f"Query Rate: {status.query_rate_per_minute}/min")
+    print(f"Alerts: {status.alerts}")
+
+    # Verify DNS response
+    print("\n--- DNS Verification ---")
+    result = monitor.verify_dns_response("google.com")
+    print(f"Domain: {result['domain']}")
+    print(f"Consistent: {result['consistent']}")
+    for resolver, ips in result['responses'].items():
+        print(f"  {resolver}: {ips[:3]}...")

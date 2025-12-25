@@ -3,6 +3,7 @@ Attack Simulation Test Framework
 Tests the boundary daemon's ability to detect and resist various network attacks.
 
 This module simulates attack scenarios across different network types:
+- DNS: Tunneling, exfiltration, spoofing, rebinding, cache poisoning
 - Cellular: IMSI catcher/Stingray attacks (2G downgrade, tower spoofing)
 - WiFi: Rogue AP, deauthentication attacks
 - Ethernet: ARP spoofing, MITM attacks
@@ -23,6 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from daemon.state_monitor import (
     StateMonitor, MonitoringConfig, CellularSecurityAlert,
     NetworkType, NetworkState, SpecialtyNetworkStatus, HardwareTrust
+)
+from daemon.security.dns_security import (
+    DNSSecurityMonitor, DNSSecurityConfig, DNSSecurityAlert
 )
 
 
@@ -370,6 +374,259 @@ class IoTAttackSimulator:
                         devices = self.monitor._detect_ant_plus_devices()
 
         return devices
+
+
+class DNSAttackSimulator:
+    """Simulates DNS-based attacks"""
+
+    def __init__(self, monitor: DNSSecurityMonitor):
+        self.monitor = monitor
+
+    def simulate_dns_tunneling_base64(self) -> List[str]:
+        """
+        Simulate DNS tunneling using base64-encoded data in subdomain.
+        This is a common exfiltration technique.
+        """
+        # Simulate base64-encoded exfiltration domain
+        tunneling_domain = "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHNlY3JldA.evil.com"
+        return self.monitor.analyze_query(tunneling_domain)
+
+    def simulate_dns_tunneling_hex(self) -> List[str]:
+        """
+        Simulate DNS tunneling using hex-encoded data in subdomain.
+        """
+        # Simulate hex-encoded exfiltration domain
+        hex_domain = "48656c6c6f576f726c6454686973497353656372657444617461.attacker.io"
+        return self.monitor.analyze_query(hex_domain)
+
+    def simulate_dns_tunneling_many_labels(self) -> List[str]:
+        """
+        Simulate DNS tunneling using many subdomain labels.
+        Each label can carry a small chunk of data.
+        """
+        # Simulate domain with excessive labels
+        many_labels = "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.tunnel.com"
+        return self.monitor.analyze_query(many_labels)
+
+    def simulate_dns_tunneling_long_subdomain(self) -> List[str]:
+        """
+        Simulate DNS tunneling using very long subdomains.
+        """
+        # Simulate very long subdomain
+        long_domain = "thisisaverylongsubdomainthatcontainsencodeddataforexfiltration.bad.net"
+        return self.monitor.analyze_query(long_domain)
+
+    def simulate_dns_rebinding_attack(self) -> List[str]:
+        """
+        Simulate DNS rebinding attack.
+        Attacker domain first resolves to external IP, then to internal IP.
+        """
+        alerts = []
+
+        # First response: external IP
+        alerts.extend(self.monitor.analyze_response(
+            "rebind.attacker.com",
+            ["203.0.113.50"],  # External IP
+            50.0
+        ))
+
+        # Second response: internal IP (attack!)
+        alerts.extend(self.monitor.analyze_response(
+            "rebind.attacker.com",
+            ["192.168.1.100"],  # Internal IP - rebinding!
+            45.0
+        ))
+
+        return alerts
+
+    def simulate_dns_spoofing_attack(self) -> List[str]:
+        """
+        Simulate DNS spoofing where responses differ from baseline.
+        """
+        alerts = []
+
+        # Establish baseline
+        self.monitor.analyze_response("trusted-site.com", ["93.184.216.34"], 50.0)
+
+        # Spoofed response with different IP
+        alerts.extend(self.monitor.analyze_response(
+            "trusted-site.com",
+            ["10.0.0.1"],  # Attacker's IP - spoofing!
+            1.5
+        ))
+
+        return alerts
+
+    def simulate_suspicious_tld_query(self) -> List[str]:
+        """
+        Simulate queries to suspicious TLDs often used in attacks.
+        """
+        suspicious_domains = [
+            "malware-download.tk",
+            "phishing-site.ml",
+            "c2-server.ga",
+            "dropper.cf",
+        ]
+        alerts = []
+        for domain in suspicious_domains:
+            alerts.extend(self.monitor.analyze_query(domain))
+        return alerts
+
+    def simulate_fast_response_spoofing(self) -> List[str]:
+        """
+        Simulate suspiciously fast DNS response (local spoofing indicator).
+        """
+        # Very fast response suggests local interception
+        return self.monitor.analyze_response(
+            "bank-login.com",
+            ["1.2.3.4"],
+            0.5  # Suspiciously fast - 0.5ms
+        )
+
+
+class TestDNSAttacks(unittest.TestCase):
+    """Test suite for DNS attack detection"""
+
+    def setUp(self):
+        self.config = DNSSecurityConfig(
+            detect_spoofing=True,
+            detect_tunneling=True,
+            detect_exfiltration=True,
+        )
+        self.monitor = DNSSecurityMonitor(config=self.config)
+        self.simulator = DNSAttackSimulator(self.monitor)
+
+    def test_dns_tunneling_base64(self):
+        """Test detection of base64-encoded DNS tunneling"""
+        alerts = self.simulator.simulate_dns_tunneling_base64()
+
+        tunneling_detected = any(
+            DNSSecurityAlert.TUNNELING_DETECTED.value in alert or
+            DNSSecurityAlert.EXFILTRATION_SUSPECTED.value in alert
+            for alert in alerts
+        )
+
+        if tunneling_detected:
+            results.add_pass("DNS Tunneling (Base64)", "Detected base64-encoded subdomain")
+        else:
+            results.add_fail("DNS Tunneling (Base64)", "Failed to detect base64 tunneling")
+
+        self.assertTrue(tunneling_detected, f"Base64 tunneling not detected. Alerts: {alerts}")
+
+    def test_dns_tunneling_hex(self):
+        """Test detection of hex-encoded DNS tunneling"""
+        alerts = self.simulator.simulate_dns_tunneling_hex()
+
+        tunneling_detected = any(
+            DNSSecurityAlert.TUNNELING_DETECTED.value in alert or
+            'hex' in alert.lower()
+            for alert in alerts
+        )
+
+        if tunneling_detected:
+            results.add_pass("DNS Tunneling (Hex)", "Detected hex-encoded subdomain")
+        else:
+            results.add_fail("DNS Tunneling (Hex)", "Failed to detect hex tunneling")
+
+        self.assertTrue(tunneling_detected, f"Hex tunneling not detected. Alerts: {alerts}")
+
+    def test_dns_tunneling_many_labels(self):
+        """Test detection of DNS tunneling via excessive labels"""
+        alerts = self.simulator.simulate_dns_tunneling_many_labels()
+
+        tunneling_detected = any(
+            DNSSecurityAlert.TUNNELING_DETECTED.value in alert or
+            'labels' in alert.lower()
+            for alert in alerts
+        )
+
+        if tunneling_detected:
+            results.add_pass("DNS Tunneling (Many Labels)", "Detected excessive subdomain labels")
+        else:
+            results.add_fail("DNS Tunneling (Many Labels)", "Failed to detect label-based tunneling")
+
+        self.assertTrue(tunneling_detected, f"Label tunneling not detected. Alerts: {alerts}")
+
+    def test_dns_tunneling_long_subdomain(self):
+        """Test detection of DNS tunneling via long subdomains"""
+        alerts = self.simulator.simulate_dns_tunneling_long_subdomain()
+
+        tunneling_detected = any(
+            DNSSecurityAlert.TUNNELING_DETECTED.value in alert or
+            'long' in alert.lower()
+            for alert in alerts
+        )
+
+        if tunneling_detected:
+            results.add_pass("DNS Tunneling (Long Subdomain)", "Detected unusually long subdomain")
+        else:
+            results.add_fail("DNS Tunneling (Long Subdomain)", "Failed to detect long subdomain")
+
+        self.assertTrue(tunneling_detected, f"Long subdomain not detected. Alerts: {alerts}")
+
+    def test_dns_rebinding_attack(self):
+        """Test detection of DNS rebinding attack"""
+        alerts = self.simulator.simulate_dns_rebinding_attack()
+
+        rebinding_detected = any(
+            DNSSecurityAlert.DNS_REBINDING.value in alert
+            for alert in alerts
+        )
+
+        if rebinding_detected:
+            results.add_pass("DNS Rebinding Attack", "Detected external-to-internal IP switch")
+        else:
+            results.add_fail("DNS Rebinding Attack", "Failed to detect rebinding")
+
+        self.assertTrue(rebinding_detected, f"Rebinding not detected. Alerts: {alerts}")
+
+    def test_dns_spoofing_attack(self):
+        """Test detection of DNS spoofing (different IP from baseline)"""
+        alerts = self.simulator.simulate_dns_spoofing_attack()
+
+        spoofing_detected = any(
+            DNSSecurityAlert.SPOOFING_DETECTED.value in alert
+            for alert in alerts
+        )
+
+        if spoofing_detected:
+            results.add_pass("DNS Spoofing Attack", "Detected IP mismatch from baseline")
+        else:
+            results.add_fail("DNS Spoofing Attack", "Failed to detect spoofing")
+
+        self.assertTrue(spoofing_detected, f"Spoofing not detected. Alerts: {alerts}")
+
+    def test_suspicious_tld_detection(self):
+        """Test detection of suspicious TLDs"""
+        alerts = self.simulator.simulate_suspicious_tld_query()
+
+        suspicious_detected = any(
+            DNSSecurityAlert.SUSPICIOUS_TLD.value in alert
+            for alert in alerts
+        )
+
+        if suspicious_detected:
+            results.add_pass("Suspicious TLD Detection", "Detected queries to suspicious TLDs")
+        else:
+            results.add_fail("Suspicious TLD Detection", "Failed to detect suspicious TLDs")
+
+        self.assertTrue(suspicious_detected, f"Suspicious TLD not detected. Alerts: {alerts}")
+
+    def test_fast_response_detection(self):
+        """Test detection of suspiciously fast DNS responses"""
+        alerts = self.simulator.simulate_fast_response_spoofing()
+
+        fast_detected = any(
+            'fast' in alert.lower() or DNSSecurityAlert.SPOOFING_DETECTED.value in alert
+            for alert in alerts
+        )
+
+        if fast_detected:
+            results.add_pass("Fast Response Detection", "Detected suspiciously fast DNS response")
+        else:
+            results.add_fail("Fast Response Detection", "Failed to detect fast response")
+
+        self.assertTrue(fast_detected, f"Fast response not detected. Alerts: {alerts}")
 
 
 class TestCellularAttacks(unittest.TestCase):
@@ -742,6 +999,7 @@ def run_all_simulations():
     suite = unittest.TestSuite()
 
     # Add all test classes
+    suite.addTests(loader.loadTestsFromTestCase(TestDNSAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestCellularAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestWiFiAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestEthernetAttacks))
