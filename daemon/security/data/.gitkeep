@@ -1,0 +1,13 @@
+# Placeholder for encrypted startup program data
+#
+# When the StartupMonitor is initialized, it will create an encrypted file here:
+#   ~/.local/share/boundary-daemon/.startup_programs.enc
+#
+# The file contains:
+# - List of known startup programs
+# - Encrypted with machine-specific key
+# - HMAC integrity verification
+#
+# Run the GUI or CLI to initialize:
+#   python -m daemon.security.antivirus_gui
+#   python daemon/security/antivirus.py --startup-init
