@@ -21,6 +21,7 @@ from .antivirus import (
     ThreatLevel,
     ThreatCategory,
     KeyloggerSignatures,
+    ScreenSharingSignatures,
     ScanResult as AntivirusScanResult,
 )
 
@@ -38,5 +39,6 @@ __all__ = [
     'ThreatLevel',
     'ThreatCategory',
     'KeyloggerSignatures',
+    'ScreenSharingSignatures',
     'AntivirusScanResult',
 ]

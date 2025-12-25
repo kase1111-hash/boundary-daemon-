@@ -55,6 +55,7 @@ class ThreatCategory(Enum):
     SUSPICIOUS_FILE = "suspicious_file"
     NETWORK_SNIFFER = "network_sniffer"
     PERSISTENCE_MECHANISM = "persistence_mechanism"
+    REMOTE_VIEW = "remote_view"  # Screen sharing / remote desktop
 
 
 @dataclass
@@ -179,6 +180,70 @@ class KeyloggerSignatures:
     ]
 
 
+class ScreenSharingSignatures:
+    """Signatures for detecting screen sharing and remote viewing"""
+
+    # Known screen sharing / remote desktop processes
+    SCREEN_SHARING_PROCESSES = {
+        # VNC servers
+        'x11vnc', 'tigervnc', 'tightvnc', 'realvnc', 'vncserver',
+        'Xvnc', 'x0vncserver', 'vino-server', 'krfb', 'vinagre',
+        # Remote desktop
+        'xrdp', 'xrdp-sesman', 'xfreerdp', 'rdesktop', 'remmina',
+        # Commercial remote access
+        'teamviewer', 'TeamViewer', 'teamviewerd',
+        'anydesk', 'AnyDesk', 'anydesk-service',
+        'rustdesk', 'RustDesk',
+        'nomachine', 'nxserver', 'nxnode',
+        'chrome-remote-desktop', 'chrome_remote_desktop',
+        # Screen recording/streaming
+        'obs', 'obs-studio', 'ffmpeg',  # Note: ffmpeg can be legitimate
+        'simplescreenrecorder', 'kazam', 'peek',
+        # Wayland screen sharing
+        'xdg-desktop-portal', 'pipewire', 'wireplumber',
+        # Other
+        'sshd',  # SSH with X forwarding
+        'spice-vdagent', 'spice-client',
+        'parsec', 'moonlight', 'sunshine',
+    }
+
+    # Network ports used by remote desktop/screen sharing
+    REMOTE_DESKTOP_PORTS = {
+        5900: 'VNC (display :0)',
+        5901: 'VNC (display :1)',
+        5902: 'VNC (display :2)',
+        5903: 'VNC (display :3)',
+        5800: 'VNC HTTP',
+        3389: 'RDP (Windows Remote Desktop)',
+        3350: 'xrdp',
+        4000: 'NoMachine',
+        5938: 'TeamViewer',
+        7070: 'AnyDesk',
+        21118: 'RustDesk',
+        6568: 'AnyDesk (alt)',
+        8080: 'VNC HTTP (alt)',
+        22: 'SSH (potential X forwarding)',
+    }
+
+    # X11 extensions used for screen capture
+    X11_CAPTURE_EXTENSIONS = [
+        'MIT-SHM',      # Shared memory - used by screen capture
+        'DAMAGE',       # Tracks screen changes - used by VNC
+        'XFIXES',       # Screen capture cursors
+        'Composite',    # Compositing - can be used for capture
+        'RECORD',       # Input recording extension
+    ]
+
+    # D-Bus interfaces for screen sharing (GNOME/KDE)
+    DBUS_SCREEN_SHARE_INTERFACES = [
+        'org.gnome.Mutter.ScreenCast',
+        'org.gnome.Mutter.RemoteDesktop',
+        'org.freedesktop.portal.ScreenCast',
+        'org.freedesktop.portal.RemoteDesktop',
+        'org.kde.KWin.ScreenCast',
+    ]
+
+
 class AntivirusScanner:
     """
     Simple antivirus scanner focused on keylogger detection.
@@ -203,6 +268,7 @@ class AntivirusScanner:
         self._lock = threading.Lock()
         self._scan_running = False
         self.signatures = KeyloggerSignatures()
+        self.screen_sharing_sigs = ScreenSharingSignatures()
 
     def full_scan(self) -> ScanResult:
         """
@@ -228,24 +294,28 @@ class AntivirusScanner:
             file_result = self.scan_filesystem()
             input_result = self.scan_input_devices()
             persistence_result = self.scan_persistence_mechanisms()
+            screen_result = self.scan_screen_sharing()
 
             # Aggregate results
             result.threats_found.extend(process_result.threats_found)
             result.threats_found.extend(file_result.threats_found)
             result.threats_found.extend(input_result.threats_found)
             result.threats_found.extend(persistence_result.threats_found)
+            result.threats_found.extend(screen_result.threats_found)
 
             result.items_scanned = (
                 process_result.items_scanned +
                 file_result.items_scanned +
                 input_result.items_scanned +
-                persistence_result.items_scanned
+                persistence_result.items_scanned +
+                screen_result.items_scanned
             )
 
             result.errors.extend(process_result.errors)
             result.errors.extend(file_result.errors)
             result.errors.extend(input_result.errors)
             result.errors.extend(persistence_result.errors)
+            result.errors.extend(screen_result.errors)
 
         except Exception as e:
             logger.error(f"Full scan error: {e}")
@@ -399,6 +469,66 @@ class AntivirusScanner:
             result.end_time = datetime.utcnow().isoformat() + "Z"
 
         return result
+
+    def scan_screen_sharing(self) -> ScanResult:
+        """
+        Detect active screen sharing and remote viewing.
+
+        Checks for:
+        - Running screen sharing processes (VNC, RDP, TeamViewer, etc.)
+        - Network connections on remote desktop ports
+        - X11 screen capture indicators
+        - Wayland/D-Bus screen sharing sessions
+        - SSH X11 forwarding
+
+        Returns:
+            ScanResult with screen sharing indicators
+        """
+        start_time = datetime.utcnow().isoformat() + "Z"
+        result = ScanResult(scan_type="screen_sharing", start_time=start_time)
+
+        try:
+            # Check for screen sharing processes
+            process_threats = self._check_screen_sharing_processes()
+            result.threats_found.extend(process_threats)
+
+            # Check network ports for remote desktop connections
+            port_threats = self._check_remote_desktop_ports()
+            result.threats_found.extend(port_threats)
+
+            # Check for X11 DAMAGE extension usage (VNC indicator)
+            x11_threats = self._check_x11_screen_capture()
+            result.threats_found.extend(x11_threats)
+
+            # Check for D-Bus screen sharing sessions
+            dbus_threats = self._check_dbus_screen_sharing()
+            result.threats_found.extend(dbus_threats)
+
+            # Check for SSH X11 forwarding
+            ssh_threats = self._check_ssh_x11_forwarding()
+            result.threats_found.extend(ssh_threats)
+
+            result.items_scanned = 5  # Number of check types
+
+        except Exception as e:
+            logger.error(f"Screen sharing scan error: {e}")
+            result.errors.append(str(e))
+        finally:
+            result.end_time = datetime.utcnow().isoformat() + "Z"
+
+        return result
+
+    def is_screen_being_shared(self) -> Tuple[bool, List[Dict]]:
+        """
+        Quick check if screen is currently being shared.
+
+        Returns:
+            Tuple of (is_shared: bool, details: List[Dict])
+        """
+        result = self.scan_screen_sharing()
+        is_shared = result.threat_count > 0
+        details = [t.to_dict() for t in result.threats_found]
+        return (is_shared, details)
 
     def quick_scan(self) -> ScanResult:
         """
@@ -827,13 +957,335 @@ class AntivirusScanner:
 
         return threats
 
+    # ==================== Screen Sharing Detection ====================
+
+    def _check_screen_sharing_processes(self) -> List[ThreatIndicator]:
+        """Check for running screen sharing processes"""
+        threats = []
+
+        try:
+            processes = self._get_running_processes()
+
+            for proc in processes:
+                name = proc.get('name', '').lower()
+                cmdline = proc.get('cmdline', '').lower()
+                pid = proc.get('pid', 'unknown')
+
+                # Check against known screen sharing processes
+                for sig in self.screen_sharing_sigs.SCREEN_SHARING_PROCESSES:
+                    sig_lower = sig.lower()
+                    if sig_lower in name or sig_lower in cmdline:
+                        # Determine threat level based on process type
+                        level = ThreatLevel.INFO
+                        description = "Screen sharing software detected"
+
+                        # Higher concern for remote access tools
+                        if any(x in sig_lower for x in ['vnc', 'rdp', 'xrdp', 'teamviewer', 'anydesk', 'rustdesk']):
+                            level = ThreatLevel.MEDIUM
+                            description = "Remote desktop/viewing software active"
+
+                        threats.append(ThreatIndicator(
+                            name=f"Screen sharing: {sig}",
+                            category=ThreatCategory.REMOTE_VIEW,
+                            level=level,
+                            description=description,
+                            location=f"PID: {pid}",
+                            evidence=cmdline[:200] if cmdline else name,
+                            remediation="Verify this is an authorized screen sharing session"
+                        ))
+                        break
+
+        except Exception as e:
+            logger.debug(f"Error checking screen sharing processes: {e}")
+
+        return threats
+
+    def _check_remote_desktop_ports(self) -> List[ThreatIndicator]:
+        """Check for listening/connected remote desktop ports"""
+        threats = []
+
+        try:
+            # Use ss (socket statistics) to check listening ports
+            result = subprocess.run(
+                ['ss', '-tlnp'],
+                capture_output=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                output = result.stdout.decode()
+
+                for port, service in self.screen_sharing_sigs.REMOTE_DESKTOP_PORTS.items():
+                    # Skip SSH as it's very common
+                    if port == 22:
+                        continue
+
+                    port_str = f":{port} "
+                    if port_str in output or f":{port}\t" in output:
+                        threats.append(ThreatIndicator(
+                            name=f"Remote desktop port open: {port}",
+                            category=ThreatCategory.REMOTE_VIEW,
+                            level=ThreatLevel.MEDIUM,
+                            description=f"{service} port is listening",
+                            location=f"Port {port}/tcp",
+                            evidence=f"Service: {service}",
+                            remediation="Verify this remote access service is authorized"
+                        ))
+
+            # Check for established connections on these ports
+            result = subprocess.run(
+                ['ss', '-tnp', 'state', 'established'],
+                capture_output=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                output = result.stdout.decode()
+
+                for port, service in self.screen_sharing_sigs.REMOTE_DESKTOP_PORTS.items():
+                    if port == 22:
+                        continue
+
+                    if f":{port} " in output or f":{port}\t" in output:
+                        threats.append(ThreatIndicator(
+                            name=f"Active remote connection on port {port}",
+                            category=ThreatCategory.REMOTE_VIEW,
+                            level=ThreatLevel.HIGH,
+                            description=f"Active {service} connection detected",
+                            location=f"Port {port}/tcp",
+                            evidence=f"Established connection to {service}",
+                            remediation="Verify this is an authorized remote session"
+                        ))
+
+        except subprocess.TimeoutExpired:
+            pass
+        except FileNotFoundError:
+            # ss not available, try netstat
+            try:
+                result = subprocess.run(
+                    ['netstat', '-tlnp'],
+                    capture_output=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode()
+                    for port, service in self.screen_sharing_sigs.REMOTE_DESKTOP_PORTS.items():
+                        if port == 22:
+                            continue
+                        if f":{port} " in output:
+                            threats.append(ThreatIndicator(
+                                name=f"Remote desktop port open: {port}",
+                                category=ThreatCategory.REMOTE_VIEW,
+                                level=ThreatLevel.MEDIUM,
+                                description=f"{service} port is listening",
+                                location=f"Port {port}/tcp",
+                                evidence=f"Service: {service}",
+                                remediation="Verify this remote access service is authorized"
+                            ))
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Error checking remote desktop ports: {e}")
+
+        return threats
+
+    def _check_x11_screen_capture(self) -> List[ThreatIndicator]:
+        """Check for X11 screen capture indicators"""
+        threats = []
+
+        # Check if DISPLAY is set (X11 is in use)
+        display = os.environ.get('DISPLAY')
+        if not display:
+            return threats
+
+        try:
+            # Check for processes using DAMAGE extension (used by VNC)
+            # The DAMAGE extension is used to track screen changes
+            result = subprocess.run(
+                ['xdpyinfo', '-display', display],
+                capture_output=True,
+                timeout=5,
+                env={**os.environ, 'DISPLAY': display}
+            )
+
+            if result.returncode == 0:
+                output = result.stdout.decode()
+
+                # Check if RECORD extension is active (can record input)
+                if 'RECORD' in output:
+                    # Check who is using it
+                    record_result = subprocess.run(
+                        ['xlsclients', '-l'],
+                        capture_output=True,
+                        timeout=5,
+                        env={**os.environ, 'DISPLAY': display}
+                    )
+
+                    if record_result.returncode == 0:
+                        clients = record_result.stdout.decode()
+                        # Look for VNC or screen capture clients
+                        for sig in ['vnc', 'x11vnc', 'vino', 'screencap', 'record']:
+                            if sig in clients.lower():
+                                threats.append(ThreatIndicator(
+                                    name=f"X11 screen capture client detected",
+                                    category=ThreatCategory.REMOTE_VIEW,
+                                    level=ThreatLevel.MEDIUM,
+                                    description="X11 client using screen capture capabilities",
+                                    location=f"DISPLAY={display}",
+                                    evidence=f"Client matching '{sig}' found",
+                                    remediation="Investigate the X11 client"
+                                ))
+
+        except subprocess.TimeoutExpired:
+            pass
+        except FileNotFoundError:
+            # xdpyinfo not available
+            pass
+        except Exception as e:
+            logger.debug(f"Error checking X11 screen capture: {e}")
+
+        return threats
+
+    def _check_dbus_screen_sharing(self) -> List[ThreatIndicator]:
+        """Check for D-Bus screen sharing sessions (GNOME/KDE)"""
+        threats = []
+
+        try:
+            # Check for active portal screen cast sessions
+            result = subprocess.run(
+                ['busctl', 'tree', 'org.freedesktop.portal.Desktop'],
+                capture_output=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                output = result.stdout.decode()
+
+                # Look for active ScreenCast sessions
+                if '/org/freedesktop/portal/desktop/session/' in output:
+                    threats.append(ThreatIndicator(
+                        name="Active portal screen sharing session",
+                        category=ThreatCategory.REMOTE_VIEW,
+                        level=ThreatLevel.MEDIUM,
+                        description="XDG Desktop Portal has active screen sharing session",
+                        location="org.freedesktop.portal.Desktop",
+                        evidence="Active session found in D-Bus",
+                        remediation="Check which application requested screen sharing"
+                    ))
+
+            # Check GNOME Mutter ScreenCast
+            result = subprocess.run(
+                ['busctl', 'introspect', 'org.gnome.Mutter.ScreenCast',
+                 '/org/gnome/Mutter/ScreenCast'],
+                capture_output=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                # The service exists and is running
+                # Check for active sessions
+                session_result = subprocess.run(
+                    ['busctl', 'tree', 'org.gnome.Mutter.ScreenCast'],
+                    capture_output=True,
+                    timeout=5
+                )
+
+                if session_result.returncode == 0:
+                    session_output = session_result.stdout.decode()
+                    if '/org/gnome/Mutter/ScreenCast/Session/' in session_output:
+                        threats.append(ThreatIndicator(
+                            name="GNOME screen cast session active",
+                            category=ThreatCategory.REMOTE_VIEW,
+                            level=ThreatLevel.MEDIUM,
+                            description="GNOME Mutter has active screen cast session",
+                            location="org.gnome.Mutter.ScreenCast",
+                            evidence="Active session in Mutter ScreenCast",
+                            remediation="Check GNOME screen sharing settings"
+                        ))
+
+        except subprocess.TimeoutExpired:
+            pass
+        except FileNotFoundError:
+            # busctl not available
+            pass
+        except Exception as e:
+            logger.debug(f"Error checking D-Bus screen sharing: {e}")
+
+        return threats
+
+    def _check_ssh_x11_forwarding(self) -> List[ThreatIndicator]:
+        """Check for SSH X11 forwarding"""
+        threats = []
+
+        try:
+            # Check for SSH connections with X11 forwarding
+            # This is indicated by DISPLAY being set to localhost:10.0 or similar
+            display = os.environ.get('DISPLAY', '')
+
+            if display.startswith('localhost:') or display.startswith(':10'):
+                # Likely X11 forwarding
+                threats.append(ThreatIndicator(
+                    name="SSH X11 forwarding detected",
+                    category=ThreatCategory.REMOTE_VIEW,
+                    level=ThreatLevel.INFO,
+                    description="Display suggests SSH X11 forwarding is active",
+                    location=f"DISPLAY={display}",
+                    evidence="Display variable indicates remote X11",
+                    remediation="Verify SSH X11 forwarding is authorized"
+                ))
+
+            # Check for sshd processes with X11 forwarding
+            result = subprocess.run(
+                ['pgrep', '-a', 'sshd'],
+                capture_output=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                output = result.stdout.decode()
+                # Check if any SSH session has X11 socket
+                for line in output.split('\n'):
+                    if 'sshd:' in line and '@' in line:
+                        # Active SSH session
+                        pid = line.split()[0]
+                        # Check if this session has X11 forwarding
+                        try:
+                            fd_path = f'/proc/{pid}/fd'
+                            if os.path.exists(fd_path):
+                                for fd in os.listdir(fd_path):
+                                    try:
+                                        link = os.readlink(f'{fd_path}/{fd}')
+                                        if 'X11-unix' in link or ':6010' in link:
+                                            threats.append(ThreatIndicator(
+                                                name="SSH session with X11 forwarding",
+                                                category=ThreatCategory.REMOTE_VIEW,
+                                                level=ThreatLevel.INFO,
+                                                description="SSH session has X11 forwarding enabled",
+                                                location=f"SSHD PID: {pid}",
+                                                evidence=line.strip()[:100],
+                                                remediation="Verify SSH X11 forwarding is authorized"
+                                            ))
+                                            break
+                                    except Exception:
+                                        pass
+                        except PermissionError:
+                            pass
+
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception as e:
+            logger.debug(f"Error checking SSH X11 forwarding: {e}")
+
+        return threats
+
     def get_status(self) -> Dict:
         """Get scanner status"""
         return {
             'scan_running': self._scan_running,
             'signatures_loaded': len(self.signatures.SUSPICIOUS_PROCESS_NAMES),
             'file_patterns': len(self.signatures.SUSPICIOUS_FILE_PATTERNS),
-            'monitored_dirs': len(self.signatures.SUSPICIOUS_DIRECTORIES)
+            'monitored_dirs': len(self.signatures.SUSPICIOUS_DIRECTORIES),
+            'screen_sharing_sigs': len(self.screen_sharing_sigs.SCREEN_SHARING_PROCESSES)
         }
 
 
@@ -939,6 +1391,7 @@ if __name__ == '__main__':
     parser.add_argument('--files', action='store_true', help='Scan filesystem only')
     parser.add_argument('--input', action='store_true', help='Check input devices')
     parser.add_argument('--persistence', action='store_true', help='Check persistence mechanisms')
+    parser.add_argument('--screen', action='store_true', help='Check for screen sharing/remote viewing')
     parser.add_argument('--json', action='store_true', help='Output as JSON')
     parser.add_argument('--paths', nargs='+', help='Specific paths to scan')
 
@@ -965,6 +1418,9 @@ if __name__ == '__main__':
     elif args.persistence:
         print("Checking persistence mechanisms...")
         result = scanner.scan_persistence_mechanisms()
+    elif args.screen:
+        print("Checking for screen sharing/remote viewing...")
+        result = scanner.scan_screen_sharing()
     else:
         print("Running quick scan (default)...")
         result = scanner.quick_scan()
