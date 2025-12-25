@@ -22,12 +22,16 @@ Usage:
 import os
 import re
 import hashlib
+import hmac
 import logging
 import subprocess
 import threading
+import base64
+import json
+import time
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import List, Dict, Set, Optional, Tuple
+from typing import List, Dict, Set, Optional, Tuple, Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -2003,6 +2007,617 @@ class RealTimeMonitor:
         return self._running
 
 
+class StartupMonitor:
+    """
+    Monitors startup programs and alerts on new additions.
+
+    Features:
+    - Scans all startup locations (autostart, systemd, cron, etc.)
+    - Maintains an encrypted persistent list of known programs
+    - Checks hourly for newly added programs
+    - Provides friendly (non-scary) notifications
+
+    The goal is to catch unwanted programs that add themselves to startup
+    while reassuring users when they see programs they may have forgotten
+    they installed.
+    """
+
+    # Default locations to monitor for startup programs
+    STARTUP_LOCATIONS = {
+        'user_autostart': os.path.expanduser('~/.config/autostart'),
+        'system_autostart': '/etc/xdg/autostart',
+        'xinitrc': os.path.expanduser('~/.xinitrc'),
+        'xprofile': os.path.expanduser('~/.xprofile'),
+        'xsession': os.path.expanduser('~/.xsession'),
+        'bashrc': os.path.expanduser('~/.bashrc'),
+        'bash_profile': os.path.expanduser('~/.bash_profile'),
+        'profile': os.path.expanduser('~/.profile'),
+        'zshrc': os.path.expanduser('~/.zshrc'),
+        'user_systemd': os.path.expanduser('~/.config/systemd/user'),
+        'system_systemd': '/etc/systemd/system',
+        'user_systemd_enabled': os.path.expanduser('~/.config/systemd/user/default.target.wants'),
+        'system_systemd_enabled': '/etc/systemd/system/multi-user.target.wants',
+        'init_d': '/etc/init.d',
+        'rc_local': '/etc/rc.local',
+        'cron_d': '/etc/cron.d',
+        'user_crontab': '/var/spool/cron/crontabs',
+    }
+
+    def __init__(self,
+                 data_dir: str = None,
+                 notification_callback: Callable[[str, Dict], None] = None,
+                 check_interval_hours: float = 1.0):
+        """
+        Initialize the startup monitor.
+
+        Args:
+            data_dir: Directory to store encrypted program list (default: ~/.local/share/boundary-daemon)
+            notification_callback: Function to call when new programs are detected
+                                   Signature: callback(message: str, program_info: Dict)
+            check_interval_hours: How often to check for new programs (default: 1 hour)
+        """
+        self.data_dir = data_dir or os.path.expanduser('~/.local/share/boundary-daemon')
+        self.data_file = os.path.join(self.data_dir, '.startup_programs.enc')
+        self.notification_callback = notification_callback
+        self.check_interval = check_interval_hours * 3600  # Convert to seconds
+
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._known_programs: Dict[str, Dict] = {}
+        self._encryption_key = self._derive_key()
+
+        # Ensure data directory exists
+        os.makedirs(self.data_dir, mode=0o700, exist_ok=True)
+
+        # Load existing program list
+        self._load_known_programs()
+
+    def _derive_key(self) -> bytes:
+        """
+        Derive an encryption key from machine-specific information.
+        This keeps the data tied to this machine.
+        """
+        # Collect machine identifiers
+        machine_info = []
+
+        # Machine ID (if available)
+        for path in ['/etc/machine-id', '/var/lib/dbus/machine-id']:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        machine_info.append(f.read().strip())
+                        break
+                except Exception:
+                    pass
+
+        # Fallback: use hostname + username
+        machine_info.append(os.environ.get('HOSTNAME', 'localhost'))
+        machine_info.append(os.environ.get('USER', 'user'))
+
+        # Create a key using PBKDF2-like derivation
+        key_material = ':'.join(machine_info).encode()
+        key = hashlib.pbkdf2_hmac(
+            'sha256',
+            key_material,
+            b'boundary-daemon-startup-monitor',
+            100000,
+            dklen=32
+        )
+        return key
+
+    def _encrypt(self, data: str) -> str:
+        """Simple encryption using XOR with derived key and HMAC for integrity"""
+        data_bytes = data.encode('utf-8')
+
+        # Extend key to match data length
+        extended_key = (self._encryption_key * ((len(data_bytes) // 32) + 1))[:len(data_bytes)]
+
+        # XOR encrypt
+        encrypted = bytes(a ^ b for a, b in zip(data_bytes, extended_key))
+
+        # Add HMAC for integrity
+        hmac_digest = hmac.new(self._encryption_key, encrypted, 'sha256').digest()
+
+        # Combine and encode
+        combined = hmac_digest + encrypted
+        return base64.b64encode(combined).decode('ascii')
+
+    def _decrypt(self, encrypted_data: str) -> Optional[str]:
+        """Decrypt data and verify integrity"""
+        try:
+            combined = base64.b64decode(encrypted_data.encode('ascii'))
+
+            # Split HMAC and data
+            stored_hmac = combined[:32]
+            encrypted = combined[32:]
+
+            # Verify HMAC
+            expected_hmac = hmac.new(self._encryption_key, encrypted, 'sha256').digest()
+            if not hmac.compare_digest(stored_hmac, expected_hmac):
+                logger.warning("Startup program list integrity check failed")
+                return None
+
+            # Extend key to match data length
+            extended_key = (self._encryption_key * ((len(encrypted) // 32) + 1))[:len(encrypted)]
+
+            # XOR decrypt
+            decrypted = bytes(a ^ b for a, b in zip(encrypted, extended_key))
+            return decrypted.decode('utf-8')
+
+        except Exception as e:
+            logger.debug(f"Decryption error: {e}")
+            return None
+
+    def _load_known_programs(self):
+        """Load the encrypted list of known programs"""
+        if not os.path.exists(self.data_file):
+            self._known_programs = {}
+            return
+
+        try:
+            with open(self.data_file, 'r') as f:
+                encrypted_data = f.read()
+
+            decrypted = self._decrypt(encrypted_data)
+            if decrypted:
+                self._known_programs = json.loads(decrypted)
+                logger.debug(f"Loaded {len(self._known_programs)} known startup programs")
+            else:
+                self._known_programs = {}
+
+        except Exception as e:
+            logger.debug(f"Error loading known programs: {e}")
+            self._known_programs = {}
+
+    def _save_known_programs(self):
+        """Save the encrypted list of known programs"""
+        try:
+            data_json = json.dumps(self._known_programs, indent=2)
+            encrypted = self._encrypt(data_json)
+
+            with open(self.data_file, 'w') as f:
+                f.write(encrypted)
+
+            # Set restrictive permissions
+            os.chmod(self.data_file, 0o600)
+            logger.debug(f"Saved {len(self._known_programs)} known startup programs")
+
+        except Exception as e:
+            logger.error(f"Error saving known programs: {e}")
+
+    def scan_startup_programs(self) -> Dict[str, Dict]:
+        """
+        Scan all startup locations and return discovered programs.
+
+        Returns:
+            Dict mapping program identifiers to their info
+        """
+        programs = {}
+
+        for location_name, location_path in self.STARTUP_LOCATIONS.items():
+            if not os.path.exists(location_path):
+                continue
+
+            try:
+                if os.path.isdir(location_path):
+                    programs.update(self._scan_directory(location_name, location_path))
+                else:
+                    programs.update(self._scan_file(location_name, location_path))
+            except PermissionError:
+                logger.debug(f"Permission denied: {location_path}")
+            except Exception as e:
+                logger.debug(f"Error scanning {location_path}: {e}")
+
+        # Also check systemd user services
+        programs.update(self._scan_systemd_user_services())
+
+        # Check crontab
+        programs.update(self._scan_user_crontab())
+
+        return programs
+
+    def _scan_directory(self, location_name: str, dir_path: str) -> Dict[str, Dict]:
+        """Scan a directory for startup entries"""
+        programs = {}
+
+        try:
+            for entry in os.listdir(dir_path):
+                entry_path = os.path.join(dir_path, entry)
+
+                # Skip if not a file or if hidden (except .desktop files)
+                if not os.path.isfile(entry_path):
+                    continue
+
+                program_id = f"{location_name}:{entry}"
+
+                # Get file info
+                try:
+                    stat_info = os.stat(entry_path)
+                    mtime = datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+                except Exception:
+                    mtime = "unknown"
+
+                # Parse .desktop files for more info
+                display_name = entry
+                exec_cmd = ""
+
+                if entry.endswith('.desktop'):
+                    desktop_info = self._parse_desktop_file(entry_path)
+                    display_name = desktop_info.get('Name', entry.replace('.desktop', ''))
+                    exec_cmd = desktop_info.get('Exec', '')
+
+                # For systemd services
+                elif entry.endswith('.service'):
+                    service_info = self._parse_systemd_service(entry_path)
+                    display_name = entry.replace('.service', '')
+                    exec_cmd = service_info.get('ExecStart', '')
+
+                programs[program_id] = {
+                    'name': display_name,
+                    'path': entry_path,
+                    'location': location_name,
+                    'type': self._get_entry_type(entry),
+                    'exec': exec_cmd,
+                    'modified': mtime,
+                    'first_seen': datetime.utcnow().isoformat() + "Z"
+                }
+
+        except Exception as e:
+            logger.debug(f"Error scanning directory {dir_path}: {e}")
+
+        return programs
+
+    def _scan_file(self, location_name: str, file_path: str) -> Dict[str, Dict]:
+        """Scan a config file for startup entries (e.g., .bashrc, .xinitrc)"""
+        programs = {}
+
+        try:
+            with open(file_path, 'r', errors='ignore') as f:
+                content = f.read()
+
+            # Look for common patterns that start programs
+            # This is a simplified detection - could be expanded
+            patterns = [
+                (r'^\s*exec\s+(.+?)(?:\s*&\s*)?$', 'exec'),
+                (r'^\s*(?:nohup\s+)?(/\S+)\s*(?:&|$)', 'command'),
+                (r'^\s*\(\s*(.+?)\s*\)\s*&\s*$', 'background'),
+            ]
+
+            for line_num, line in enumerate(content.split('\n'), 1):
+                # Skip comments
+                if line.strip().startswith('#'):
+                    continue
+
+                for pattern, entry_type in patterns:
+                    import re
+                    match = re.match(pattern, line, re.MULTILINE)
+                    if match:
+                        cmd = match.group(1).strip()
+                        # Skip common non-program lines
+                        if cmd and not any(skip in cmd for skip in ['$', 'source', '.', 'export', 'alias']):
+                            program_id = f"{location_name}:line{line_num}"
+                            programs[program_id] = {
+                                'name': os.path.basename(cmd.split()[0]) if cmd else 'unknown',
+                                'path': file_path,
+                                'location': location_name,
+                                'type': entry_type,
+                                'exec': cmd,
+                                'line': line_num,
+                                'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                                'first_seen': datetime.utcnow().isoformat() + "Z"
+                            }
+                            break
+
+        except Exception as e:
+            logger.debug(f"Error scanning file {file_path}: {e}")
+
+        return programs
+
+    def _scan_systemd_user_services(self) -> Dict[str, Dict]:
+        """Scan systemd user services"""
+        programs = {}
+
+        try:
+            # Get list of enabled user services
+            result = subprocess.run(
+                ['systemctl', '--user', 'list-unit-files', '--type=service', '--state=enabled', '--no-pager'],
+                capture_output=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                for line in result.stdout.decode().split('\n'):
+                    if '.service' in line and 'enabled' in line:
+                        parts = line.split()
+                        if parts:
+                            service_name = parts[0]
+                            program_id = f"systemd_user:{service_name}"
+                            programs[program_id] = {
+                                'name': service_name.replace('.service', ''),
+                                'path': f"systemd user service",
+                                'location': 'systemd_user',
+                                'type': 'systemd_service',
+                                'exec': '',
+                                'modified': 'unknown',
+                                'first_seen': datetime.utcnow().isoformat() + "Z"
+                            }
+
+        except subprocess.TimeoutExpired:
+            pass
+        except FileNotFoundError:
+            # systemctl not available
+            pass
+        except Exception as e:
+            logger.debug(f"Error scanning systemd user services: {e}")
+
+        return programs
+
+    def _scan_user_crontab(self) -> Dict[str, Dict]:
+        """Scan user's crontab for scheduled programs"""
+        programs = {}
+
+        try:
+            result = subprocess.run(
+                ['crontab', '-l'],
+                capture_output=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                for line_num, line in enumerate(result.stdout.decode().split('\n'), 1):
+                    line = line.strip()
+                    # Skip empty lines and comments
+                    if not line or line.startswith('#'):
+                        continue
+
+                    # Cron format: min hour day month weekday command
+                    parts = line.split(None, 5)
+                    if len(parts) >= 6:
+                        cmd = parts[5]
+                        program_id = f"crontab:line{line_num}"
+                        programs[program_id] = {
+                            'name': os.path.basename(cmd.split()[0]) if cmd else 'unknown',
+                            'path': 'crontab',
+                            'location': 'crontab',
+                            'type': 'cron_job',
+                            'exec': cmd,
+                            'schedule': ' '.join(parts[:5]),
+                            'first_seen': datetime.utcnow().isoformat() + "Z"
+                        }
+
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception as e:
+            logger.debug(f"Error scanning crontab: {e}")
+
+        return programs
+
+    def _parse_desktop_file(self, path: str) -> Dict[str, str]:
+        """Parse a .desktop file for relevant info"""
+        info = {}
+        try:
+            with open(path, 'r', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        if key in ['Name', 'Exec', 'Icon', 'Comment']:
+                            info[key] = value
+        except Exception:
+            pass
+        return info
+
+    def _parse_systemd_service(self, path: str) -> Dict[str, str]:
+        """Parse a systemd service file for relevant info"""
+        info = {}
+        try:
+            with open(path, 'r', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        if key in ['ExecStart', 'Description', 'After']:
+                            info[key] = value
+        except Exception:
+            pass
+        return info
+
+    def _get_entry_type(self, filename: str) -> str:
+        """Determine the type of startup entry"""
+        if filename.endswith('.desktop'):
+            return 'desktop_entry'
+        elif filename.endswith('.service'):
+            return 'systemd_service'
+        elif filename.endswith('.timer'):
+            return 'systemd_timer'
+        elif filename.endswith('.sh'):
+            return 'shell_script'
+        else:
+            return 'other'
+
+    def check_for_new_programs(self) -> List[Dict]:
+        """
+        Check for newly added startup programs.
+
+        Returns:
+            List of new programs detected
+        """
+        current_programs = self.scan_startup_programs()
+        new_programs = []
+
+        for prog_id, prog_info in current_programs.items():
+            if prog_id not in self._known_programs:
+                new_programs.append({
+                    'id': prog_id,
+                    **prog_info
+                })
+                # Add to known programs
+                self._known_programs[prog_id] = prog_info
+
+        # Check for removed programs (informational only)
+        removed = set(self._known_programs.keys()) - set(current_programs.keys())
+        for prog_id in removed:
+            logger.debug(f"Program removed from startup: {prog_id}")
+            del self._known_programs[prog_id]
+
+        # Save updated list if there were changes
+        if new_programs or removed:
+            self._save_known_programs()
+
+        return new_programs
+
+    def _generate_friendly_message(self, program: Dict) -> str:
+        """
+        Generate a friendly, non-scary notification message.
+        """
+        name = program.get('name', 'Unknown program')
+        location = program.get('location', 'startup')
+
+        # Different messages based on type
+        messages = {
+            'desktop_entry': f"A new application has been added to your startup: '{name}'",
+            'systemd_service': f"A new service has been enabled: '{name}'",
+            'cron_job': f"A new scheduled task has been added: '{name}'",
+            'shell_script': f"A new script will run at startup: '{name}'",
+            'default': f"A new startup program was detected: '{name}'"
+        }
+
+        prog_type = program.get('type', 'default')
+        base_message = messages.get(prog_type, messages['default'])
+
+        # Add helpful context
+        reminder = (
+            f"\n\nThis is just a friendly heads-up! If you recently installed "
+            f"'{name}' or added it to startup yourself, you can safely ignore this. "
+            f"If you don't recognize this program, you may want to investigate."
+        )
+
+        location_info = f"\n\nLocation: {program.get('path', 'unknown')}"
+
+        if program.get('exec'):
+            location_info += f"\nCommand: {program['exec'][:100]}"
+
+        return base_message + reminder + location_info
+
+    def _notify_new_program(self, program: Dict):
+        """Send notification about a new startup program"""
+        message = self._generate_friendly_message(program)
+
+        # Use callback if provided
+        if self.notification_callback:
+            try:
+                self.notification_callback(message, program)
+            except Exception as e:
+                logger.debug(f"Notification callback error: {e}")
+
+        # Also log it
+        logger.info(f"New startup program detected: {program.get('name', 'unknown')}")
+
+        # Try to show desktop notification if available
+        self._show_desktop_notification(program)
+
+    def _show_desktop_notification(self, program: Dict):
+        """Try to show a desktop notification"""
+        name = program.get('name', 'Unknown')
+
+        try:
+            # Try notify-send (common on Linux)
+            subprocess.run(
+                [
+                    'notify-send',
+                    '--urgency=low',
+                    '--icon=dialog-information',
+                    'New Startup Program Detected',
+                    f"'{name}' has been added to startup.\n\n"
+                    f"If you installed this recently, no action needed!"
+                ],
+                capture_output=True,
+                timeout=5
+            )
+        except FileNotFoundError:
+            # notify-send not available
+            pass
+        except Exception:
+            pass
+
+    def initialize_baseline(self) -> int:
+        """
+        Perform initial scan and save all current programs as known.
+        Call this when first setting up the monitor.
+
+        Returns:
+            Number of programs found
+        """
+        current_programs = self.scan_startup_programs()
+        self._known_programs = current_programs
+        self._save_known_programs()
+
+        logger.info(f"Initialized startup monitor with {len(current_programs)} programs")
+        return len(current_programs)
+
+    def start(self):
+        """Start the hourly monitoring thread"""
+        if self._running:
+            return
+
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._monitor_loop,
+            daemon=True,
+            name="StartupMonitor"
+        )
+        self._thread.start()
+        logger.info("Startup program monitor started (checking every hour)")
+
+    def stop(self):
+        """Stop the monitoring thread"""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        logger.info("Startup program monitor stopped")
+
+    def _monitor_loop(self):
+        """Main monitoring loop"""
+        while self._running:
+            try:
+                # Check for new programs
+                new_programs = self.check_for_new_programs()
+
+                # Notify for each new program
+                for program in new_programs:
+                    self._notify_new_program(program)
+
+            except Exception as e:
+                logger.debug(f"Startup monitor loop error: {e}")
+
+            # Wait for next check (default: 1 hour)
+            # Use small increments so we can stop quickly
+            wait_seconds = int(self.check_interval)
+            for _ in range(wait_seconds):
+                if not self._running:
+                    break
+                time.sleep(1)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def get_known_programs(self) -> Dict[str, Dict]:
+        """Get the current list of known startup programs"""
+        return self._known_programs.copy()
+
+    def get_status(self) -> Dict:
+        """Get monitor status"""
+        return {
+            'running': self._running,
+            'known_programs': len(self._known_programs),
+            'data_file': self.data_file,
+            'check_interval_hours': self.check_interval / 3600,
+            'locations_monitored': len(self.STARTUP_LOCATIONS)
+        }
+
+
 # CLI interface for standalone usage
 if __name__ == '__main__':
     import argparse
@@ -2025,6 +2640,10 @@ if __name__ == '__main__':
     parser.add_argument('--ssh', action='store_true', help='Show SSH sessions only')
     parser.add_argument('--ftp', action='store_true', help='Show FTP connections only')
     parser.add_argument('--connections', action='store_true', help='Show all active connections summary')
+    parser.add_argument('--startup', action='store_true', help='Scan and list all startup programs')
+    parser.add_argument('--startup-init', action='store_true', help='Initialize baseline of known startup programs')
+    parser.add_argument('--startup-check', action='store_true', help='Check for newly added startup programs')
+    parser.add_argument('--startup-monitor', action='store_true', help='Start hourly startup program monitoring')
     parser.add_argument('--json', action='store_true', help='Output as JSON')
     parser.add_argument('--paths', nargs='+', help='Specific paths to scan')
 
@@ -2117,6 +2736,122 @@ if __name__ == '__main__':
                         print(f"  {c.get('local', 'N/A')} -> {c.get('remote', 'N/A')} [{c.get('state', 'N/A')}]")
                     if len(conns) > 5:
                         print(f"  ... and {len(conns) - 5} more")
+        result = None
+    elif args.startup:
+        print("Scanning startup programs...")
+        startup_monitor = StartupMonitor()
+        programs = startup_monitor.scan_startup_programs()
+        if args.json:
+            print(json_module.dumps(programs, indent=2))
+        else:
+            print(f"\n{'='*60}")
+            print("STARTUP PROGRAMS")
+            print(f"{'='*60}")
+            print(f"\nFound {len(programs)} startup programs:\n")
+
+            # Group by location
+            by_location = {}
+            for prog_id, prog in programs.items():
+                loc = prog.get('location', 'unknown')
+                if loc not in by_location:
+                    by_location[loc] = []
+                by_location[loc].append(prog)
+
+            for location, progs in sorted(by_location.items()):
+                print(f"\n[{location.upper()}] ({len(progs)} programs)")
+                for p in progs:
+                    print(f"  - {p.get('name', 'unknown')}")
+                    if p.get('exec'):
+                        print(f"    Command: {p['exec'][:60]}...")
+        result = None
+    elif args.startup_init:
+        print("Initializing startup program baseline...")
+        startup_monitor = StartupMonitor()
+        count = startup_monitor.initialize_baseline()
+        print(f"\n{'='*60}")
+        print("STARTUP BASELINE INITIALIZED")
+        print(f"{'='*60}")
+        print(f"\nRecorded {count} startup programs as known.")
+        print(f"The encrypted list is saved at: {startup_monitor.data_file}")
+        print("\nFuture checks will alert you when new programs are added.")
+        result = None
+    elif args.startup_check:
+        print("Checking for new startup programs...")
+        startup_monitor = StartupMonitor()
+
+        # If no baseline exists, initialize first
+        if not startup_monitor.get_known_programs():
+            print("No baseline found. Initializing...")
+            startup_monitor.initialize_baseline()
+            print("Baseline created. Run --startup-check again to check for changes.")
+        else:
+            new_programs = startup_monitor.check_for_new_programs()
+            print(f"\n{'='*60}")
+            print("STARTUP PROGRAM CHECK")
+            print(f"{'='*60}")
+
+            if new_programs:
+                print(f"\nFound {len(new_programs)} NEW startup programs:\n")
+                for prog in new_programs:
+                    print(f"\n  New: {prog.get('name', 'unknown')}")
+                    print(f"  Type: {prog.get('type', 'unknown')}")
+                    print(f"  Location: {prog.get('path', 'unknown')}")
+                    if prog.get('exec'):
+                        print(f"  Command: {prog['exec'][:80]}")
+                    print("")
+                    print("  If you recently installed this program, you can safely")
+                    print("  ignore this message. Otherwise, you may want to investigate.")
+            else:
+                print("\nNo new startup programs detected.")
+                print("All programs match the known baseline.")
+
+            status = startup_monitor.get_status()
+            print(f"\nKnown programs: {status['known_programs']}")
+        result = None
+    elif args.startup_monitor:
+        print("Starting startup program monitor...")
+        print("(Press Ctrl+C to stop)")
+        print("")
+
+        def on_new_program(message, program):
+            print(f"\n{'='*60}")
+            print("NEW STARTUP PROGRAM DETECTED")
+            print(f"{'='*60}")
+            print(message)
+            print(f"{'='*60}\n")
+
+        startup_monitor = StartupMonitor(notification_callback=on_new_program)
+
+        # Initialize if needed
+        if not startup_monitor.get_known_programs():
+            count = startup_monitor.initialize_baseline()
+            print(f"Initialized with {count} known programs.")
+        else:
+            print(f"Loaded {len(startup_monitor.get_known_programs())} known programs.")
+
+        # Do an immediate check
+        new_progs = startup_monitor.check_for_new_programs()
+        if new_progs:
+            for prog in new_progs:
+                on_new_program(startup_monitor._generate_friendly_message(prog), prog)
+
+        print(f"\nMonitor started. Checking every hour for new programs...")
+        print("Monitoring locations:")
+        for loc in list(startup_monitor.STARTUP_LOCATIONS.keys())[:5]:
+            print(f"  - {loc}")
+        print(f"  ... and {len(startup_monitor.STARTUP_LOCATIONS) - 5} more")
+
+        startup_monitor.start()
+
+        try:
+            # Keep running until Ctrl+C
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n\nStopping monitor...")
+            startup_monitor.stop()
+            print("Monitor stopped.")
+
         result = None
     else:
         print("Running quick scan (default)...")

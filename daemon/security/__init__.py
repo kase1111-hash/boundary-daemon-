@@ -17,6 +17,7 @@ from .code_advisor import (
 from .antivirus import (
     AntivirusScanner,
     RealTimeMonitor,
+    StartupMonitor,
     ThreatIndicator,
     ThreatLevel,
     ThreatCategory,
@@ -36,6 +37,7 @@ __all__ = [
     # Antivirus
     'AntivirusScanner',
     'RealTimeMonitor',
+    'StartupMonitor',
     'ThreatIndicator',
     'ThreatLevel',
     'ThreatCategory',
