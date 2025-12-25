@@ -4,9 +4,10 @@ Tests the boundary daemon's ability to detect and resist various network attacks
 
 This module simulates attack scenarios across different network types:
 - DNS: Tunneling, exfiltration, spoofing, rebinding, cache poisoning
+- ARP: Spoofing, gateway impersonation, duplicate MAC, flood, MITM
 - Cellular: IMSI catcher/Stingray attacks (2G downgrade, tower spoofing)
 - WiFi: Rogue AP, deauthentication attacks
-- Ethernet: ARP spoofing, MITM attacks
+- Ethernet: USB/storage insertion attacks
 - IoT: LoRa injection, Thread mesh attacks, ANT+ spoofing
 """
 
@@ -27,6 +28,9 @@ from daemon.state_monitor import (
 )
 from daemon.security.dns_security import (
     DNSSecurityMonitor, DNSSecurityConfig, DNSSecurityAlert
+)
+from daemon.security.arp_security import (
+    ARPSecurityMonitor, ARPSecurityConfig, ARPSecurityAlert
 )
 
 
@@ -629,6 +633,234 @@ class TestDNSAttacks(unittest.TestCase):
         self.assertTrue(fast_detected, f"Fast response not detected. Alerts: {alerts}")
 
 
+class ARPAttackSimulator:
+    """Simulates ARP-based attacks"""
+
+    def __init__(self, monitor: ARPSecurityMonitor):
+        self.monitor = monitor
+
+    def simulate_arp_spoofing(self) -> List[str]:
+        """
+        Simulate ARP spoofing attack.
+        Attacker changes the MAC address associated with an IP.
+        """
+        target_ip = "192.168.1.100"
+        alerts = []
+
+        # Establish baseline
+        alerts.extend(self.monitor.analyze_arp_entry(target_ip, "aa:bb:cc:dd:ee:01"))
+
+        # Attacker changes MAC multiple times
+        alerts.extend(self.monitor.analyze_arp_entry(target_ip, "de:ad:be:ef:00:01"))
+        alerts.extend(self.monitor.analyze_arp_entry(target_ip, "de:ad:be:ef:00:02"))
+
+        return alerts
+
+    def simulate_gateway_impersonation(self) -> List[str]:
+        """
+        Simulate gateway impersonation attack.
+        Attacker pretends to be the network gateway.
+        """
+        # Set a known gateway
+        self.monitor._gateway_ip = "192.168.1.1"
+        self.monitor._original_gateway_mac = "00:11:22:33:44:55"
+        self.monitor._gateway_mac = "00:11:22:33:44:55"
+
+        # Attacker claims to be the gateway with different MAC
+        return self.monitor.analyze_arp_entry("192.168.1.1", "de:ad:be:ef:ca:fe")
+
+    def simulate_duplicate_mac_attack(self) -> List[str]:
+        """
+        Simulate duplicate MAC address attack.
+        Multiple IPs using the same MAC address.
+        """
+        fake_mac = "11:22:33:44:55:66"
+        alerts = []
+
+        # Multiple IPs claiming same MAC (different subnets)
+        alerts.extend(self.monitor.analyze_arp_entry("10.0.0.50", fake_mac))
+        alerts.extend(self.monitor.analyze_arp_entry("192.168.1.50", fake_mac))
+
+        return alerts
+
+    def simulate_arp_flood(self) -> List[str]:
+        """
+        Simulate ARP flood attack.
+        Excessive ARP requests in short time.
+        """
+        alerts = []
+
+        # Set low threshold for testing
+        original_threshold = self.monitor.config.max_arp_requests_per_minute
+        self.monitor.config.max_arp_requests_per_minute = 10
+
+        # Flood with ARP entries
+        for i in range(15):
+            alerts.extend(self.monitor.analyze_arp_entry(
+                f"192.168.1.{i+100}",
+                f"aa:bb:cc:dd:ee:{i:02x}"
+            ))
+
+        # Restore threshold
+        self.monitor.config.max_arp_requests_per_minute = original_threshold
+
+        return alerts
+
+    def simulate_mitm_attack(self) -> List[str]:
+        """
+        Simulate Man-in-the-Middle attack setup.
+        Attacker spoofs both victim and gateway.
+        """
+        attacker_mac = "de:ad:be:ef:00:00"
+        victim_ip = "192.168.1.100"
+        gateway_ip = "192.168.1.1"
+        alerts = []
+
+        # Set up gateway
+        self.monitor._gateway_ip = gateway_ip
+        self.monitor._original_gateway_mac = "00:11:22:33:44:55"
+
+        # Establish baseline for victim
+        alerts.extend(self.monitor.analyze_arp_entry(victim_ip, "aa:bb:cc:dd:ee:ff"))
+
+        # Attacker spoofs victim (tells gateway wrong MAC)
+        alerts.extend(self.monitor.analyze_arp_entry(victim_ip, attacker_mac))
+
+        # Attacker spoofs gateway (tells victim wrong MAC)
+        alerts.extend(self.monitor.analyze_arp_entry(gateway_ip, attacker_mac))
+
+        return alerts
+
+    def simulate_trusted_binding_violation(self) -> List[str]:
+        """
+        Simulate violation of a trusted IP-MAC binding.
+        """
+        trusted_ip = "192.168.1.254"
+        trusted_mac = "00:00:5e:00:01:01"
+
+        # Add trusted binding
+        self.monitor.add_trusted_binding(trusted_ip, trusted_mac)
+
+        # Establish correct binding first
+        self.monitor.analyze_arp_entry(trusted_ip, trusted_mac)
+
+        # Attacker tries to change the trusted binding
+        return self.monitor.analyze_arp_entry(trusted_ip, "de:ad:be:ef:ba:ad")
+
+
+class TestARPAttacks(unittest.TestCase):
+    """Test suite for ARP attack detection"""
+
+    def setUp(self):
+        self.config = ARPSecurityConfig(
+            detect_spoofing=True,
+            detect_duplicate_mac=True,
+            detect_gateway_impersonation=True,
+            detect_arp_flood=True,
+            mac_change_alert_threshold=2,
+        )
+        self.monitor = ARPSecurityMonitor(config=self.config)
+        self.simulator = ARPAttackSimulator(self.monitor)
+
+    def test_arp_spoofing_detection(self):
+        """Test detection of ARP spoofing (MAC address change)"""
+        alerts = self.simulator.simulate_arp_spoofing()
+
+        spoofing_detected = any(
+            ARPSecurityAlert.MAC_CHANGE.value in alert or
+            ARPSecurityAlert.SPOOFING_DETECTED.value in alert
+            for alert in alerts
+        )
+
+        if spoofing_detected:
+            results.add_pass("ARP Spoofing Attack", "Detected MAC address change")
+        else:
+            results.add_fail("ARP Spoofing Attack", "Failed to detect MAC change")
+
+        self.assertTrue(spoofing_detected, f"ARP spoofing not detected. Alerts: {alerts}")
+
+    def test_gateway_impersonation_detection(self):
+        """Test detection of gateway impersonation"""
+        alerts = self.simulator.simulate_gateway_impersonation()
+
+        impersonation_detected = any(
+            ARPSecurityAlert.GATEWAY_IMPERSONATION.value in alert
+            for alert in alerts
+        )
+
+        if impersonation_detected:
+            results.add_pass("Gateway Impersonation", "Detected fake gateway MAC")
+        else:
+            results.add_fail("Gateway Impersonation", "Failed to detect gateway impersonation")
+
+        self.assertTrue(impersonation_detected, f"Gateway impersonation not detected. Alerts: {alerts}")
+
+    def test_duplicate_mac_detection(self):
+        """Test detection of duplicate MAC addresses"""
+        alerts = self.simulator.simulate_duplicate_mac_attack()
+
+        duplicate_detected = any(
+            ARPSecurityAlert.DUPLICATE_MAC.value in alert
+            for alert in alerts
+        )
+
+        if duplicate_detected:
+            results.add_pass("Duplicate MAC Attack", "Detected multiple IPs with same MAC")
+        else:
+            results.add_fail("Duplicate MAC Attack", "Failed to detect duplicate MAC")
+
+        self.assertTrue(duplicate_detected, f"Duplicate MAC not detected. Alerts: {alerts}")
+
+    def test_arp_flood_detection(self):
+        """Test detection of ARP flood attack"""
+        alerts = self.simulator.simulate_arp_flood()
+
+        flood_detected = any(
+            ARPSecurityAlert.ARP_FLOOD.value in alert
+            for alert in alerts
+        )
+
+        if flood_detected:
+            results.add_pass("ARP Flood Attack", "Detected excessive ARP activity")
+        else:
+            results.add_fail("ARP Flood Attack", "Failed to detect ARP flood")
+
+        self.assertTrue(flood_detected, f"ARP flood not detected. Alerts: {alerts}")
+
+    def test_mitm_attack_detection(self):
+        """Test detection of Man-in-the-Middle attack setup"""
+        alerts = self.simulator.simulate_mitm_attack()
+
+        mitm_detected = any(
+            ARPSecurityAlert.GATEWAY_IMPERSONATION.value in alert or
+            ARPSecurityAlert.MAC_CHANGE.value in alert
+            for alert in alerts
+        )
+
+        if mitm_detected:
+            results.add_pass("MITM Attack Detection", "Detected MITM attack indicators")
+        else:
+            results.add_fail("MITM Attack Detection", "Failed to detect MITM attack")
+
+        self.assertTrue(mitm_detected, f"MITM not detected. Alerts: {alerts}")
+
+    def test_trusted_binding_violation(self):
+        """Test detection of trusted binding violation"""
+        alerts = self.simulator.simulate_trusted_binding_violation()
+
+        violation_detected = any(
+            ARPSecurityAlert.SPOOFING_DETECTED.value in alert and 'trusted' in alert.lower()
+            for alert in alerts
+        )
+
+        if violation_detected:
+            results.add_pass("Trusted Binding Violation", "Detected change to trusted IP-MAC pair")
+        else:
+            results.add_fail("Trusted Binding Violation", "Failed to detect trusted binding violation")
+
+        self.assertTrue(violation_detected, f"Trusted binding violation not detected. Alerts: {alerts}")
+
+
 class TestCellularAttacks(unittest.TestCase):
     """Test suite for cellular/IMSI catcher attack detection"""
 
@@ -1000,6 +1232,7 @@ def run_all_simulations():
 
     # Add all test classes
     suite.addTests(loader.loadTestsFromTestCase(TestDNSAttacks))
+    suite.addTests(loader.loadTestsFromTestCase(TestARPAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestCellularAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestWiFiAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestEthernetAttacks))
