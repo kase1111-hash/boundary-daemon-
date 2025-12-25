@@ -793,10 +793,10 @@ class StateMonitor:
                         pass
 
             # Check for ANT-related processes
-            import subprocess
+            # Note: Use specific patterns to avoid false positives (ant+ as regex matches 'ant' followed by anything)
             try:
                 result = subprocess.run(
-                    ['pgrep', '-l', '-f', 'antfs|garmin|ant+'],
+                    ['pgrep', '-l', '-f', 'antfs|garmin-ant|openant|python-ant'],
                     capture_output=True, timeout=2
                 )
                 if result.returncode == 0:
