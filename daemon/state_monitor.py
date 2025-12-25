@@ -85,6 +85,7 @@ class MonitoringConfig:
     monitor_threat_intel: bool = True  # Threat intelligence monitoring
     monitor_file_integrity: bool = True  # File integrity monitoring
     monitor_traffic_anomaly: bool = True  # Traffic anomaly monitoring
+    monitor_process_security: bool = True  # Process security monitoring
 
     def to_dict(self) -> Dict:
         return {
@@ -99,7 +100,8 @@ class MonitoringConfig:
             'monitor_wifi_security': self.monitor_wifi_security,
             'monitor_threat_intel': self.monitor_threat_intel,
             'monitor_file_integrity': self.monitor_file_integrity,
-            'monitor_traffic_anomaly': self.monitor_traffic_anomaly
+            'monitor_traffic_anomaly': self.monitor_traffic_anomaly,
+            'monitor_process_security': self.monitor_process_security
         }
 
 
@@ -145,6 +147,9 @@ class EnvironmentState:
     # Traffic anomaly details
     traffic_anomaly_alerts: List[str]
 
+    # Process security details
+    process_security_alerts: List[str]
+
     # Hardware details
     usb_devices: Set[str]
     block_devices: Set[str]
@@ -175,6 +180,7 @@ class EnvironmentState:
         result['threat_intel_alerts'] = self.threat_intel_alerts
         result['file_integrity_alerts'] = self.file_integrity_alerts
         result['traffic_anomaly_alerts'] = self.traffic_anomaly_alerts
+        result['process_security_alerts'] = self.process_security_alerts
         result['usb_devices'] = list(self.usb_devices)
         result['block_devices'] = list(self.block_devices)
         return result
@@ -231,6 +237,9 @@ class StateMonitor:
 
         # Traffic anomaly monitor (lazy initialization)
         self._traffic_anomaly_monitor = None
+
+        # Process security monitor (lazy initialization)
+        self._process_security_monitor = None
 
     def get_monitoring_config(self) -> MonitoringConfig:
         """Get the current monitoring configuration"""
@@ -348,6 +357,20 @@ class StateMonitor:
                 return None
         return self._traffic_anomaly_monitor
 
+    def set_monitor_process_security(self, enabled: bool):
+        """Enable or disable process security monitoring"""
+        self.monitoring_config.monitor_process_security = enabled
+
+    def _get_process_security_monitor(self):
+        """Get or create process security monitor (lazy initialization)"""
+        if self._process_security_monitor is None:
+            try:
+                from daemon.security.process_security import ProcessSecurityMonitor
+                self._process_security_monitor = ProcessSecurityMonitor()
+            except ImportError:
+                return None
+        return self._process_security_monitor
+
     def register_callback(self, callback: callable):
         """
         Register a callback to be notified of state changes.
@@ -428,6 +451,9 @@ class StateMonitor:
         # Traffic anomaly sensing
         traffic_anomaly_alerts = self._check_traffic_anomaly()
 
+        # Process security sensing
+        process_security_alerts = self._check_process_security()
+
         # Hardware sensing
         hardware_info = self._check_hardware()
 
@@ -461,6 +487,7 @@ class StateMonitor:
             threat_intel_alerts=threat_intel_alerts,
             file_integrity_alerts=file_integrity_alerts,
             traffic_anomaly_alerts=traffic_anomaly_alerts,
+            process_security_alerts=process_security_alerts,
             usb_devices=hardware_info['usb_devices'],
             block_devices=hardware_info['block_devices'],
             camera_available=hardware_info['camera'],
@@ -811,6 +838,23 @@ class StateMonitor:
             return status.alerts
         except Exception as e:
             print(f"Error checking traffic anomaly: {e}")
+            return []
+
+    def _check_process_security(self) -> List[str]:
+        """Check for process security alerts if monitoring is enabled"""
+        if not self.monitoring_config.monitor_process_security:
+            return []
+
+        try:
+            process_monitor = self._get_process_security_monitor()
+            if process_monitor is None:
+                return []
+
+            # Get current status alerts
+            status = process_monitor.get_status()
+            return status.alerts
+        except Exception as e:
+            print(f"Error checking process security: {e}")
             return []
 
     def _detect_lora_devices(self) -> List[str]:
