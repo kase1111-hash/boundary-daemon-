@@ -7,6 +7,7 @@ This module simulates attack scenarios across different network types:
 - ARP: Spoofing, gateway impersonation, duplicate MAC, flood, MITM
 - WiFi Security: Evil Twin AP, deauth flood, handshake capture, rogue AP, weak encryption
 - Threat Intelligence: TOR exit nodes, C2 servers, botnets, blacklisted IPs, beaconing
+- File Integrity: Hash verification, config tampering, binary modification, permission changes
 - Cellular: IMSI catcher/Stingray attacks (2G downgrade, tower spoofing)
 - WiFi: Rogue AP, deauthentication attacks
 - Ethernet: USB/storage insertion attacks
@@ -39,6 +40,9 @@ from daemon.security.wifi_security import (
 )
 from daemon.security.threat_intel import (
     ThreatIntelMonitor, ThreatIntelConfig, ThreatIntelAlert, ThreatCategory, ThreatSeverity
+)
+from daemon.security.file_integrity import (
+    FileIntegrityMonitor, FileIntegrityConfig, FileIntegrityAlert, FileChange
 )
 
 
@@ -991,6 +995,132 @@ class ThreatIntelAttackSimulator:
         return self.monitor.check_ip(malicious_ip)
 
 
+class FileIntegrityAttackSimulator:
+    """Simulates file integrity attack scenarios"""
+
+    def __init__(self, monitor: FileIntegrityMonitor, temp_dir: str):
+        self.monitor = monitor
+        self.temp_dir = temp_dir
+
+    def simulate_file_modification(self) -> List[FileChange]:
+        """
+        Simulate malicious file modification after baseline.
+        """
+        import tempfile
+        # Create a test file
+        test_file = os.path.join(self.temp_dir, "test_binary.bin")
+        with open(test_file, 'wb') as f:
+            f.write(b"original content")
+
+        # Create baseline
+        self.monitor.create_baseline([test_file])
+
+        # Modify the file (simulate attack)
+        with open(test_file, 'wb') as f:
+            f.write(b"malicious content injected")
+
+        # Check for changes
+        return self.monitor.check_integrity()
+
+    def simulate_config_modification(self) -> List[FileChange]:
+        """
+        Simulate malicious config file modification.
+        """
+        # Create a test config file
+        config_file = os.path.join(self.temp_dir, "test_config.conf")
+        with open(config_file, 'w') as f:
+            f.write("setting=safe_value\n")
+
+        # Create baseline with config monitoring
+        self.monitor.create_baseline([config_file])
+
+        # Modify config (simulate attack)
+        with open(config_file, 'w') as f:
+            f.write("setting=malicious_value\nbackdoor=enabled\n")
+
+        # Check for changes
+        return self.monitor.check_integrity()
+
+    def simulate_file_deletion(self) -> List[FileChange]:
+        """
+        Simulate malicious file deletion.
+        """
+        # Create a test file
+        test_file = os.path.join(self.temp_dir, "critical_file.dat")
+        with open(test_file, 'w') as f:
+            f.write("critical data")
+
+        # Create baseline
+        self.monitor.create_baseline([test_file])
+
+        # Delete the file (simulate attack)
+        os.remove(test_file)
+
+        # Check for changes
+        return self.monitor.check_integrity()
+
+    def simulate_file_creation(self) -> List[FileChange]:
+        """
+        Simulate unauthorized file creation (e.g., malware dropper).
+        """
+        # Create baseline of directory
+        self.monitor.create_baseline([self.temp_dir])
+
+        # Create new file (simulate malware drop)
+        malware_file = os.path.join(self.temp_dir, "dropped_malware.exe")
+        with open(malware_file, 'w') as f:
+            f.write("malicious payload")
+
+        # Check for new files
+        return self.monitor.check_integrity()
+
+    def simulate_permission_change(self) -> List[FileChange]:
+        """
+        Simulate malicious permission change (e.g., adding execute bit).
+        """
+        # Create a test file
+        test_file = os.path.join(self.temp_dir, "script.sh")
+        with open(test_file, 'w') as f:
+            f.write("#!/bin/bash\necho 'test'")
+        os.chmod(test_file, 0o644)  # rw-r--r--
+
+        # Create baseline
+        self.monitor.create_baseline([test_file])
+
+        # Change permissions (simulate attack - add execute for all)
+        os.chmod(test_file, 0o755)  # rwxr-xr-x
+
+        # Check for changes
+        return self.monitor.check_integrity()
+
+    def simulate_suid_injection(self) -> List[FileChange]:
+        """
+        Simulate SUID bit injection for privilege escalation.
+        Note: This is simulated - actual SUID setting requires root.
+        """
+        # Create a test binary
+        test_file = os.path.join(self.temp_dir, "test_suid_binary")
+        with open(test_file, 'w') as f:
+            f.write("#!/bin/bash\n/bin/sh")
+        os.chmod(test_file, 0o755)
+
+        # Scan for SUID files
+        return self.monitor.scan_for_suid_binaries()
+
+    def simulate_world_writable_creation(self) -> List[FileChange]:
+        """
+        Simulate creation of world-writable file (security risk).
+        """
+        # Create a world-writable file
+        test_file = os.path.join(self.temp_dir, "world_writable.txt")
+        with open(test_file, 'w') as f:
+            f.write("sensitive data")
+        os.chmod(test_file, 0o666)  # rw-rw-rw-
+
+        # Scan for world-writable files
+        return self.monitor.scan_for_world_writable()
+
+
 class TestARPAttacks(unittest.TestCase):
     """Test suite for ARP attack detection"""
 
@@ -1327,6 +1457,138 @@ class TestThreatIntelAttacks(unittest.TestCase):
             results.add_fail("Malicious Range Detection", "Failed to detect malicious IP range")
 
         self.assertTrue(range_detected, f"Malicious range not detected. Threat: {threat}")
+
+
+class TestFileIntegrityAttacks(unittest.TestCase):
+    """Test suite for file integrity attack detection"""
+
+    def setUp(self):
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+        self.config = FileIntegrityConfig(
+            hash_algorithm='sha256',
+            monitor_permissions=True,
+            monitor_ownership=True,
+            alert_on_new_suid=True,
+            alert_on_world_writable=True,
+        )
+        self.monitor = FileIntegrityMonitor(config=self.config)
+        self.simulator = FileIntegrityAttackSimulator(self.monitor, self.temp_dir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_file_modification_detection(self):
+        """Test detection of malicious file modification"""
+        changes = self.simulator.simulate_file_modification()
+
+        modification_detected = any(
+            change.alert_type in [FileIntegrityAlert.FILE_MODIFIED,
+                                  FileIntegrityAlert.HASH_MISMATCH,
+                                  FileIntegrityAlert.BINARY_MODIFIED]
+            for change in changes
+        )
+
+        if modification_detected:
+            results.add_pass("File Modification Attack", "Detected binary content change")
+        else:
+            results.add_fail("File Modification Attack", "Failed to detect file modification")
+
+        self.assertTrue(modification_detected, f"File modification not detected. Changes: {changes}")
+
+    def test_config_modification_detection(self):
+        """Test detection of config file modification"""
+        changes = self.simulator.simulate_config_modification()
+
+        config_modified = any(
+            change.alert_type in [FileIntegrityAlert.FILE_MODIFIED,
+                                  FileIntegrityAlert.CONFIG_MODIFIED,
+                                  FileIntegrityAlert.HASH_MISMATCH]
+            for change in changes
+        )
+
+        if config_modified:
+            results.add_pass("Config Modification Attack", "Detected config file tampering")
+        else:
+            results.add_fail("Config Modification Attack", "Failed to detect config modification")
+
+        self.assertTrue(config_modified, f"Config modification not detected. Changes: {changes}")
+
+    def test_file_deletion_detection(self):
+        """Test detection of malicious file deletion"""
+        changes = self.simulator.simulate_file_deletion()
+
+        deletion_detected = any(
+            change.alert_type == FileIntegrityAlert.FILE_DELETED
+            for change in changes
+        )
+
+        if deletion_detected:
+            results.add_pass("File Deletion Attack", "Detected critical file deletion")
+        else:
+            results.add_fail("File Deletion Attack", "Failed to detect file deletion")
+
+        self.assertTrue(deletion_detected, f"File deletion not detected. Changes: {changes}")
+
+    def test_permission_change_detection(self):
+        """Test detection of permission changes"""
+        changes = self.simulator.simulate_permission_change()
+
+        permission_changed = any(
+            change.alert_type == FileIntegrityAlert.PERMISSION_CHANGED or
+            change.alert_type == FileIntegrityAlert.FILE_MODIFIED
+            for change in changes
+        )
+
+        if permission_changed:
+            results.add_pass("Permission Change Attack", "Detected file permission modification")
+        else:
+            results.add_fail("Permission Change Attack", "Failed to detect permission change")
+
+        self.assertTrue(permission_changed, f"Permission change not detected. Changes: {changes}")
+
+    def test_world_writable_detection(self):
+        """Test detection of world-writable files"""
+        changes = self.simulator.simulate_world_writable_creation()
+
+        world_writable_detected = any(
+            change.alert_type == FileIntegrityAlert.WORLD_WRITABLE
+            for change in changes
+        )
+
+        if world_writable_detected:
+            results.add_pass("World-Writable Detection", "Detected insecure file permissions")
+        else:
+            results.add_fail("World-Writable Detection", "Failed to detect world-writable file")
+
+        self.assertTrue(world_writable_detected, f"World-writable not detected. Changes: {changes}")
+
+    def test_hash_verification(self):
+        """Test direct hash verification"""
+        # Create a test file
+        test_file = os.path.join(self.temp_dir, "hash_test.bin")
+        with open(test_file, 'wb') as f:
+            f.write(b"test content for hashing")
+
+        # Get the hash
+        import hashlib
+        with open(test_file, 'rb') as f:
+            expected_hash = hashlib.sha256(f.read()).hexdigest()
+
+        # Verify correct hash
+        valid, _ = self.monitor.verify_file(test_file, expected_hash)
+
+        # Verify with wrong hash
+        invalid, change = self.monitor.verify_file(test_file, "wrong_hash_value")
+
+        if valid and not invalid:
+            results.add_pass("Hash Verification", "Correctly validated and rejected hashes")
+        else:
+            results.add_fail("Hash Verification", "Hash verification logic failed")
+
+        self.assertTrue(valid, "Valid hash rejected")
+        self.assertFalse(invalid, "Invalid hash accepted")
 
 
 class TestCellularAttacks(unittest.TestCase):
@@ -1705,6 +1967,16 @@ class TestMonitoringToggle(unittest.TestCase):
 
         results.add_pass("Threat Intel Toggle", "Threat intelligence monitoring can be toggled")
 
+    def test_file_integrity_toggle(self):
+        """Test file integrity monitoring toggle"""
+        self.monitor.set_monitor_file_integrity(False)
+        self.assertFalse(self.monitor.monitoring_config.monitor_file_integrity)
+
+        self.monitor.set_monitor_file_integrity(True)
+        self.assertTrue(self.monitor.monitoring_config.monitor_file_integrity)
+
+        results.add_pass("File Integrity Toggle", "File integrity monitoring can be toggled")
+
 
 def run_all_simulations():
     """Run all attack simulations and print summary"""
@@ -1723,6 +1995,7 @@ def run_all_simulations():
     suite.addTests(loader.loadTestsFromTestCase(TestARPAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestWiFiSecurityAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestThreatIntelAttacks))
+    suite.addTests(loader.loadTestsFromTestCase(TestFileIntegrityAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestCellularAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestWiFiAttacks))
     suite.addTests(loader.loadTestsFromTestCase(TestEthernetAttacks))

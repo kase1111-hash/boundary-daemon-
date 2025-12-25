@@ -83,6 +83,7 @@ class MonitoringConfig:
     monitor_arp_security: bool = True  # ARP security monitoring
     monitor_wifi_security: bool = True  # WiFi security monitoring
     monitor_threat_intel: bool = True  # Threat intelligence monitoring
+    monitor_file_integrity: bool = True  # File integrity monitoring
 
     def to_dict(self) -> Dict:
         return {
@@ -95,7 +96,8 @@ class MonitoringConfig:
             'monitor_dns_security': self.monitor_dns_security,
             'monitor_arp_security': self.monitor_arp_security,
             'monitor_wifi_security': self.monitor_wifi_security,
-            'monitor_threat_intel': self.monitor_threat_intel
+            'monitor_threat_intel': self.monitor_threat_intel,
+            'monitor_file_integrity': self.monitor_file_integrity
         }
 
 
@@ -135,6 +137,9 @@ class EnvironmentState:
     # Threat intelligence details
     threat_intel_alerts: List[str]
 
+    # File integrity details
+    file_integrity_alerts: List[str]
+
     # Hardware details
     usb_devices: Set[str]
     block_devices: Set[str]
@@ -163,6 +168,7 @@ class EnvironmentState:
         result['arp_security_alerts'] = self.arp_security_alerts
         result['wifi_security_alerts'] = self.wifi_security_alerts
         result['threat_intel_alerts'] = self.threat_intel_alerts
+        result['file_integrity_alerts'] = self.file_integrity_alerts
         result['usb_devices'] = list(self.usb_devices)
         result['block_devices'] = list(self.block_devices)
         return result
@@ -213,6 +219,9 @@ class StateMonitor:
 
         # Threat intelligence monitor (lazy initialization)
         self._threat_intel_monitor = None
+
+        # File integrity monitor (lazy initialization)
+        self._file_integrity_monitor = None
 
     def get_monitoring_config(self) -> MonitoringConfig:
         """Get the current monitoring configuration"""
@@ -302,6 +311,20 @@ class StateMonitor:
                 return None
         return self._threat_intel_monitor
 
+    def set_monitor_file_integrity(self, enabled: bool):
+        """Enable or disable file integrity monitoring"""
+        self.monitoring_config.monitor_file_integrity = enabled
+
+    def _get_file_integrity_monitor(self):
+        """Get or create file integrity monitor (lazy initialization)"""
+        if self._file_integrity_monitor is None:
+            try:
+                from daemon.security.file_integrity import FileIntegrityMonitor
+                self._file_integrity_monitor = FileIntegrityMonitor()
+            except ImportError:
+                return None
+        return self._file_integrity_monitor
+
     def register_callback(self, callback: callable):
         """
         Register a callback to be notified of state changes.
@@ -376,6 +399,9 @@ class StateMonitor:
         # Threat intelligence sensing
         threat_intel_alerts = self._check_threat_intel()
 
+        # File integrity sensing
+        file_integrity_alerts = self._check_file_integrity()
+
         # Hardware sensing
         hardware_info = self._check_hardware()
 
@@ -407,6 +433,7 @@ class StateMonitor:
             arp_security_alerts=arp_security_alerts,
             wifi_security_alerts=wifi_security_alerts,
             threat_intel_alerts=threat_intel_alerts,
+            file_integrity_alerts=file_integrity_alerts,
             usb_devices=hardware_info['usb_devices'],
             block_devices=hardware_info['block_devices'],
             camera_available=hardware_info['camera'],
@@ -723,6 +750,23 @@ class StateMonitor:
             return status.alerts
         except Exception as e:
             print(f"Error checking threat intelligence: {e}")
+            return []
+
+    def _check_file_integrity(self) -> List[str]:
+        """Check for file integrity alerts if monitoring is enabled"""
+        if not self.monitoring_config.monitor_file_integrity:
+            return []
+
+        try:
+            fim_monitor = self._get_file_integrity_monitor()
+            if fim_monitor is None:
+                return []
+
+            # Get current status alerts
+            status = fim_monitor.get_status()
+            return status.alerts
+        except Exception as e:
+            print(f"Error checking file integrity: {e}")
             return []
 
     def _detect_lora_devices(self) -> List[str]:
