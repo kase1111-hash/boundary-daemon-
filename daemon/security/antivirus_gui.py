@@ -28,7 +28,7 @@ from datetime import datetime
 # Import scanner components
 from .antivirus import (
     AntivirusScanner, StartupMonitor, RealTimeMonitor,
-    ThreatLevel, ThreatCategory
+    ThreatLevel, ThreatCategory, MalwareBazaarResult
 )
 
 
@@ -104,6 +104,7 @@ class AntivirusGUI:
         self._create_network_tab()
         self._create_screen_tab()
         self._create_monitor_tab()
+        self._create_malwarebazaar_tab()
 
         # === Status Bar ===
         self._create_status_bar(main_frame)
@@ -436,6 +437,209 @@ class AntivirusGUI:
         self.monitor_text.grid(row=0, column=0, sticky="nsew")
         self._configure_text_tags(self.monitor_text)
 
+    def _create_malwarebazaar_tab(self):
+        """Create the MalwareBazaar hash lookup tab."""
+        tab = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(tab, text="MalwareBazaar")
+
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(2, weight=1)
+
+        # Control frame
+        ctrl_frame = ttk.LabelFrame(tab, text="Hash Lookup", padding="10")
+        ctrl_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ctrl_frame.columnconfigure(1, weight=1)
+
+        # Hash input row
+        ttk.Label(ctrl_frame, text="SHA256 Hash:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.hash_entry = ttk.Entry(ctrl_frame, width=70, font=('Courier', 10))
+        self.hash_entry.grid(row=0, column=1, sticky="ew", padx=(0, 10))
+        self.hash_lookup_btn = ttk.Button(
+            ctrl_frame, text="Lookup Hash", command=self._lookup_hash, style='Action.TButton'
+        )
+        self.hash_lookup_btn.grid(row=0, column=2)
+
+        # File input row
+        ttk.Label(ctrl_frame, text="Or File:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(10, 0))
+        file_frame = ttk.Frame(ctrl_frame)
+        file_frame.grid(row=1, column=1, sticky="ew", pady=(10, 0))
+        file_frame.columnconfigure(0, weight=1)
+
+        self.file_entry = ttk.Entry(file_frame, font=('Courier', 10))
+        self.file_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        ttk.Button(
+            file_frame, text="Browse", command=self._browse_file
+        ).grid(row=0, column=1)
+
+        self.file_lookup_btn = ttk.Button(
+            ctrl_frame, text="Check File", command=self._check_file_hash, style='Action.TButton'
+        )
+        self.file_lookup_btn.grid(row=1, column=2, pady=(10, 0))
+
+        # Status frame
+        status_frame = ttk.LabelFrame(tab, text="MalwareBazaar Status", padding="10")
+        status_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        status_frame.columnconfigure(1, weight=1)
+
+        # Enable/Disable toggle
+        self.bazaar_enabled_var = tk.BooleanVar(value=self.scanner.malware_bazaar.is_enabled())
+        self.bazaar_toggle = ttk.Checkbutton(
+            status_frame,
+            text="Enable MalwareBazaar lookups during scans",
+            variable=self.bazaar_enabled_var,
+            command=self._toggle_malwarebazaar
+        )
+        self.bazaar_toggle.grid(row=0, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(status_frame, text="Cache entries:").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.bazaar_cache_label = ttk.Label(status_frame, text="0")
+        self.bazaar_cache_label.grid(row=1, column=1, sticky="w", padx=10, pady=(10, 0))
+
+        ttk.Label(status_frame, text="Last error:").grid(row=2, column=0, sticky="w", pady=(5, 0))
+        self.bazaar_error_label = ttk.Label(status_frame, text="None")
+        self.bazaar_error_label.grid(row=2, column=1, sticky="w", padx=10, pady=(5, 0))
+
+        btn_frame = ttk.Frame(status_frame)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(
+            btn_frame, text="Refresh Status", command=self._update_bazaar_status
+        ).pack(side="left", padx=(0, 10))
+        ttk.Button(
+            btn_frame, text="Clear Cache", command=self._clear_bazaar_cache
+        ).pack(side="left")
+
+        # Results area
+        results_frame = ttk.LabelFrame(tab, text="Lookup Results", padding="5")
+        results_frame.grid(row=2, column=0, sticky="nsew")
+        results_frame.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(0, weight=1)
+
+        self.bazaar_results_text = scrolledtext.ScrolledText(
+            results_frame,
+            wrap=tk.WORD,
+            font=('Courier', 10),
+            state='disabled'
+        )
+        self.bazaar_results_text.grid(row=0, column=0, sticky="nsew")
+        self._configure_text_tags(self.bazaar_results_text)
+
+        # Initial status update
+        self._update_bazaar_status()
+
+    def _lookup_hash(self):
+        """Look up a hash in MalwareBazaar."""
+        hash_value = self.hash_entry.get().strip()
+        if not hash_value:
+            messagebox.showwarning("Input Required", "Please enter a SHA256 hash to look up.")
+            return
+
+        if len(hash_value) != 64:
+            messagebox.showwarning("Invalid Hash", "Please enter a valid 64-character SHA256 hash.")
+            return
+
+        self.hash_lookup_btn.state(['disabled'])
+        self._append_bazaar_text(f"\n{'='*60}\n", 'header')
+        self._append_bazaar_text(f"Looking up hash: {hash_value}\n", 'info')
+
+        def do_lookup():
+            try:
+                result = self.scanner.check_hash(hash_value)
+                self.msg_queue.put(('bazaar_result', result))
+            except Exception as e:
+                self.msg_queue.put(('bazaar_error', str(e)))
+            finally:
+                self.msg_queue.put(('enable_hash_btn', None))
+
+        threading.Thread(target=do_lookup, daemon=True).start()
+
+    def _check_file_hash(self):
+        """Calculate file hash and check in MalwareBazaar."""
+        filepath = self.file_entry.get().strip()
+        if not filepath:
+            messagebox.showwarning("Input Required", "Please select a file to check.")
+            return
+
+        import os
+        if not os.path.isfile(filepath):
+            messagebox.showerror("File Not Found", f"File not found: {filepath}")
+            return
+
+        self.file_lookup_btn.state(['disabled'])
+        self._append_bazaar_text(f"\n{'='*60}\n", 'header')
+        self._append_bazaar_text(f"Checking file: {filepath}\n", 'info')
+
+        def do_check():
+            try:
+                file_hash, result = self.scanner.check_file(filepath)
+                self.msg_queue.put(('file_hash', file_hash))
+                self.msg_queue.put(('bazaar_result', result))
+            except Exception as e:
+                self.msg_queue.put(('bazaar_error', str(e)))
+            finally:
+                self.msg_queue.put(('enable_file_btn', None))
+
+        threading.Thread(target=do_check, daemon=True).start()
+
+    def _browse_file(self):
+        """Open file browser dialog."""
+        filepath = filedialog.askopenfilename(
+            title="Select File to Check",
+            filetypes=[("All Files", "*.*")]
+        )
+        if filepath:
+            self.file_entry.delete(0, tk.END)
+            self.file_entry.insert(0, filepath)
+
+    def _toggle_malwarebazaar(self):
+        """Toggle MalwareBazaar enabled status."""
+        enabled = self.bazaar_enabled_var.get()
+        self.scanner.set_malwarebazaar_enabled(enabled)
+        status = "enabled" if enabled else "disabled"
+        self._append_bazaar_text(f"MalwareBazaar lookups {status}\n", 'info')
+
+    def _update_bazaar_status(self):
+        """Update MalwareBazaar status display."""
+        status = self.scanner.get_malwarebazaar_status()
+        self.bazaar_cache_label.config(text=str(status['cache']['cached_entries']))
+        self.bazaar_error_label.config(text=status['last_error'] or "None")
+        self.bazaar_enabled_var.set(status['enabled'])
+
+    def _clear_bazaar_cache(self):
+        """Clear the MalwareBazaar cache."""
+        self.scanner.malware_bazaar.clear_cache()
+        self._update_bazaar_status()
+        self._append_bazaar_text("Cache cleared\n", 'info')
+
+    def _append_bazaar_text(self, text: str, tag: str = None):
+        """Append text to the bazaar results area."""
+        self.bazaar_results_text.config(state='normal')
+        if tag:
+            self.bazaar_results_text.insert(tk.END, text, tag)
+        else:
+            self.bazaar_results_text.insert(tk.END, text)
+        self.bazaar_results_text.see(tk.END)
+        self.bazaar_results_text.config(state='disabled')
+
+    def _display_bazaar_result(self, result):
+        """Display MalwareBazaar result."""
+        if result.error:
+            self._append_bazaar_text(f"Error: {result.error}\n", 'error')
+            return
+
+        if result.is_malware:
+            self._append_bazaar_text("MALWARE DETECTED!\n", 'critical')
+            self._append_bazaar_text(f"  Signature: {result.signature}\n", 'error')
+            self._append_bazaar_text(f"  File type: {result.file_type}\n")
+            self._append_bazaar_text(f"  Tags: {', '.join(result.tags)}\n")
+            self._append_bazaar_text(f"  First seen: {result.first_seen}\n")
+            if result.intelligence.get('reporter'):
+                self._append_bazaar_text(f"  Reporter: {result.intelligence['reporter']}\n")
+            if result.intelligence.get('delivery_method'):
+                self._append_bazaar_text(f"  Delivery: {result.intelligence['delivery_method']}\n")
+        else:
+            self._append_bazaar_text("Hash not found in MalwareBazaar database\n", 'success')
+            self._append_bazaar_text("(This does not guarantee the file is safe)\n", 'warning')
+
     def _create_status_bar(self, parent):
         """Create status bar."""
         status_frame = ttk.Frame(parent)
@@ -534,6 +738,25 @@ class AntivirusGUI:
 
                 elif msg_type == 'enable_buttons':
                     self._set_buttons_state('normal')
+
+                elif msg_type == 'bazaar_result':
+                    self._display_bazaar_result(content)
+                    self._update_bazaar_status()
+
+                elif msg_type == 'bazaar_error':
+                    self._append_bazaar_text(f"Error: {content}\n", 'error')
+
+                elif msg_type == 'file_hash':
+                    if content:
+                        self._append_bazaar_text(f"SHA256: {content}\n", 'info')
+                    else:
+                        self._append_bazaar_text("Could not calculate hash\n", 'error')
+
+                elif msg_type == 'enable_hash_btn':
+                    self.hash_lookup_btn.state(['!disabled'])
+
+                elif msg_type == 'enable_file_btn':
+                    self.file_lookup_btn.state(['!disabled'])
 
         except queue.Empty:
             pass
