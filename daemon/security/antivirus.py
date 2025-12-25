@@ -29,6 +29,9 @@ import threading
 import base64
 import json
 import time
+import urllib.request
+import urllib.parse
+import urllib.error
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Tuple, Callable
@@ -333,6 +336,262 @@ class NetworkMonitoringSignatures:
     }
 
 
+@dataclass
+class MalwareBazaarResult:
+    """Result from MalwareBazaar API query"""
+    is_malware: bool
+    sha256_hash: str
+    file_type: str = ""
+    file_name: str = ""
+    signature: str = ""  # Malware family/signature name
+    tags: List[str] = field(default_factory=list)
+    first_seen: str = ""
+    last_seen: str = ""
+    intelligence: Dict = field(default_factory=dict)
+    error: str = ""
+
+    def to_dict(self) -> Dict:
+        return {
+            'is_malware': self.is_malware,
+            'sha256_hash': self.sha256_hash,
+            'file_type': self.file_type,
+            'file_name': self.file_name,
+            'signature': self.signature,
+            'tags': self.tags,
+            'first_seen': self.first_seen,
+            'last_seen': self.last_seen,
+            'intelligence': self.intelligence,
+            'error': self.error
+        }
+
+
+class MalwareBazaarClient:
+    """
+    Client for querying the MalwareBazaar API (abuse.ch).
+
+    MalwareBazaar is a public malware sample repository that provides
+    hash lookups to identify known malware samples.
+
+    API Documentation: https://bazaar.abuse.ch/api/
+    """
+
+    API_URL = "https://mb-api.abuse.ch/api/v1/"
+    TIMEOUT = 10  # seconds
+
+    def __init__(self, cache_ttl: int = 3600, max_cache_size: int = 10000):
+        """
+        Initialize the MalwareBazaar client.
+
+        Args:
+            cache_ttl: Time-to-live for cache entries in seconds (default 1 hour)
+            max_cache_size: Maximum number of entries to cache
+        """
+        self._cache: Dict[str, Tuple[MalwareBazaarResult, float]] = {}
+        self._cache_ttl = cache_ttl
+        self._max_cache_size = max_cache_size
+        self._cache_lock = threading.Lock()
+        self._enabled = True
+        self._last_error: Optional[str] = None
+
+    def set_enabled(self, enabled: bool):
+        """Enable or disable API lookups"""
+        self._enabled = enabled
+
+    def is_enabled(self) -> bool:
+        """Check if API lookups are enabled"""
+        return self._enabled
+
+    def get_last_error(self) -> Optional[str]:
+        """Get the last error message, if any"""
+        return self._last_error
+
+    def _clean_cache(self):
+        """Remove expired cache entries"""
+        current_time = time.time()
+        with self._cache_lock:
+            expired = [
+                h for h, (_, ts) in self._cache.items()
+                if current_time - ts > self._cache_ttl
+            ]
+            for h in expired:
+                del self._cache[h]
+
+            # If still too large, remove oldest entries
+            if len(self._cache) > self._max_cache_size:
+                sorted_entries = sorted(
+                    self._cache.items(),
+                    key=lambda x: x[1][1]
+                )
+                for h, _ in sorted_entries[:len(self._cache) - self._max_cache_size]:
+                    del self._cache[h]
+
+    def _get_cached(self, sha256_hash: str) -> Optional[MalwareBazaarResult]:
+        """Get cached result if available and not expired"""
+        with self._cache_lock:
+            if sha256_hash in self._cache:
+                result, timestamp = self._cache[sha256_hash]
+                if time.time() - timestamp < self._cache_ttl:
+                    return result
+                else:
+                    del self._cache[sha256_hash]
+        return None
+
+    def _set_cached(self, sha256_hash: str, result: MalwareBazaarResult):
+        """Cache a result"""
+        with self._cache_lock:
+            self._cache[sha256_hash] = (result, time.time())
+
+        # Periodic cleanup
+        if len(self._cache) > self._max_cache_size:
+            self._clean_cache()
+
+    def query_hash(self, sha256_hash: str) -> MalwareBazaarResult:
+        """
+        Query MalwareBazaar for a SHA256 hash.
+
+        Args:
+            sha256_hash: The SHA256 hash to look up
+
+        Returns:
+            MalwareBazaarResult with malware information if found
+        """
+        # Validate hash format
+        if not sha256_hash or len(sha256_hash) != 64:
+            return MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash=sha256_hash,
+                error="Invalid SHA256 hash format"
+            )
+
+        # Check if disabled
+        if not self._enabled:
+            return MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash=sha256_hash,
+                error="MalwareBazaar lookups disabled"
+            )
+
+        # Check cache first
+        cached = self._get_cached(sha256_hash)
+        if cached is not None:
+            return cached
+
+        # Query the API
+        try:
+            data = urllib.parse.urlencode({
+                'query': 'get_info',
+                'hash': sha256_hash
+            }).encode('utf-8')
+
+            request = urllib.request.Request(
+                self.API_URL,
+                data=data,
+                headers={
+                    'User-Agent': 'BoundaryDaemon-Antivirus/1.0',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            )
+
+            with urllib.request.urlopen(request, timeout=self.TIMEOUT) as response:
+                response_data = json.loads(response.read().decode('utf-8'))
+
+            # Parse response
+            if response_data.get('query_status') == 'hash_not_found':
+                result = MalwareBazaarResult(
+                    is_malware=False,
+                    sha256_hash=sha256_hash
+                )
+            elif response_data.get('query_status') == 'ok':
+                # Hash found - it's known malware
+                sample_data = response_data.get('data', [{}])[0]
+                result = MalwareBazaarResult(
+                    is_malware=True,
+                    sha256_hash=sha256_hash,
+                    file_type=sample_data.get('file_type', ''),
+                    file_name=sample_data.get('file_name', ''),
+                    signature=sample_data.get('signature', 'Unknown'),
+                    tags=sample_data.get('tags', []),
+                    first_seen=sample_data.get('first_seen', ''),
+                    last_seen=sample_data.get('last_seen', ''),
+                    intelligence={
+                        'reporter': sample_data.get('reporter', ''),
+                        'delivery_method': sample_data.get('delivery_method', ''),
+                        'intelligence': sample_data.get('intelligence', {})
+                    }
+                )
+            else:
+                # Unexpected response
+                error_msg = response_data.get('query_status', 'Unknown error')
+                self._last_error = error_msg
+                result = MalwareBazaarResult(
+                    is_malware=False,
+                    sha256_hash=sha256_hash,
+                    error=f"API error: {error_msg}"
+                )
+
+            # Cache the result
+            self._set_cached(sha256_hash, result)
+            self._last_error = None
+            return result
+
+        except urllib.error.URLError as e:
+            self._last_error = f"Network error: {e}"
+            return MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash=sha256_hash,
+                error=f"Network error: {e}"
+            )
+        except json.JSONDecodeError as e:
+            self._last_error = f"Invalid JSON response: {e}"
+            return MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash=sha256_hash,
+                error=f"Invalid response: {e}"
+            )
+        except Exception as e:
+            self._last_error = f"Unexpected error: {e}"
+            return MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash=sha256_hash,
+                error=f"Error: {e}"
+            )
+
+    def query_hash_batch(self, hashes: List[str]) -> Dict[str, MalwareBazaarResult]:
+        """
+        Query multiple hashes (with rate limiting).
+
+        Note: MalwareBazaar doesn't have a batch API, so this queries
+        hashes one at a time with a small delay to avoid rate limiting.
+
+        Args:
+            hashes: List of SHA256 hashes to query
+
+        Returns:
+            Dict mapping hash to MalwareBazaarResult
+        """
+        results = {}
+        for i, h in enumerate(hashes):
+            results[h] = self.query_hash(h)
+            # Small delay to avoid rate limiting (except for last item)
+            if i < len(hashes) - 1:
+                time.sleep(0.1)
+        return results
+
+    def get_cache_stats(self) -> Dict:
+        """Get cache statistics"""
+        with self._cache_lock:
+            return {
+                'cached_entries': len(self._cache),
+                'max_size': self._max_cache_size,
+                'ttl_seconds': self._cache_ttl
+            }
+
+    def clear_cache(self):
+        """Clear the cache"""
+        with self._cache_lock:
+            self._cache.clear()
+
+
 class AntivirusScanner:
     """
     Simple antivirus scanner focused on keylogger detection.
@@ -346,12 +605,13 @@ class AntivirusScanner:
     6. Persistence mechanisms
     """
 
-    def __init__(self, event_logger=None):
+    def __init__(self, event_logger=None, enable_malwarebazaar: bool = True):
         """
         Initialize the antivirus scanner.
 
         Args:
             event_logger: Optional event logger for audit trails
+            enable_malwarebazaar: Enable MalwareBazaar API lookups (default True)
         """
         self.event_logger = event_logger
         self._lock = threading.Lock()
@@ -359,6 +619,8 @@ class AntivirusScanner:
         self.signatures = KeyloggerSignatures()
         self.screen_sharing_sigs = ScreenSharingSignatures()
         self.network_sigs = NetworkMonitoringSignatures()
+        self.malware_bazaar = MalwareBazaarClient()
+        self.malware_bazaar.set_enabled(enable_malwarebazaar)
 
     def full_scan(self) -> ScanResult:
         """
@@ -853,16 +1115,41 @@ class AntivirusScanner:
                         file_stat = os.stat(filepath)
                         if file_stat.st_size < 10 * 1024 * 1024:  # < 10MB
                             file_hash = self._get_file_hash(filepath)
+
+                            # First check local signature database
                             if file_hash in self.signatures.KNOWN_MALWARE_HASHES:
                                 threats.append(ThreatIndicator(
                                     name=f"Known malware: {filename}",
                                     category=ThreatCategory.KEYLOGGER,
                                     level=ThreatLevel.CRITICAL,
-                                    description=f"File hash matches known malware",
+                                    description=f"File hash matches known malware (local DB)",
                                     location=filepath,
                                     evidence=f"SHA256: {file_hash}",
                                     remediation="Delete the file immediately"
                                 ))
+                            # Then query MalwareBazaar for unknown hashes
+                            elif file_hash and self.malware_bazaar.is_enabled():
+                                bazaar_result = self.malware_bazaar.query_hash(file_hash)
+                                if bazaar_result.is_malware:
+                                    # Determine threat category from tags
+                                    category = ThreatCategory.SUSPICIOUS_FILE
+                                    tags_lower = [t.lower() for t in bazaar_result.tags]
+                                    if any(t in tags_lower for t in ['keylogger', 'spyware']):
+                                        category = ThreatCategory.KEYLOGGER
+                                    elif any(t in tags_lower for t in ['trojan', 'rat']):
+                                        category = ThreatCategory.TROJAN
+                                    elif any(t in tags_lower for t in ['rootkit']):
+                                        category = ThreatCategory.ROOTKIT
+
+                                    threats.append(ThreatIndicator(
+                                        name=f"MalwareBazaar match: {bazaar_result.signature or filename}",
+                                        category=category,
+                                        level=ThreatLevel.CRITICAL,
+                                        description=f"File identified as malware by MalwareBazaar: {bazaar_result.signature}",
+                                        location=filepath,
+                                        evidence=f"SHA256: {file_hash}, Tags: {', '.join(bazaar_result.tags)}, First seen: {bazaar_result.first_seen}",
+                                        remediation="Delete the file immediately - confirmed malware sample"
+                                    ))
                     except Exception:
                         pass
 
@@ -883,6 +1170,54 @@ class AntivirusScanner:
             return sha256_hash.hexdigest()
         except Exception:
             return ""
+
+    def check_hash(self, sha256_hash: str) -> MalwareBazaarResult:
+        """
+        Manually check a SHA256 hash against MalwareBazaar.
+
+        Args:
+            sha256_hash: The SHA256 hash to check
+
+        Returns:
+            MalwareBazaarResult with malware information
+        """
+        return self.malware_bazaar.query_hash(sha256_hash)
+
+    def check_file(self, filepath: str) -> Tuple[str, MalwareBazaarResult]:
+        """
+        Calculate hash and check a file against MalwareBazaar.
+
+        Args:
+            filepath: Path to the file to check
+
+        Returns:
+            Tuple of (sha256_hash, MalwareBazaarResult)
+        """
+        file_hash = self._get_file_hash(filepath)
+        if not file_hash:
+            return ("", MalwareBazaarResult(
+                is_malware=False,
+                sha256_hash="",
+                error=f"Could not calculate hash for {filepath}"
+            ))
+        return (file_hash, self.malware_bazaar.query_hash(file_hash))
+
+    def get_malwarebazaar_status(self) -> Dict:
+        """
+        Get MalwareBazaar client status and cache statistics.
+
+        Returns:
+            Dict with enabled status, last error, and cache stats
+        """
+        return {
+            'enabled': self.malware_bazaar.is_enabled(),
+            'last_error': self.malware_bazaar.get_last_error(),
+            'cache': self.malware_bazaar.get_cache_stats()
+        }
+
+    def set_malwarebazaar_enabled(self, enabled: bool):
+        """Enable or disable MalwareBazaar lookups"""
+        self.malware_bazaar.set_enabled(enabled)
 
     def _check_input_device_access(self) -> List[ThreatIndicator]:
         """Check which processes have input devices open"""
