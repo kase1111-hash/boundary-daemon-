@@ -36,6 +36,9 @@ class EventType(Enum):
     RATE_LIMIT_GLOBAL = "rate_limit_global"  # Global rate limit exceeded
     RATE_LIMIT_COMMAND = "rate_limit_command"  # Per-command rate limit exceeded
     RATE_LIMIT_UNBLOCK = "rate_limit_unblock"  # Rate limit block expired
+    PII_DETECTED = "pii_detected"  # PII detected in content
+    PII_BLOCKED = "pii_blocked"  # Content blocked due to PII
+    PII_REDACTED = "pii_redacted"  # PII redacted from content
 
 
 @dataclass

@@ -452,9 +452,9 @@ See [Unimplemented Features](#unimplemented-features) section below.
 - **What's Needed**: Startup integrity checks, module verification
 
 #### 15. **Append-Only Log Storage**
-- **Status**: Not implemented
-- **Current**: Regular file with fsync
-- **What's Needed**: chattr +a, immutable filesystem, remote syslog
+- **Status**: ✅ Implemented
+- **Current**: Multi-layer protection with chattr +a, remote syslog, checkpoints
+- **Features**: Filesystem immutability, remote backup, integrity sealing, WAL
 
 #### 16. **Hardware Security Module (HSM)**
 - **Status**: Not implemented
@@ -1704,13 +1704,21 @@ namespace = "boundary_"
 
 ## PII Detection & Redaction Pipeline
 
+**Status**: ✅ Implemented in `daemon/pii/`
+
 ### Purpose
 
 Provide comprehensive detection and protection for Personally Identifiable Information (PII), ensuring no sensitive data leaks outward without explicit consent.
 
+### Implementation
+
+Located in `daemon/pii/`:
+- `detector.py`: Pattern-based detection with 30+ entity types, validators (Luhn, SSN, VIN)
+- `filter.py`: Enforcement layer with mode-aware policies, context-specific actions
+
 ### Core Engine
 
-Built on **Microsoft Presidio** (open-source, local) as the primary engine:
+Built-in pattern matching with optional **Microsoft Presidio** integration:
 - Supports 180+ entity types: SSN, credit cards, addresses, phone numbers, email, driver's license, passport, bank accounts, etc.
 - Pluggable enhancers: spaCy NER, regex patterns, context-aware scoring, custom recognizers
 - Configurable thresholds per entity type (e.g., higher confidence required for SSN)
