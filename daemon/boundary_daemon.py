@@ -174,6 +174,22 @@ except ImportError:
     ClockStatus = None
     TimeJumpEvent = None
 
+# Import daemon integrity protection (SECURITY: Binary tampering prevention)
+try:
+    from .security.daemon_integrity import (
+        DaemonIntegrityProtector,
+        IntegrityConfig,
+        IntegrityAction,
+        verify_daemon_integrity,
+    )
+    DAEMON_INTEGRITY_AVAILABLE = True
+except ImportError:
+    DAEMON_INTEGRITY_AVAILABLE = False
+    DaemonIntegrityProtector = None
+    IntegrityConfig = None
+    IntegrityAction = None
+    verify_daemon_integrity = None
+
 
 class BoundaryDaemon:
     """
@@ -183,14 +199,53 @@ class BoundaryDaemon:
     and event logging to maintain trust boundaries.
     """
 
-    def __init__(self, log_dir: str = './logs', initial_mode: BoundaryMode = BoundaryMode.OPEN):
+    def __init__(self, log_dir: str = './logs', initial_mode: BoundaryMode = BoundaryMode.OPEN,
+                 skip_integrity_check: bool = False):
         """
         Initialize the Boundary Daemon.
 
         Args:
             log_dir: Directory for log files
             initial_mode: Starting boundary mode
+            skip_integrity_check: Skip integrity verification (DANGEROUS - dev only)
         """
+        # SECURITY: Verify daemon integrity BEFORE any other initialization
+        # This prevents execution of tampered code
+        self._integrity_protector = None
+        self._integrity_verified = False
+
+        if not skip_integrity_check and DAEMON_INTEGRITY_AVAILABLE:
+            print("Verifying daemon integrity...")
+            self._integrity_protector = DaemonIntegrityProtector(
+                config=IntegrityConfig(
+                    # In production, use restrictive settings:
+                    # failure_action=IntegrityAction.BLOCK_STARTUP,
+                    # allow_missing_manifest=False,
+                    # For development, allow missing manifest:
+                    failure_action=IntegrityAction.WARN_ONLY,
+                    allow_missing_manifest=True,
+                ),
+            )
+            should_continue, message = self._integrity_protector.verify_startup()
+
+            if not should_continue:
+                print(f"FATAL: Daemon integrity check failed: {message}")
+                print("Refusing to start - daemon files may have been tampered with!")
+                raise RuntimeError(f"Daemon integrity verification failed: {message}")
+
+            if "LOCKDOWN" in message:
+                print(f"WARNING: Starting in lockdown mode: {message}")
+                initial_mode = BoundaryMode.AIRGAP  # Force most restrictive mode
+            elif "WARNING" in message:
+                print(f"SECURITY WARNING: {message}")
+            else:
+                print(f"Integrity verified: {message}")
+                self._integrity_verified = True
+        elif skip_integrity_check:
+            print("WARNING: Daemon integrity check SKIPPED - this is insecure!")
+        else:
+            print("Daemon integrity protection: not available")
+
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
 
@@ -1041,6 +1096,14 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Failed to start API server: {e}")
 
+        # Start daemon integrity runtime monitoring (SECURITY: Continuous protection)
+        if self._integrity_protector:
+            try:
+                self._integrity_protector.start_monitoring()
+                print("Daemon integrity monitoring started")
+            except Exception as e:
+                print(f"Warning: Daemon integrity monitoring failed to start: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -1063,6 +1126,14 @@ class BoundaryDaemon:
                 print("API server stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop API server: {e}")
+
+        # Stop daemon integrity monitoring
+        if self._integrity_protector:
+            try:
+                self._integrity_protector.stop_monitoring()
+                print("Daemon integrity monitoring stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop integrity monitoring: {e}")
 
         # Stop hardened watchdog endpoint
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
