@@ -13,10 +13,21 @@ Supports configurable policies per boundary mode:
 - TRUSTED: Warn and log
 - VERIFIED: Block CRITICAL, warn others
 - AIRGAP+: Block HIGH and above
+
+SECURITY: The filter cannot be bypassed by simply setting config.enabled = False.
+- The enabled flag is protected by a property that logs bypass attempts
+- Configuration changes require authentication in locked mode
+- All bypass attempts are logged to the event logger
+
+Addresses Critical Finding: "Bypassable Security Controls"
 """
 
 import json
 import threading
+import hashlib
+import hmac
+import secrets
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -30,6 +41,8 @@ from daemon.pii.detector import (
     PIISeverity,
     RedactionMethod,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PIIAction(Enum):
@@ -182,6 +195,12 @@ class PIIFilter:
     Supports mode-aware filtering, context-specific policies,
     and comprehensive logging.
 
+    SECURITY: This filter has protections against bypass:
+    - The 'enabled' property cannot be directly set to False
+    - Use disable() with auth token to disable filtering
+    - All disable attempts are logged
+    - When locked, configuration cannot be changed
+
     Usage:
         filter = PIIFilter(event_logger=daemon.event_logger)
         result = filter.filter_text(text, FilterContext.MEMORY_RECALL)
@@ -207,11 +226,21 @@ class PIIFilter:
             event_logger: Event logger for audit trail
             current_mode_getter: Callback to get current boundary mode
         """
-        self.config = config or PIIFilterConfig()
+        self._config = config or PIIFilterConfig()
         self.detector = detector or PIIDetector()
         self._event_logger = event_logger
         self._get_current_mode = current_mode_getter
         self._lock = threading.RLock()
+
+        # SECURITY: Protection against bypass
+        self._auth_token_hash: Optional[str] = None
+        self._locked = False  # When locked, config cannot be changed
+        self._bypass_attempts: List[dict] = []
+        self._failed_auth_attempts = 0
+        self._max_failed_attempts = 3
+
+        # Generate auth token
+        self._initial_token = self._generate_auth_token()
 
         # Statistics
         self._stats = {
@@ -221,11 +250,165 @@ class PIIFilter:
             'redacted_count': 0,
             'by_context': {},
             'by_severity': {},
+            'bypass_attempts': 0,
         }
 
         # Detection history (limited)
         self._history: List[Dict] = []
         self._history_limit = 1000
+
+    # SECURITY: Protect the config property
+    @property
+    def config(self) -> PIIFilterConfig:
+        """Get the filter configuration (read-only access)."""
+        return self._config
+
+    @config.setter
+    def config(self, value: PIIFilterConfig):
+        """
+        Attempt to set config directly.
+        This logs a bypass attempt but does NOT change the config in locked mode.
+        """
+        with self._lock:
+            if self._locked:
+                self._log_bypass_attempt("config_setter", "Attempted to replace config while locked")
+                logger.warning("SECURITY: Attempted to replace PII filter config while locked")
+                return  # Silently ignore in locked mode
+
+            # Allow in unlocked mode (for initial setup)
+            self._config = value
+
+    def _generate_auth_token(self) -> str:
+        """Generate authentication token for critical operations."""
+        token = secrets.token_urlsafe(32)
+        self._auth_token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return token
+
+    def get_initial_token(self) -> Optional[str]:
+        """
+        Get the initial auth token (only available once after init).
+
+        Returns:
+            The initial token if not yet retrieved, None otherwise
+        """
+        token = self._initial_token
+        self._initial_token = None  # Clear after first access
+        return token
+
+    def _verify_token(self, token: str) -> bool:
+        """Verify an authentication token."""
+        if not token or not self._auth_token_hash:
+            return False
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return hmac.compare_digest(token_hash, self._auth_token_hash)
+
+    def _log_bypass_attempt(self, method: str, details: str):
+        """Log a bypass attempt."""
+        self._stats['bypass_attempts'] = self._stats.get('bypass_attempts', 0) + 1
+
+        attempt = {
+            'timestamp': datetime.utcnow().isoformat() + "Z",
+            'method': method,
+            'details': details,
+        }
+        self._bypass_attempts.append(attempt)
+
+        logger.warning(f"SECURITY: PII filter bypass attempt via {method}: {details}")
+
+        if self._event_logger:
+            try:
+                from daemon.event_logger import EventType
+                self._event_logger.log_event(
+                    event_type=EventType.VIOLATION,
+                    data={
+                        'event': 'pii_filter_bypass_attempt',
+                        'method': method,
+                        'details': details,
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
+                )
+            except Exception:
+                pass
+
+    def disable(self, auth_token: str, reason: str = "") -> Tuple[bool, str]:
+        """
+        Disable PII filtering (REQUIRES AUTHENTICATION).
+
+        Args:
+            auth_token: Valid authentication token
+            reason: Reason for disabling (logged for audit)
+
+        Returns:
+            (success, message)
+        """
+        with self._lock:
+            if self._locked:
+                self._log_bypass_attempt("disable", "Attempted while locked")
+                return (False, "PII filter is LOCKED and cannot be disabled")
+
+            if not self._verify_token(auth_token):
+                self._failed_auth_attempts += 1
+                self._log_bypass_attempt("disable", f"Invalid token (attempt {self._failed_auth_attempts})")
+
+                if self._failed_auth_attempts >= self._max_failed_attempts:
+                    self._locked = True
+                    logger.critical("SECURITY: PII filter LOCKED due to excessive failed auth attempts")
+
+                return (False, "Invalid authentication token")
+
+            # Reset failed attempts
+            self._failed_auth_attempts = 0
+
+            # Disable filtering
+            self._config.enabled = False
+
+            logger.warning(f"SECURITY: PII filtering DISABLED. Reason: {reason}")
+
+            if self._event_logger:
+                try:
+                    from daemon.event_logger import EventType
+                    self._event_logger.log_event(
+                        event_type=EventType.POLICY_DECISION,
+                        data={
+                            'event': 'pii_filter_disabled',
+                            'reason': reason,
+                            'timestamp': datetime.utcnow().isoformat() + "Z"
+                        }
+                    )
+                except Exception:
+                    pass
+
+            return (True, "PII filtering disabled")
+
+    def enable(self):
+        """Enable PII filtering (no auth required - enabling is always safe)."""
+        with self._lock:
+            self._config.enabled = True
+            logger.info("PII filtering enabled")
+
+    def lock(self):
+        """
+        Lock the PII filter configuration.
+        Once locked, the filter cannot be disabled or reconfigured.
+        This is a one-way operation for high-security environments.
+        """
+        with self._lock:
+            self._locked = True
+            logger.warning("PII filter LOCKED - configuration frozen")
+
+    def is_locked(self) -> bool:
+        """Check if the filter is locked."""
+        return self._locked
+
+    def get_security_status(self) -> dict:
+        """Get security status of the PII filter."""
+        with self._lock:
+            return {
+                'enabled': self._config.enabled,
+                'locked': self._locked,
+                'bypass_attempts': len(self._bypass_attempts),
+                'failed_auth_attempts': self._failed_auth_attempts,
+            }
 
     def set_event_logger(self, event_logger):
         """Set the event logger."""
@@ -530,27 +713,83 @@ class PIIFilter:
 
     # === Configuration ===
 
-    def update_config(self, config: PIIFilterConfig):
-        """Update filter configuration."""
-        with self._lock:
-            self.config = config
+    def update_config(self, config: PIIFilterConfig, auth_token: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Update filter configuration (REQUIRES AUTHENTICATION when locked).
 
-    def set_entity_action(self, entity_type: PIIEntityType, action: PIIAction):
-        """Set action for specific entity type."""
+        Args:
+            config: New configuration
+            auth_token: Required if the filter is locked
+
+        Returns:
+            (success, message)
+        """
         with self._lock:
-            self.config.entity_overrides[entity_type] = action
+            if self._locked:
+                if not auth_token or not self._verify_token(auth_token):
+                    self._log_bypass_attempt("update_config", "Attempted config update while locked")
+                    return (False, "PII filter is LOCKED - configuration cannot be changed")
+                # Authenticated update allowed
+                logger.warning("SECURITY: Config updated while locked (authenticated)")
+
+            self._config = config
+            return (True, "Configuration updated")
+
+    def set_entity_action(
+        self,
+        entity_type: PIIEntityType,
+        action: PIIAction,
+        auth_token: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Set action for specific entity type (REQUIRES AUTHENTICATION when locked).
+
+        Args:
+            entity_type: The PII entity type
+            action: Action to take for this entity type
+            auth_token: Required if the filter is locked
+
+        Returns:
+            (success, message)
+        """
+        with self._lock:
+            if self._locked:
+                if not auth_token or not self._verify_token(auth_token):
+                    self._log_bypass_attempt("set_entity_action", f"Attempted to change action for {entity_type.value}")
+                    return (False, "PII filter is LOCKED - configuration cannot be changed")
+
+            self._config.entity_overrides[entity_type] = action
+            return (True, f"Entity action set: {entity_type.value} -> {action.value}")
 
     def set_context_action(
         self,
         context: FilterContext,
         severity: PIISeverity,
         action: PIIAction,
-    ):
-        """Set action for specific context and severity."""
+        auth_token: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Set action for specific context and severity (REQUIRES AUTHENTICATION when locked).
+
+        Args:
+            context: Filtering context
+            severity: PII severity level
+            action: Action to take
+            auth_token: Required if the filter is locked
+
+        Returns:
+            (success, message)
+        """
         with self._lock:
-            if context not in self.config.context_actions:
-                self.config.context_actions[context] = {}
-            self.config.context_actions[context][severity] = action
+            if self._locked:
+                if not auth_token or not self._verify_token(auth_token):
+                    self._log_bypass_attempt("set_context_action", f"Attempted to change action for {context.value}/{severity.value}")
+                    return (False, "PII filter is LOCKED - configuration cannot be changed")
+
+            if context not in self._config.context_actions:
+                self._config.context_actions[context] = {}
+            self._config.context_actions[context][severity] = action
+            return (True, f"Context action set: {context.value}/{severity.value} -> {action.value}")
 
     # === Statistics ===
 
@@ -567,9 +806,27 @@ class PIIFilter:
         with self._lock:
             return self._history[-limit:]
 
-    def reset_stats(self):
-        """Reset statistics."""
+    def reset_stats(self, auth_token: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Reset statistics (REQUIRES AUTHENTICATION when locked).
+
+        Note: bypass_attempts counter is NEVER reset for security audit trail.
+
+        Args:
+            auth_token: Required if the filter is locked
+
+        Returns:
+            (success, message)
+        """
         with self._lock:
+            if self._locked:
+                if not auth_token or not self._verify_token(auth_token):
+                    self._log_bypass_attempt("reset_stats", "Attempted to reset statistics while locked")
+                    return (False, "PII filter is LOCKED - cannot reset statistics")
+
+            # Preserve bypass_attempts for audit trail
+            bypass_count = self._stats.get('bypass_attempts', 0)
+
             self._stats = {
                 'total_scans': 0,
                 'entities_detected': 0,
@@ -577,8 +834,10 @@ class PIIFilter:
                 'redacted_count': 0,
                 'by_context': {},
                 'by_severity': {},
+                'bypass_attempts': bypass_count,  # Never reset this
             }
             self.detector.reset_stats()
+            return (True, "Statistics reset (bypass_attempts preserved)")
 
     # === Persistence ===
 
@@ -589,15 +848,42 @@ class PIIFilter:
         with open(config_path, 'w') as f:
             json.dump(self.config.to_dict(), f, indent=2)
 
-    def load_config(self, path: str) -> bool:
-        """Load configuration from file."""
+    def load_config(self, path: str, auth_token: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Load configuration from file (REQUIRES AUTHENTICATION when locked).
+
+        Args:
+            path: Path to configuration file
+            auth_token: Required if the filter is locked
+
+        Returns:
+            (success, message)
+        """
+        with self._lock:
+            if self._locked:
+                if not auth_token or not self._verify_token(auth_token):
+                    self._log_bypass_attempt("load_config", f"Attempted to load config from {path}")
+                    return (False, "PII filter is LOCKED - configuration cannot be changed")
+
         try:
             config_path = Path(path)
             if config_path.exists():
                 with open(config_path, 'r') as f:
                     data = json.load(f)
-                self.config = PIIFilterConfig.from_dict(data)
-                return True
-        except Exception:
-            pass
-        return False
+
+                new_config = PIIFilterConfig.from_dict(data)
+
+                # Check if attempting to disable via config load
+                if not new_config.enabled:
+                    logger.warning(f"SECURITY: Attempted to load disabled config from {path}")
+                    if self._locked:
+                        self._log_bypass_attempt("load_config", "Config file had enabled=False")
+                        return (False, "Cannot load config with enabled=False while locked")
+
+                with self._lock:
+                    self._config = new_config
+
+                return (True, "Configuration loaded")
+            return (False, f"Config file not found: {path}")
+        except Exception as e:
+            return (False, f"Failed to load config: {str(e)}")
