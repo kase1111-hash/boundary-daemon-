@@ -49,6 +49,19 @@ except ImportError:
     USBEnforcer = None
     ProcessEnforcer = None
 
+# Import privilege manager (Critical: Prevents Silent Enforcement Failures)
+try:
+    from .privilege_manager import (
+        PrivilegeManager,
+        EnforcementModule,
+        set_privilege_manager,
+    )
+    PRIVILEGE_MANAGER_AVAILABLE = True
+except ImportError:
+    PRIVILEGE_MANAGER_AVAILABLE = False
+    PrivilegeManager = None
+    EnforcementModule = None
+
 # Import hardware module (Plan 2: TPM Integration)
 try:
     from .hardware import TPMManager
@@ -180,6 +193,26 @@ class BoundaryDaemon:
         self.tripwire_system = TripwireSystem()
         self.lockdown_manager = LockdownManager()
 
+        # Initialize Privilege Manager (SECURITY: Prevents Silent Enforcement Failures)
+        # This addresses Critical Finding: "Root Privilege Required = Silent Failure"
+        self.privilege_manager = None
+        if PRIVILEGE_MANAGER_AVAILABLE and PrivilegeManager:
+            self.privilege_manager = PrivilegeManager(
+                event_logger=self.event_logger,
+                on_critical_callback=self._on_privilege_critical,
+            )
+            set_privilege_manager(self.privilege_manager)
+
+            # Check root status early with clear warning
+            if not self.privilege_manager.check_root():
+                print("\n" + "!" * 70)
+                print("  SECURITY WARNING: Running without root privileges")
+                print("  Some enforcement features will be UNAVAILABLE.")
+                print("  For full security enforcement, run as: sudo boundary-daemon")
+                print("!" * 70 + "\n")
+        else:
+            print("Privilege manager not available - enforcement status may not be tracked")
+
         # Initialize network enforcer (Plan 1 Phase 1: Network Enforcement)
         self.network_enforcer = None
         if ENFORCEMENT_AVAILABLE and NetworkEnforcer:
@@ -189,10 +222,23 @@ class BoundaryDaemon:
             )
             if self.network_enforcer.is_available:
                 print(f"Network enforcement available (backend: {self.network_enforcer.backend.value})")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.NETWORK, True
+                    )
             else:
-                print("Network enforcement: not available (requires root and iptables/nftables)")
+                print("Network enforcement: NOT AVAILABLE (requires root and iptables/nftables)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.NETWORK, False,
+                        "Requires root and iptables/nftables"
+                    )
         else:
             print("Network enforcement module not loaded")
+            if self.privilege_manager:
+                self.privilege_manager.register_module(
+                    EnforcementModule.NETWORK, False, "Module not loaded"
+                )
 
         # Initialize USB enforcer (Plan 1 Phase 2: USB Enforcement)
         self.usb_enforcer = None
@@ -203,10 +249,23 @@ class BoundaryDaemon:
             )
             if self.usb_enforcer.is_available:
                 print(f"USB enforcement available (udev rules at {self.usb_enforcer.UDEV_RULE_PATH})")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.USB, True
+                    )
             else:
-                print("USB enforcement: not available (requires root and udev)")
+                print("USB enforcement: NOT AVAILABLE (requires root and udev)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.USB, False,
+                        "Requires root and udev"
+                    )
         else:
             print("USB enforcement module not loaded")
+            if self.privilege_manager:
+                self.privilege_manager.register_module(
+                    EnforcementModule.USB, False, "Module not loaded"
+                )
 
         # Initialize process enforcer (Plan 1 Phase 3: Process Enforcement)
         self.process_enforcer = None
@@ -218,10 +277,23 @@ class BoundaryDaemon:
             if self.process_enforcer.is_available:
                 runtime = self.process_enforcer.container_runtime.value
                 print(f"Process enforcement available (seccomp + container: {runtime})")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.PROCESS, True
+                    )
             else:
-                print("Process enforcement: not available (requires root)")
+                print("Process enforcement: NOT AVAILABLE (requires root)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.PROCESS, False,
+                        "Requires root"
+                    )
         else:
             print("Process enforcement module not loaded")
+            if self.privilege_manager:
+                self.privilege_manager.register_module(
+                    EnforcementModule.PROCESS, False, "Module not loaded"
+                )
 
         # Initialize TPM manager (Plan 2: TPM Integration)
         self.tpm_manager = None
@@ -470,6 +542,22 @@ class BoundaryDaemon:
 
         print(f"Boundary Daemon initialized in {initial_mode.name} mode")
 
+        # Print security enforcement status (SECURITY: No more silent failures)
+        if self.privilege_manager:
+            self.privilege_manager.print_security_status()
+
+            # Check if initial mode can be enforced
+            can_enforce, missing = self.privilege_manager.can_enforce_mode(initial_mode.name)
+            if not can_enforce:
+                self.event_logger.log_event(
+                    EventType.VIOLATION,
+                    f"Starting in {initial_mode.name} mode with DEGRADED enforcement",
+                    metadata={
+                        'mode': initial_mode.name,
+                        'missing_enforcement': missing,
+                    }
+                )
+
     def _setup_callbacks(self):
         """Setup callbacks between components"""
 
@@ -501,6 +589,22 @@ class BoundaryDaemon:
                 }
             )
             print(f"Mode transition: {old_mode.name} → {new_mode.name} ({operator.value})")
+
+            # SECURITY: Check if we can properly enforce security-critical modes
+            # Addresses Critical Finding: "Root Privilege Required = Silent Failure"
+            if self.privilege_manager:
+                can_enforce, message = self.privilege_manager.assert_mode_enforceable(new_mode.name)
+                if not can_enforce:
+                    # Log the enforcement gap as a security event
+                    self.event_logger.log_event(
+                        EventType.VIOLATION,
+                        f"DEGRADED SECURITY: {new_mode.name} mode cannot be fully enforced",
+                        metadata={
+                            'mode': new_mode.name,
+                            'enforcement_available': False,
+                            'message': message,
+                        }
+                    )
 
             # Apply network enforcement for the new mode (Plan 1 Phase 1)
             if self.network_enforcer and self.network_enforcer.is_available:
@@ -596,6 +700,38 @@ class BoundaryDaemon:
         print(f"Type: {violation.violation_type.value}")
         print(f"Details: {violation.details}")
         print(f"System entering LOCKDOWN mode\n")
+
+    def _on_privilege_critical(self, issue):
+        """
+        Handle critical privilege issues.
+
+        This callback is invoked when security enforcement is compromised
+        due to insufficient privileges. It ensures operators are clearly
+        alerted rather than failures being silent.
+
+        Addresses Critical Finding: "Root Privilege Required = Silent Failure"
+        """
+        print(f"\n{'!'*70}")
+        print(f"  CRITICAL PRIVILEGE ISSUE")
+        print(f"{'!'*70}")
+        print(f"  Module:    {issue.module.value}")
+        print(f"  Operation: {issue.operation}")
+        print(f"  Message:   {issue.message}")
+        print(f"\n  Security enforcement is DEGRADED.")
+        print(f"  To fix: Run daemon as root (sudo boundary-daemon)")
+        print(f"{'!'*70}\n")
+
+        # Log to event logger
+        self.event_logger.log_event(
+            EventType.VIOLATION,
+            f"Privilege issue: {issue.module.value} - {issue.message}",
+            metadata={
+                'module': issue.module.value,
+                'operation': issue.operation,
+                'alert_level': issue.alert_level.value,
+                'required_privilege': issue.required_privilege.value,
+            }
+        )
 
     def _on_time_jump(self, event: 'TimeJumpEvent'):
         """Handle detected time jump (clock manipulation)."""
@@ -1334,6 +1470,28 @@ class BoundaryDaemon:
                     status['clock']['last_jump'] = clock_state['last_jump']
             except Exception as e:
                 status['clock'] = {'error': str(e)}
+
+        # Add privilege/enforcement status (SECURITY: Addresses silent failure issue)
+        if self.privilege_manager:
+            try:
+                priv_status = self.privilege_manager.get_status()
+                status['privilege'] = {
+                    'has_root': priv_status.has_root,
+                    'effective_uid': priv_status.effective_uid,
+                    'can_enforce_airgap': priv_status.can_enforce_airgap,
+                    'can_enforce_lockdown': priv_status.can_enforce_lockdown,
+                    'modules_available': priv_status.modules_available,
+                    'modules_degraded': priv_status.modules_degraded,
+                    'critical_issues_count': len(priv_status.critical_issues),
+                }
+            except Exception as e:
+                status['privilege'] = {'error': str(e)}
+        else:
+            status['privilege'] = {
+                'has_root': os.geteuid() == 0,
+                'effective_uid': os.geteuid(),
+                'manager_available': False,
+            }
 
         return status
 
