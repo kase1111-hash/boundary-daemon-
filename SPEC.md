@@ -2009,6 +2009,22 @@ When rate limited, additional fields appear:
 - `X-RateLimit-Blocked: True` - Currently blocked
 - `X-RateLimit-Retry-After: 30` - Seconds until unblocked
 
+#### Rate Limit Events
+
+Rate limit events are logged to the event logger for security monitoring:
+
+| Event Type | Description | Data Fields |
+|------------|-------------|-------------|
+| `RATE_LIMIT_TOKEN` | Per-token limit exceeded | token_id, limit, window, block_duration |
+| `RATE_LIMIT_GLOBAL` | Global limit exceeded | limit, window, block_duration, requests_in_window |
+| `RATE_LIMIT_COMMAND` | Per-command limit exceeded | token_id, command, limit, window, block_duration |
+| `RATE_LIMIT_UNBLOCK` | Block expired | token_id (optional), command (optional), limit, window |
+
+These events can be monitored for:
+- Abuse detection (repeated limit violations)
+- DDoS attack identification (global limit hits)
+- Misconfigured clients (command-specific violations)
+
 ### Token Management
 
 #### Bootstrap Token

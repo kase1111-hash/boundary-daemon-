@@ -66,10 +66,14 @@ class BoundaryAPIServer:
         self._socket: Optional[socket.socket] = None
 
         # Initialize authentication
+        # Get event logger from daemon if available
+        event_logger = getattr(daemon, 'event_logger', None) if daemon else None
+
         self.token_manager = TokenManager(
             token_file=token_file,
             rate_limit_window=rate_limit_window,
             rate_limit_max_requests=rate_limit_max_requests,
+            event_logger=event_logger,
         )
         self.auth_middleware = AuthenticationMiddleware(
             token_manager=self.token_manager,

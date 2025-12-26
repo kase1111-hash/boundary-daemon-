@@ -32,6 +32,10 @@ class EventType(Enum):
     CLOCK_JUMP = "clock_jump"  # Time manipulation detected
     CLOCK_DRIFT = "clock_drift"  # Excessive clock drift
     NTP_SYNC_LOST = "ntp_sync_lost"  # NTP synchronization lost
+    RATE_LIMIT_TOKEN = "rate_limit_token"  # Per-token rate limit exceeded
+    RATE_LIMIT_GLOBAL = "rate_limit_global"  # Global rate limit exceeded
+    RATE_LIMIT_COMMAND = "rate_limit_command"  # Per-command rate limit exceeded
+    RATE_LIMIT_UNBLOCK = "rate_limit_unblock"  # Rate limit block expired
 
 
 @dataclass

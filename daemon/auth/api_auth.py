@@ -226,6 +226,7 @@ class TokenManager:
         global_rate_limit_window: int = 60,  # 60 seconds for global limit
         global_rate_limit_max_requests: int = 1000,  # 1000 total requests per window
         global_rate_limit_block_duration: int = 60,  # 1 minute global block
+        event_logger=None,  # Optional EventLogger for rate limit events
     ):
         """
         Initialize token manager.
@@ -238,8 +239,10 @@ class TokenManager:
             global_rate_limit_window: Rate limit window in seconds (global)
             global_rate_limit_max_requests: Max total requests per window (global)
             global_rate_limit_block_duration: Block duration when global limit exceeded
+            event_logger: Optional EventLogger instance for logging rate limit events
         """
         self.token_file = Path(token_file)
+        self._event_logger = event_logger
 
         # Per-token rate limiting
         self.rate_limit_window = rate_limit_window
@@ -270,6 +273,59 @@ class TokenManager:
     def _hash_token(self, token: str) -> str:
         """Hash a token using SHA-256."""
         return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+    def set_event_logger(self, event_logger):
+        """Set the event logger for rate limit events."""
+        self._event_logger = event_logger
+
+    def _log_rate_limit_event(
+        self,
+        event_type: str,
+        token_id: Optional[str] = None,
+        token_name: Optional[str] = None,
+        command: Optional[str] = None,
+        limit: Optional[int] = None,
+        window: Optional[int] = None,
+        block_duration: Optional[int] = None,
+        requests_in_window: Optional[int] = None,
+    ):
+        """Log a rate limit event if event logger is configured."""
+        if not self._event_logger:
+            return
+
+        try:
+            from daemon.event_logger import EventType as ET
+
+            # Map string to EventType
+            event_type_map = {
+                'token': ET.RATE_LIMIT_TOKEN,
+                'global': ET.RATE_LIMIT_GLOBAL,
+                'command': ET.RATE_LIMIT_COMMAND,
+                'unblock': ET.RATE_LIMIT_UNBLOCK,
+            }
+            et = event_type_map.get(event_type)
+            if not et:
+                return
+
+            data = {}
+            if token_id:
+                data['token_id'] = token_id
+            if token_name:
+                data['token_name'] = token_name
+            if command:
+                data['command'] = command
+            if limit is not None:
+                data['limit'] = limit
+            if window is not None:
+                data['window_seconds'] = window
+            if block_duration is not None:
+                data['block_duration'] = block_duration
+            if requests_in_window is not None:
+                data['requests_in_window'] = requests_in_window
+
+            self._event_logger.log_event(event_type=et, data=data)
+        except Exception:
+            pass  # Don't fail on logging errors
 
     def _generate_token(self) -> str:
         """Generate a secure random token."""
@@ -504,9 +560,14 @@ class TokenManager:
             remaining = int(state.blocked_until - now)
             return False, f"Global rate limit exceeded. Try again in {remaining}s"
 
-        # Clear block if expired
+        # Clear block if expired (log unblock event)
         if state.blocked_until:
             state.blocked_until = None
+            self._log_rate_limit_event(
+                event_type='unblock',
+                limit=self.global_rate_limit_max_requests,
+                window=self.global_rate_limit_window,
+            )
 
         # Remove old request times
         window_start = now - self.global_rate_limit_window
@@ -516,6 +577,14 @@ class TokenManager:
         if len(state.request_times) >= self.global_rate_limit_max_requests:
             state.blocked_until = now + self.global_rate_limit_block_duration
             state.blocked_count += 1
+            # Log global rate limit exceeded event
+            self._log_rate_limit_event(
+                event_type='global',
+                limit=self.global_rate_limit_max_requests,
+                window=self.global_rate_limit_window,
+                block_duration=self.global_rate_limit_block_duration,
+                requests_in_window=len(state.request_times),
+            )
             return False, f"Global rate limit exceeded ({self.global_rate_limit_max_requests} req/{self.global_rate_limit_window}s). Blocked for {self.global_rate_limit_block_duration}s"
 
         # Record this request
@@ -543,9 +612,15 @@ class TokenManager:
                 remaining = int(entry.blocked_until - now)
                 return False, f"Rate limited. Try again in {remaining}s"
 
-            # Clear block if expired
+            # Clear block if expired (log unblock event)
             if entry.blocked_until:
                 entry.blocked_until = None
+                self._log_rate_limit_event(
+                    event_type='unblock',
+                    token_id=token_id,
+                    limit=self.rate_limit_max_requests,
+                    window=self.rate_limit_window,
+                )
 
             # Remove old request times
             window_start = now - self.rate_limit_window
@@ -554,6 +629,15 @@ class TokenManager:
             # Check if over limit
             if len(entry.request_times) >= self.rate_limit_max_requests:
                 entry.blocked_until = now + self.rate_limit_block_duration
+                # Log per-token rate limit exceeded event
+                self._log_rate_limit_event(
+                    event_type='token',
+                    token_id=token_id,
+                    limit=self.rate_limit_max_requests,
+                    window=self.rate_limit_window,
+                    block_duration=self.rate_limit_block_duration,
+                    requests_in_window=len(entry.request_times),
+                )
                 return False, f"Rate limit exceeded. Blocked for {self.rate_limit_block_duration}s"
 
             # Record this request
@@ -595,9 +679,16 @@ class TokenManager:
                 remaining = int(entry.blocked_until - now)
                 return False, f"Command '{command}' rate limited. Try again in {remaining}s"
 
-            # Clear block if expired
+            # Clear block if expired (log unblock event)
             if entry.blocked_until:
                 entry.blocked_until = None
+                self._log_rate_limit_event(
+                    event_type='unblock',
+                    token_id=token_id,
+                    command=command,
+                    limit=max_requests,
+                    window=window_seconds,
+                )
 
             # Remove old request times
             window_start = now - window_seconds
@@ -606,6 +697,16 @@ class TokenManager:
             # Check if over limit
             if len(entry.request_times) >= max_requests:
                 entry.blocked_until = now + block_duration
+                # Log per-command rate limit exceeded event
+                self._log_rate_limit_event(
+                    event_type='command',
+                    token_id=token_id,
+                    command=command,
+                    limit=max_requests,
+                    window=window_seconds,
+                    block_duration=block_duration,
+                    requests_in_window=len(entry.request_times),
+                )
                 return False, f"Command '{command}' rate limit exceeded ({max_requests} req/{window_seconds}s). Blocked for {block_duration}s"
 
             # Record this request
