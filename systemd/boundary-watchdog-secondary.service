@@ -1,0 +1,64 @@
+# Boundary Daemon Watchdog (Secondary) - Redundant Process Monitor
+#
+# This is the SECONDARY watchdog for multi-watchdog redundancy.
+# It monitors both the daemon AND the primary watchdog.
+#
+# SECURITY: If an attacker kills the primary watchdog, the secondary
+# detects this and triggers lockdown. This makes it much harder to
+# silently disable monitoring.
+#
+# INSTALLATION:
+# 1. Copy this file to /etc/systemd/system/boundary-watchdog-secondary.service
+# 2. Run: systemctl daemon-reload
+# 3. Run: systemctl enable boundary-watchdog-secondary
+# 4. Run: systemctl start boundary-watchdog-secondary
+
+[Unit]
+Description=Boundary Daemon Watchdog (Secondary) - Redundant Monitor
+Documentation=man:boundary-daemon(8)
+After=boundary-daemon.service boundary-watchdog.service
+BindsTo=boundary-daemon.service
+# Also bind to primary watchdog - if primary fails, we want to know
+Wants=boundary-watchdog.service
+
+[Service]
+Type=notify
+
+User=root
+Group=root
+
+# Secondary watchdog - monitors primary watchdog socket
+ExecStart=/usr/bin/boundary-watchdog --id secondary --peer /var/run/boundary-daemon/watchdog_primary.sock
+
+# Systemd watchdog integration
+WatchdogSec=30
+
+Restart=always
+RestartSec=1
+
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+# Security hardening (same as primary)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+ReadWritePaths=/var/run/boundary-daemon
+RuntimeDirectory=boundary-daemon
+RuntimeDirectoryMode=0700
+
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL CAP_SYS_PTRACE
+
+Environment="PYTHONUNBUFFERED=1"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boundary-watchdog-secondary
+
+[Install]
+WantedBy=multi-user.target

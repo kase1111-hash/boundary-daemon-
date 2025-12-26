@@ -117,6 +117,20 @@ except ImportError:
     WatchdogSeverity = None
     WatchdogStatus = None
 
+# Import hardened watchdog (SECURITY: Addresses "External Watchdog Can Be Killed")
+try:
+    from .watchdog import (
+        DaemonWatchdogEndpoint,
+        generate_shared_secret,
+        WatchdogState,
+    )
+    HARDENED_WATCHDOG_AVAILABLE = True
+except ImportError:
+    HARDENED_WATCHDOG_AVAILABLE = False
+    DaemonWatchdogEndpoint = None
+    generate_shared_secret = None
+    WatchdogState = None
+
 # Import telemetry module (Plan 9: OpenTelemetry Integration)
 try:
     from .telemetry import TelemetryManager, TelemetryConfig, ExportMode
@@ -512,6 +526,37 @@ class BoundaryDaemon:
         else:
             print("Clock monitor module not loaded")
 
+        # Initialize hardened watchdog endpoint (SECURITY: Resilient Daemon Monitoring)
+        # This addresses Critical Finding #6: "External Watchdog Can Be Killed"
+        self.watchdog_endpoint = None
+        self.hardened_watchdog_enabled = False
+        if HARDENED_WATCHDOG_AVAILABLE and DaemonWatchdogEndpoint:
+            try:
+                # Generate shared secret for watchdog authentication
+                shared_secret = generate_shared_secret()
+
+                # Health check callback
+                def daemon_health_check():
+                    try:
+                        # Verify daemon is functional
+                        _ = self.policy_engine.get_current_mode()
+                        return self._running
+                    except Exception:
+                        return False
+
+                self.watchdog_endpoint = DaemonWatchdogEndpoint(
+                    shared_secret=shared_secret,
+                    health_checker=daemon_health_check,
+                )
+                self.hardened_watchdog_enabled = True
+                print("Hardened watchdog endpoint available")
+                print("  SECURITY: External watchdogs can now monitor daemon health")
+                print("  Run 'boundary-watchdog' as a separate service for protection")
+            except Exception as e:
+                print(f"Warning: Hardened watchdog endpoint failed to initialize: {e}")
+        else:
+            print("Hardened watchdog: not available (watchdog module not loaded)")
+
         # Daemon state
         self._running = False
         self._shutdown_event = threading.Event()
@@ -865,6 +910,14 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Clock monitor failed to start: {e}")
 
+        # Start hardened watchdog endpoint (SECURITY: Resilient Monitoring)
+        if self.watchdog_endpoint and self.hardened_watchdog_enabled:
+            try:
+                self.watchdog_endpoint.start()
+                print(f"Hardened watchdog endpoint started (socket: {self.watchdog_endpoint.socket_path})")
+            except Exception as e:
+                print(f"Warning: Hardened watchdog endpoint failed to start: {e}")
+
         # Start API server for CLI tools
         if self.api_server:
             try:
@@ -894,6 +947,14 @@ class BoundaryDaemon:
                 print("API server stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop API server: {e}")
+
+        # Stop hardened watchdog endpoint
+        if self.watchdog_endpoint and self.hardened_watchdog_enabled:
+            try:
+                self.watchdog_endpoint.stop()
+                print("Hardened watchdog endpoint stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop watchdog endpoint: {e}")
 
         # Stop clock monitor
         if self.clock_monitor and self.clock_monitor_enabled:

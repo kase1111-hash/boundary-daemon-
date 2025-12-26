@@ -1,0 +1,79 @@
+# Boundary Daemon Watchdog - External Process Monitor
+#
+# This systemd service runs the hardened watchdog that monitors the
+# boundary daemon and triggers emergency lockdown if the daemon fails.
+#
+# SECURITY FEATURES:
+# - Systemd WatchdogSec integration (kernel-level monitoring)
+# - Automatic restart on failure
+# - Binds to daemon service lifecycle
+# - Runs as root for iptables lockdown capability
+#
+# INSTALLATION:
+# 1. Copy this file to /etc/systemd/system/boundary-watchdog.service
+# 2. Run: systemctl daemon-reload
+# 3. Run: systemctl enable boundary-watchdog
+# 4. Run: systemctl start boundary-watchdog
+#
+# For multi-watchdog redundancy, create additional units:
+#   boundary-watchdog-secondary.service
+# with --id secondary --peer /var/run/boundary-daemon/watchdog_primary.sock
+
+[Unit]
+Description=Boundary Daemon Watchdog - External Process Monitor
+Documentation=man:boundary-daemon(8)
+After=boundary-daemon.service
+BindsTo=boundary-daemon.service
+# Start watchdog only after daemon is fully ready
+Wants=boundary-daemon.service
+
+[Service]
+Type=notify
+
+# Run as root to enable iptables lockdown
+User=root
+Group=root
+
+# Main watchdog process
+ExecStart=/usr/bin/boundary-watchdog --id primary
+
+# Systemd watchdog integration
+# If we don't ping systemd within 30s, systemd will restart us
+WatchdogSec=30
+
+# Always restart on failure
+Restart=always
+RestartSec=1
+
+# Restart limit (don't restart more than 10 times in 60 seconds)
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# Need write access to runtime directory
+ReadWritePaths=/var/run/boundary-daemon
+RuntimeDirectory=boundary-daemon
+RuntimeDirectoryMode=0700
+
+# Allow network for iptables lockdown
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL CAP_SYS_PTRACE
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boundary-watchdog
+
+[Install]
+WantedBy=multi-user.target
+Also=boundary-daemon.service
