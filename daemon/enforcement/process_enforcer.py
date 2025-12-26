@@ -21,6 +21,10 @@ Actually Locked Down" by implementing actual process isolation.
 
 SECURITY: Seccomp profiles are now protected by SecureProfileManager which
 provides HMAC integrity verification and optional immutable flags.
+
+SECURITY: Process termination now uses SecureProcessTerminator with exact
+PID and path matching instead of broad pattern matching.
+Addresses: "Process Termination Uses Broad Pattern Matching"
 """
 
 import os
@@ -48,6 +52,22 @@ try:
 except ImportError:
     SECURE_PROFILE_AVAILABLE = False
     SecureProfileManager = None
+
+# Import secure process termination (SECURITY: replaces broad pattern matching)
+try:
+    from .secure_process_termination import (
+        SecureProcessTerminator,
+        ProcessInfo,
+        TerminationReason,
+        TerminationResult,
+    )
+    SECURE_TERMINATION_AVAILABLE = True
+except ImportError:
+    SECURE_TERMINATION_AVAILABLE = False
+    SecureProcessTerminator = None
+    ProcessInfo = None
+    TerminationReason = None
+    TerminationResult = None
 
 
 class ProcessEnforcementError(Exception):
@@ -240,6 +260,22 @@ class ProcessEnforcer:
         if self._has_root and not self._profile_manager:
             os.makedirs(self.SECCOMP_PROFILE_DIR, exist_ok=True)
             logger.warning("Using legacy profile storage WITHOUT integrity verification")
+
+        # Initialize secure process terminator (SECURITY: No broad pattern matching)
+        # This addresses: "Process Termination Uses Broad Pattern Matching"
+        self._secure_terminator = None
+        if SECURE_TERMINATION_AVAILABLE and SecureProcessTerminator:
+            try:
+                self._secure_terminator = SecureProcessTerminator(
+                    event_logger=self.event_logger,
+                    allow_essential_termination=False,  # Never kill essential processes
+                    require_verification=True,
+                )
+                logger.info("Secure process terminator initialized (no pattern matching)")
+            except Exception as e:
+                logger.warning(f"Secure process terminator failed to initialize: {e}")
+        else:
+            logger.warning("Secure process terminator not available - using legacy termination")
 
     def _check_seccomp_support(self) -> bool:
         """Check if seccomp is available"""
@@ -630,28 +666,86 @@ class ProcessEnforcer:
         return stopped
 
     def _terminate_suspicious_processes(self):
-        """Terminate processes that might be security threats"""
-        # This is a simplified version - in production, this would
-        # use more sophisticated detection
-        suspicious_patterns = [
-            'netcat', 'nc', 'ncat',
-            'curl', 'wget',
-            'ssh', 'scp', 'sftp',
-            'python.*-c.*socket',
-            'perl.*-e.*socket',
-            'ruby.*-e.*socket',
-        ]
+        """
+        Terminate processes that are identified as security threats.
 
-        try:
-            # Use pkill to terminate suspicious processes
-            for pattern in suspicious_patterns:
-                subprocess.run(
-                    ['pkill', '-9', '-f', pattern],
-                    capture_output=True,
-                    timeout=5
+        SECURITY: This method uses secure process termination with:
+        - Precise identification via /proc filesystem (not pattern matching)
+        - Verification of process identity before termination
+        - Protection of essential system processes
+        - Full audit logging of all termination attempts
+
+        This addresses the vulnerability:
+        "Process Termination Uses Broad Pattern Matching"
+        """
+        # SECURITY: Use secure terminator if available
+        if self._secure_terminator:
+            terminated = []
+
+            # Find and terminate suspicious processes
+            suspicious = self._secure_terminator.get_running_suspicious_processes()
+            for proc_info, reason in suspicious:
+                logger.warning(f"Found suspicious process: PID={proc_info.pid}, "
+                              f"name={proc_info.name}, reason={reason}")
+
+                result, msg = self._secure_terminator.terminate_process(
+                    pid=proc_info.pid,
+                    reason=TerminationReason.SECURITY_THREAT,
+                    requested_by="process_enforcer",
                 )
-        except Exception as e:
-            logger.debug(f"Error terminating suspicious processes: {e}")
+
+                if result == TerminationResult.SUCCESS:
+                    terminated.append(proc_info.pid)
+                    logger.info(f"Terminated suspicious process: {proc_info.pid}")
+                else:
+                    logger.warning(f"Failed to terminate {proc_info.pid}: {msg}")
+
+            # Also check for processes running from suspicious locations
+            # Use exact path matching, not pattern matching
+            suspicious_exe_prefixes = [
+                '/tmp/',
+                '/dev/shm/',
+                '/var/tmp/',
+            ]
+
+            for prefix in suspicious_exe_prefixes:
+                procs = self._secure_terminator.find_processes_by_criteria(
+                    exe_path_prefix=prefix,
+                    exclude_essential=True,
+                )
+                for proc_info in procs:
+                    if proc_info.pid not in terminated:
+                        logger.warning(f"Process running from suspicious location: "
+                                      f"PID={proc_info.pid}, exe={proc_info.exe_path}")
+
+                        result, msg = self._secure_terminator.terminate_process(
+                            pid=proc_info.pid,
+                            reason=TerminationReason.SECURITY_THREAT,
+                            requested_by="process_enforcer",
+                        )
+
+                        if result == TerminationResult.SUCCESS:
+                            terminated.append(proc_info.pid)
+
+            if terminated:
+                self._log_enforcement(
+                    action="TERMINATE_SUSPICIOUS",
+                    details=f"Terminated {len(terminated)} suspicious processes",
+                    pids=terminated,
+                )
+
+        else:
+            # LEGACY FALLBACK: Log warning but do NOT use broad pattern matching
+            # This is intentionally disabled for security
+            logger.error(
+                "SECURITY: Secure process terminator not available. "
+                "Suspicious process termination is DISABLED to prevent "
+                "accidental termination of legitimate processes."
+            )
+            self._log_enforcement(
+                action="TERMINATE_SUSPICIOUS_FAILED",
+                details="Secure terminator not available - termination disabled",
+            )
 
     def _start_watchdog(self):
         """Start the internal watchdog thread"""
@@ -725,7 +819,17 @@ class ProcessEnforcer:
             logger.debug(f"Error checking network processes: {e}")
 
     def _trigger_emergency_lockdown(self):
-        """Trigger emergency lockdown from watchdog"""
+        """
+        Trigger emergency lockdown from watchdog.
+
+        SECURITY: Process termination uses secure terminator with:
+        - Essential process protection (never kills init, systemd, etc.)
+        - PID-based termination with verification
+        - Full audit logging
+        - No broad UID-range pattern matching
+
+        This addresses: "Process Termination Uses Broad Pattern Matching"
+        """
         logger.critical("Watchdog triggering emergency lockdown!")
 
         # Block all network at iptables level
@@ -736,16 +840,56 @@ class ProcessEnforcer:
         except Exception as e:
             logger.error(f"Failed to set iptables policy: {e}")
 
-        # Terminate all user processes (except essential)
-        try:
-            # Kill all non-root processes
-            subprocess.run(['pkill', '-9', '-U', '1000-60000'], timeout=5)
-        except Exception:
-            pass
+        # SECURITY: Terminate user processes using secure terminator
+        terminated_count = 0
+
+        if self._secure_terminator:
+            # Find all non-essential user processes (UID >= 1000)
+            try:
+                for entry in os.listdir('/proc'):
+                    if not entry.isdigit():
+                        continue
+
+                    pid = int(entry)
+                    proc_info = ProcessInfo.from_pid(pid)
+                    if not proc_info:
+                        continue
+
+                    # Skip root/system processes (UID < 1000)
+                    if proc_info.uid is None or proc_info.uid < 1000:
+                        continue
+
+                    # Skip if essential
+                    is_essential, _ = self._secure_terminator.is_essential_process(proc_info)
+                    if is_essential:
+                        continue
+
+                    # Terminate with verification
+                    result, msg = self._secure_terminator.terminate_process(
+                        pid=pid,
+                        reason=TerminationReason.EMERGENCY_LOCKDOWN,
+                        requested_by="process_enforcer_watchdog",
+                        force=False,  # Never force-kill essential processes
+                    )
+
+                    if result == TerminationResult.SUCCESS:
+                        terminated_count += 1
+                        logger.info(f"Emergency lockdown: terminated PID {pid} ({proc_info.name})")
+
+            except Exception as e:
+                logger.error(f"Error during emergency process termination: {e}")
+
+        else:
+            # SECURITY: Without secure terminator, log but do not use broad pattern matching
+            logger.error(
+                "SECURITY: Secure terminator not available during emergency lockdown. "
+                "Process termination is DISABLED to prevent unintended damage."
+            )
 
         self._log_enforcement(
             action="EMERGENCY_LOCKDOWN",
-            reason="Watchdog detected daemon failure"
+            reason="Watchdog detected daemon failure",
+            terminated_count=terminated_count,
         )
 
     def get_process_info(self) -> List[Dict]:

@@ -10,12 +10,16 @@ Components:
 - ProcessEnforcer: seccomp/container isolation for process restriction
 - SecureProfileManager: Cryptographically signed seccomp profiles with integrity verification
 - ProtectionPersistenceManager: Ensures protections survive daemon restarts
+- SecureProcessTerminator: Safe process termination without broad pattern matching
 
 SECURITY: SecureProfileManager addresses "Seccomp Profiles Stored in Writable Directory"
 by providing HMAC integrity verification, restrictive permissions, and optional immutable flags.
 
 SECURITY: ProtectionPersistenceManager addresses "Cleanup on Shutdown Removes All Protection"
 by persisting protection state to disk and requiring authentication for cleanup.
+
+SECURITY: SecureProcessTerminator addresses "Process Termination Uses Broad Pattern Matching"
+by using precise PID-based termination with verification and essential process protection.
 """
 
 from .network_enforcer import (
@@ -54,6 +58,15 @@ from .protection_persistence import (
     ProtectionState,
 )
 
+from .secure_process_termination import (
+    SecureProcessTerminator,
+    ProcessInfo,
+    ProcessVerificationMethod,
+    TerminationReason,
+    TerminationResult,
+    TerminationAttempt,
+)
+
 __all__ = [
     # Network Enforcement (Plan 1 Phase 1)
     'NetworkEnforcer',
@@ -81,4 +94,11 @@ __all__ = [
     'PersistenceReason',
     'PersistedProtection',
     'ProtectionState',
+    # Secure Process Termination (No Pattern Matching)
+    'SecureProcessTerminator',
+    'ProcessInfo',
+    'ProcessVerificationMethod',
+    'TerminationReason',
+    'TerminationResult',
+    'TerminationAttempt',
 ]
