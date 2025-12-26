@@ -27,7 +27,15 @@ env/
 
 # Boundary Daemon specific
 logs/*.log
+logs/*.sig
+logs/signing.key
 api/boundary.sock
+
+# Security credentials (never commit)
+config/.token_salt
+config/api_tokens.json
+config/bootstrap_token.enc
+config/*.enc
 
 # IDE
 .vscode/

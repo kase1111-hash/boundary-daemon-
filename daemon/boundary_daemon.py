@@ -174,6 +174,56 @@ except ImportError:
     ClockStatus = None
     TimeJumpEvent = None
 
+# Import daemon integrity protection (SECURITY: Binary tampering prevention)
+try:
+    from .security.daemon_integrity import (
+        DaemonIntegrityProtector,
+        IntegrityConfig,
+        IntegrityAction,
+        verify_daemon_integrity,
+    )
+    DAEMON_INTEGRITY_AVAILABLE = True
+except ImportError:
+    DAEMON_INTEGRITY_AVAILABLE = False
+    DaemonIntegrityProtector = None
+    IntegrityConfig = None
+    IntegrityAction = None
+    verify_daemon_integrity = None
+
+# Import secure config storage (SECURITY: Configuration encryption)
+try:
+    from .config import (
+        SecureConfigStorage,
+        SecureConfigOptions,
+        EncryptionMode,
+        load_secure_config,
+    )
+    SECURE_CONFIG_AVAILABLE = True
+except ImportError:
+    SECURE_CONFIG_AVAILABLE = False
+    SecureConfigStorage = None
+    SecureConfigOptions = None
+    EncryptionMode = None
+    load_secure_config = None
+
+# Import redundant event logger (SECURITY: Logging redundancy)
+try:
+    from .redundant_event_logger import (
+        RedundantEventLogger,
+        RedundantLoggerConfig,
+        BackendConfig,
+        LogBackendType,
+        create_redundant_logger,
+    )
+    REDUNDANT_LOGGING_AVAILABLE = True
+except ImportError:
+    REDUNDANT_LOGGING_AVAILABLE = False
+    RedundantEventLogger = None
+    RedundantLoggerConfig = None
+    BackendConfig = None
+    LogBackendType = None
+    create_redundant_logger = None
+
 
 class BoundaryDaemon:
     """
@@ -183,14 +233,53 @@ class BoundaryDaemon:
     and event logging to maintain trust boundaries.
     """
 
-    def __init__(self, log_dir: str = './logs', initial_mode: BoundaryMode = BoundaryMode.OPEN):
+    def __init__(self, log_dir: str = './logs', initial_mode: BoundaryMode = BoundaryMode.OPEN,
+                 skip_integrity_check: bool = False):
         """
         Initialize the Boundary Daemon.
 
         Args:
             log_dir: Directory for log files
             initial_mode: Starting boundary mode
+            skip_integrity_check: Skip integrity verification (DANGEROUS - dev only)
         """
+        # SECURITY: Verify daemon integrity BEFORE any other initialization
+        # This prevents execution of tampered code
+        self._integrity_protector = None
+        self._integrity_verified = False
+
+        if not skip_integrity_check and DAEMON_INTEGRITY_AVAILABLE:
+            print("Verifying daemon integrity...")
+            self._integrity_protector = DaemonIntegrityProtector(
+                config=IntegrityConfig(
+                    # In production, use restrictive settings:
+                    # failure_action=IntegrityAction.BLOCK_STARTUP,
+                    # allow_missing_manifest=False,
+                    # For development, allow missing manifest:
+                    failure_action=IntegrityAction.WARN_ONLY,
+                    allow_missing_manifest=True,
+                ),
+            )
+            should_continue, message = self._integrity_protector.verify_startup()
+
+            if not should_continue:
+                print(f"FATAL: Daemon integrity check failed: {message}")
+                print("Refusing to start - daemon files may have been tampered with!")
+                raise RuntimeError(f"Daemon integrity verification failed: {message}")
+
+            if "LOCKDOWN" in message:
+                print(f"WARNING: Starting in lockdown mode: {message}")
+                initial_mode = BoundaryMode.AIRGAP  # Force most restrictive mode
+            elif "WARNING" in message:
+                print(f"SECURITY WARNING: {message}")
+            else:
+                print(f"Integrity verified: {message}")
+                self._integrity_verified = True
+        elif skip_integrity_check:
+            print("WARNING: Daemon integrity check SKIPPED - this is insecure!")
+        else:
+            print("Daemon integrity protection: not available")
+
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
 
@@ -200,6 +289,9 @@ class BoundaryDaemon:
         # Initialize event logger (Plan 3: Cryptographic Log Signing)
         log_file = os.path.join(log_dir, 'boundary_chain.log')
         self.signed_logging = False
+        self.redundant_logging = False
+        self._redundant_logger = None
+
         if SIGNED_LOGGING_AVAILABLE and SignedEventLogger:
             try:
                 signing_key_path = os.path.join(log_dir, 'signing.key')
@@ -213,6 +305,22 @@ class BoundaryDaemon:
         else:
             self.event_logger = EventLogger(log_file)
             print("Signed event logging: not available (pynacl not installed)")
+
+        # Initialize redundant logger (SECURITY: Addresses single logger dependency)
+        if REDUNDANT_LOGGING_AVAILABLE and create_redundant_logger:
+            try:
+                self._redundant_logger = create_redundant_logger(
+                    log_dir=log_dir,
+                    enable_syslog=True,
+                    enable_memory_buffer=True,
+                )
+                self.redundant_logging = True
+                healthy_count = self._redundant_logger.get_healthy_backend_count()
+                print(f"Redundant logging enabled ({healthy_count} backends available)")
+            except Exception as e:
+                print(f"Warning: Redundant logging failed: {e}")
+        else:
+            print("Redundant logging: not available")
 
         self.state_monitor = StateMonitor(poll_interval=1.0)
         self.policy_engine = PolicyEngine(initial_mode=initial_mode)
@@ -1041,6 +1149,22 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Failed to start API server: {e}")
 
+        # Start daemon integrity runtime monitoring (SECURITY: Continuous protection)
+        if self._integrity_protector:
+            try:
+                self._integrity_protector.start_monitoring()
+                print("Daemon integrity monitoring started")
+            except Exception as e:
+                print(f"Warning: Daemon integrity monitoring failed to start: {e}")
+
+        # Start redundant logger health monitoring (SECURITY: Logging redundancy)
+        if self._redundant_logger and self.redundant_logging:
+            try:
+                self._redundant_logger.start_health_monitoring()
+                print("Redundant logger health monitoring started")
+            except Exception as e:
+                print(f"Warning: Redundant logger health monitoring failed: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -1063,6 +1187,22 @@ class BoundaryDaemon:
                 print("API server stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop API server: {e}")
+
+        # Stop daemon integrity monitoring
+        if self._integrity_protector:
+            try:
+                self._integrity_protector.stop_monitoring()
+                print("Daemon integrity monitoring stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop integrity monitoring: {e}")
+
+        # Stop redundant logger health monitoring
+        if self._redundant_logger and self.redundant_logging:
+            try:
+                self._redundant_logger.stop_health_monitoring()
+                print("Redundant logger health monitoring stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop redundant logger: {e}")
 
         # Stop hardened watchdog endpoint
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
@@ -1686,7 +1826,77 @@ class BoundaryDaemon:
                 'manager_available': False,
             }
 
+        # Add secure config status
+        status['secure_config_available'] = SECURE_CONFIG_AVAILABLE
+        if self._integrity_protector:
+            status['integrity_verified'] = self._integrity_verified
+
+        # Add redundant logging status
+        status['redundant_logging'] = self.redundant_logging
+        if self._redundant_logger:
+            try:
+                logger_status = self._redundant_logger.get_status()
+                status['redundant_logger'] = {
+                    'running': logger_status['running'],
+                    'event_count': logger_status['event_count'],
+                    'healthy_backends': self._redundant_logger.get_healthy_backend_count(),
+                    'stats': logger_status['stats'],
+                }
+            except Exception as e:
+                status['redundant_logger'] = {'error': str(e)}
+
         return status
+
+    def load_config_secure(self, config_path: str) -> dict:
+        """
+        Load a configuration file with encryption support.
+
+        SECURITY: Automatically decrypts encrypted configuration files
+        using machine-derived keys.
+
+        Args:
+            config_path: Path to configuration file
+
+        Returns:
+            Decrypted configuration dictionary
+        """
+        if not SECURE_CONFIG_AVAILABLE:
+            # Fall back to basic JSON/YAML loading
+            import json
+            with open(config_path) as f:
+                content = f.read()
+                if content.strip().startswith('{'):
+                    return json.loads(content)
+                else:
+                    # Try YAML if available
+                    try:
+                        import yaml
+                        return yaml.safe_load(content)
+                    except ImportError:
+                        raise RuntimeError("Config loading requires pyyaml")
+
+        return load_secure_config(config_path)
+
+    def save_config_secure(self, config: dict, config_path: str, encrypt: bool = True):
+        """
+        Save a configuration file with optional encryption.
+
+        SECURITY: Encrypts sensitive fields in the configuration.
+
+        Args:
+            config: Configuration dictionary
+            config_path: Path to save configuration
+            encrypt: Whether to encrypt sensitive fields
+        """
+        if not SECURE_CONFIG_AVAILABLE:
+            # Fall back to basic JSON saving
+            import json
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            return
+
+        from .config import save_secure_config
+        save_secure_config(config, config_path, encrypt=encrypt)
 
     def verify_log_integrity(self) -> tuple[bool, str]:
         """

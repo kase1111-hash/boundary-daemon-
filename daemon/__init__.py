@@ -2,6 +2,27 @@
 Boundary Daemon - Core Components
 """
 
+# Import centralized constants (SECURITY: Addresses hardcoded magic values)
+from .constants import (
+    Timeouts,
+    BufferSizes,
+    Permissions,
+    Paths,
+    Crypto,
+    TimeThresholds,
+    RateLimits,
+    Retries,
+    NetworkConstants,
+    DetectionThresholds,
+    Limits,
+    EssentialProcesses,
+    RuntimeConfig,
+    DEFAULT_TIMEOUT,
+    SECURE_FILE_MODE,
+    SECURE_DIR_MODE,
+    KDF_ITERATIONS,
+)
+
 from .state_monitor import StateMonitor, EnvironmentState, NetworkState, HardwareTrust
 from .policy_engine import PolicyEngine, BoundaryMode, PolicyRequest, PolicyDecision, Operator, MemoryClass
 from .tripwires import TripwireSystem, LockdownManager, TripwireViolation, ViolationType
