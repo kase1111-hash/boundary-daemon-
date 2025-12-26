@@ -7,6 +7,12 @@ Provides threat intelligence capabilities including:
 - TOR exit node detection
 - Threat feed integration
 - Local threat caching
+
+SECURITY: Network calls are blocked in AIRGAP, COLDROOM, and LOCKDOWN modes.
+External API queries (AbuseIPDB, VirusTotal) are disabled when network
+isolation is required.
+
+Addresses Critical Finding: "AIRGAP Mode Leaks Network Traffic"
 """
 
 import threading
@@ -16,13 +22,16 @@ import re
 import os
 import json
 import hashlib
+import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
 from collections import defaultdict
 import urllib.request
 import urllib.error
+
+logger = logging.getLogger(__name__)
 
 
 class ThreatCategory(Enum):
@@ -125,7 +134,15 @@ class ThreatIntelStatus:
 
 
 class ThreatIntelMonitor:
-    """Monitors network connections for known threats"""
+    """
+    Monitors network connections for known threats.
+
+    SECURITY: External API calls are blocked in network-isolated modes
+    (AIRGAP, COLDROOM, LOCKDOWN) to prevent data exfiltration.
+    """
+
+    # Modes that block all external network access
+    NETWORK_BLOCKED_MODES = {'AIRGAP', 'COLDROOM', 'LOCKDOWN'}
 
     # Well-known malicious IP ranges (for demonstration - real systems use feeds)
     KNOWN_MALICIOUS_RANGES = [
@@ -142,10 +159,27 @@ class ThreatIntelMonitor:
         r"^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.bc\.googleusercontent\.com$",
     ]
 
-    def __init__(self, config: Optional[ThreatIntelConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ThreatIntelConfig] = None,
+        mode_getter: Optional[Callable[[], str]] = None,
+    ):
+        """
+        Initialize threat intelligence monitor.
+
+        Args:
+            config: Threat intelligence configuration
+            mode_getter: Callback to get current boundary mode (e.g., 'AIRGAP')
+        """
         self.config = config or ThreatIntelConfig()
         self.status = ThreatIntelStatus()
         self._lock = threading.RLock()
+
+        # SECURITY: Mode getter for network isolation enforcement
+        self._get_mode = mode_getter
+
+        # Track blocked API calls for security auditing
+        self._blocked_api_calls: List[Dict] = []
 
         # Threat cache: IP -> ThreatInfo
         self._threat_cache: Dict[str, ThreatInfo] = {}
@@ -165,6 +199,41 @@ class ThreatIntelMonitor:
 
         # Initialize with built-in threat data
         self._initialize_threat_data()
+
+    def set_mode_getter(self, getter: Callable[[], str]):
+        """Set the mode getter callback."""
+        self._get_mode = getter
+
+    def _is_network_blocked(self) -> bool:
+        """
+        Check if external network access is blocked in current mode.
+
+        Returns:
+            True if network access should be blocked (AIRGAP, COLDROOM, LOCKDOWN)
+        """
+        if not self._get_mode:
+            return False  # No mode getter, assume network allowed
+
+        try:
+            current_mode = self._get_mode()
+            if current_mode and current_mode.upper() in self.NETWORK_BLOCKED_MODES:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def _log_blocked_api_call(self, api_name: str, target: str, reason: str):
+        """Log a blocked API call for security auditing."""
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'api': api_name,
+            'target': target,
+            'reason': reason,
+            'mode': self._get_mode() if self._get_mode else 'unknown',
+        }
+        self._blocked_api_calls.append(entry)
+        logger.warning(f"SECURITY: Blocked {api_name} API call to {target}: {reason}")
 
     def _initialize_threat_data(self):
         """Initialize with built-in threat intelligence data"""
@@ -352,7 +421,21 @@ class ThreatIntelMonitor:
         return False
 
     def _check_abuseipdb(self, ip: str) -> Optional[Dict]:
-        """Check IP against AbuseIPDB"""
+        """
+        Check IP against AbuseIPDB.
+
+        SECURITY: This method is blocked in AIRGAP/COLDROOM/LOCKDOWN modes
+        to prevent IP exfiltration to external services.
+        """
+        # SECURITY: Block external API calls in network-isolated modes
+        if self._is_network_blocked():
+            self._log_blocked_api_call(
+                'AbuseIPDB',
+                ip,
+                'Network blocked in current security mode'
+            )
+            return None
+
         if not self._can_make_api_call():
             return None
 
@@ -387,7 +470,21 @@ class ThreatIntelMonitor:
         return None
 
     def _check_virustotal(self, ip: str) -> Optional[Dict]:
-        """Check IP against VirusTotal"""
+        """
+        Check IP against VirusTotal.
+
+        SECURITY: This method is blocked in AIRGAP/COLDROOM/LOCKDOWN modes
+        to prevent IP exfiltration to external services.
+        """
+        # SECURITY: Block external API calls in network-isolated modes
+        if self._is_network_blocked():
+            self._log_blocked_api_call(
+                'VirusTotal',
+                ip,
+                'Network blocked in current security mode'
+            )
+            return None
+
         if not self._can_make_api_call():
             return None
 
@@ -729,3 +826,18 @@ class ThreatIntelMonitor:
             self._threat_cache.clear()
             self._cache_timestamps.clear()
             self.status.cached_threats = 0
+
+    def get_blocked_api_calls(self) -> List[Dict]:
+        """
+        Get list of API calls that were blocked due to network isolation.
+
+        Returns:
+            List of blocked API call records for security auditing
+        """
+        with self._lock:
+            return list(self._blocked_api_calls)
+
+    def clear_blocked_api_calls(self):
+        """Clear the blocked API calls log."""
+        with self._lock:
+            self._blocked_api_calls.clear()

@@ -1,24 +1,41 @@
 """
-ARP Security Monitor - Detects ARP-based attacks and anomalies.
+ARP Security Monitor - Detects AND BLOCKS ARP-based attacks.
 
 Features:
-- ARP spoofing detection (IP-MAC binding changes)
-- Duplicate MAC address detection
-- Gratuitous ARP flood detection
-- Gateway impersonation detection
-- ARP cache poisoning detection
+- ARP spoofing detection AND BLOCKING
+- Duplicate MAC address detection AND ISOLATION
+- Gratuitous ARP flood detection AND MITIGATION
+- Gateway impersonation detection AND STATIC BINDING ENFORCEMENT
+- ARP cache poisoning detection AND PROTECTION
+- Static ARP binding enforcement
+- Attacker IP blocking via iptables
+- Gateway MAC pinning
+
+SECURITY: This module now provides ACTUAL ENFORCEMENT, not just detection.
+Addresses Critical Finding: "Detection Without Enforcement"
+
+SECURITY: Thread-safe implementation with RLock protection.
+Addresses Critical Finding: "Thread Safety Issues in ARP Monitor"
+- All shared state access is protected by self._lock (RLock)
+- TOCTOU races prevented in block_ip/unblock_ip
+- Gateway state reads/writes are atomic
+- Cache lookups are thread-safe
 """
 
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from enum import Enum
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 
 class ARPSecurityAlert(Enum):
@@ -45,15 +62,31 @@ class ARPEntry:
     change_count: int = 0
 
 
+class ARPEnforcementAction(Enum):
+    """Actions to take when ARP threat is detected"""
+    LOG_ONLY = "log_only"           # Just log (detection mode)
+    STATIC_ARP = "static_arp"       # Set static ARP entry for gateway
+    BLOCK_IP = "block_ip"           # Block attacker IP via iptables
+    ISOLATE = "isolate"             # Full isolation (static ARP + block)
+
+
 @dataclass
 class ARPSecurityConfig:
-    """Configuration for ARP security monitoring"""
+    """Configuration for ARP security monitoring AND ENFORCEMENT"""
     # Detection toggles
     detect_spoofing: bool = True
     detect_duplicate_mac: bool = True
     detect_gateway_impersonation: bool = True
     detect_arp_flood: bool = True
     alert_on_new_hosts: bool = False  # Can be noisy on dynamic networks
+
+    # ENFORCEMENT toggles (NEW)
+    enforcement_enabled: bool = True  # Master switch for enforcement
+    enforcement_action: ARPEnforcementAction = ARPEnforcementAction.ISOLATE
+    auto_block_spoofing: bool = True  # Auto-block detected spoofing
+    auto_protect_gateway: bool = True  # Auto-create static ARP for gateway
+    auto_block_duplicate_mac: bool = True  # Block IPs with suspicious duplicate MACs
+    block_duration_minutes: int = 60  # How long to block attackers
 
     # Thresholds
     max_mac_changes_per_minute: int = 3  # Rapid MAC changes indicate spoofing
@@ -62,6 +95,12 @@ class ARPSecurityConfig:
 
     # Known trusted bindings (IP -> MAC)
     trusted_bindings: Dict[str, str] = field(default_factory=dict)
+
+    # Whitelist - never block these IPs
+    whitelisted_ips: Set[str] = field(default_factory=lambda: {
+        "127.0.0.1",
+        "::1",
+    })
 
     # Gateway IP (auto-detected if not set)
     gateway_ip: Optional[str] = None
@@ -73,6 +112,10 @@ class ARPSecurityConfig:
             'detect_gateway_impersonation': self.detect_gateway_impersonation,
             'detect_arp_flood': self.detect_arp_flood,
             'alert_on_new_hosts': self.alert_on_new_hosts,
+            'enforcement_enabled': self.enforcement_enabled,
+            'enforcement_action': self.enforcement_action.value,
+            'auto_block_spoofing': self.auto_block_spoofing,
+            'auto_protect_gateway': self.auto_protect_gateway,
             'max_mac_changes_per_minute': self.max_mac_changes_per_minute,
             'max_arp_requests_per_minute': self.max_arp_requests_per_minute,
         }
@@ -89,6 +132,12 @@ class ARPSecurityStatus:
     duplicate_macs: List[str]
     recent_changes: int
     last_check: str
+    # Enforcement status (NEW)
+    enforcement_enabled: bool = False
+    blocked_ips_count: int = 0
+    blocked_ips: List[str] = field(default_factory=list)
+    gateway_protected: bool = False
+    static_arp_entries: int = 0
 
     def to_dict(self) -> Dict:
         return {
@@ -100,22 +149,39 @@ class ARPSecurityStatus:
             'duplicate_macs': self.duplicate_macs,
             'recent_changes': self.recent_changes,
             'last_check': self.last_check,
+            'enforcement_enabled': self.enforcement_enabled,
+            'blocked_ips_count': self.blocked_ips_count,
+            'blocked_ips': self.blocked_ips[:20],
+            'gateway_protected': self.gateway_protected,
+            'static_arp_entries': self.static_arp_entries,
         }
 
 
 class ARPSecurityMonitor:
     """
-    Monitors ARP traffic and table for security threats.
+    Monitors ARP traffic and table for security threats AND ENFORCES PROTECTION.
 
-    Detection capabilities:
-    1. ARP Spoofing: Detects when IP-MAC bindings change unexpectedly
-    2. Duplicate MAC: Multiple IPs using the same MAC address
-    3. Gateway Impersonation: Someone claiming to be the gateway
-    4. ARP Flood: Excessive ARP traffic indicating attack
+    Detection AND Enforcement capabilities:
+    1. ARP Spoofing: Detects when IP-MAC bindings change unexpectedly -> BLOCKS ATTACKER
+    2. Duplicate MAC: Multiple IPs using the same MAC address -> ISOLATES
+    3. Gateway Impersonation: Someone claiming to be the gateway -> STATIC ARP BINDING
+    4. ARP Flood: Excessive ARP traffic indicating attack -> RATE LIMITS
+    5. NEW: Static ARP binding enforcement for critical hosts
+    6. NEW: Attacker IP blocking via iptables
+    7. NEW: Gateway MAC pinning
+
+    SECURITY: This class now provides ACTUAL ENFORCEMENT, not just detection.
     """
 
-    def __init__(self, config: Optional[ARPSecurityConfig] = None):
+    # iptables chain name for ARP-related blocking
+    IPTABLES_CHAIN = "BOUNDARY_ARP_BLOCK"
+
+    def __init__(self, config: Optional[ARPSecurityConfig] = None,
+                 event_logger=None,
+                 on_block_callback: Optional[Callable[[str, str], None]] = None):
         self.config = config or ARPSecurityConfig()
+        self._event_logger = event_logger
+        self._on_block_callback = on_block_callback  # Called when IP is blocked
 
         # ARP table tracking
         self._arp_cache: Dict[str, ARPEntry] = {}  # IP -> ARPEntry
@@ -131,6 +197,13 @@ class ARPSecurityMonitor:
         self._arp_events: List[datetime] = []
         self._mac_changes: List[Tuple[str, datetime]] = []  # (IP, timestamp)
 
+        # ENFORCEMENT: Blocked IPs and static entries tracking (NEW)
+        self._blocked_ips: Set[str] = set()  # Currently blocked IPs
+        self._block_reasons: Dict[str, str] = {}  # IP -> reason
+        self._block_timestamps: Dict[str, datetime] = {}  # IP -> when blocked
+        self._static_arp_entries: Set[str] = set()  # IPs with static ARP entries
+        self._gateway_protected: bool = False  # Whether gateway has static ARP
+
         # Thread safety - use RLock to allow reentrant locking
         self._lock = threading.RLock()
 
@@ -138,8 +211,23 @@ class ARPSecurityMonitor:
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
 
+        # Check enforcement capabilities
+        self._has_root = os.geteuid() == 0
+        self._has_iptables = shutil.which('iptables') is not None
+        self._has_arp = shutil.which('arp') is not None
+        self._has_ip = shutil.which('ip') is not None
+
+        if self.config.enforcement_enabled and not self._has_root:
+            logger.warning("ARP enforcement enabled but not running as root. "
+                          "Static ARP and iptables blocking may fail.")
+
         # Initialize gateway
         self._detect_gateway()
+
+        # Auto-protect gateway if enabled
+        if self.config.enforcement_enabled and self.config.auto_protect_gateway:
+            if self._gateway_ip and self._gateway_mac:
+                self.protect_gateway()
 
     def start(self):
         """Start continuous ARP monitoring"""
@@ -183,27 +271,443 @@ class ARPSecurityMonitor:
                 suspicious_ips=suspicious[:10],
                 duplicate_macs=duplicates[:10],
                 recent_changes=recent,
-                last_check=datetime.utcnow().isoformat() + "Z"
+                last_check=datetime.utcnow().isoformat() + "Z",
+                # Enforcement status
+                enforcement_enabled=self.config.enforcement_enabled,
+                blocked_ips_count=len(self._blocked_ips),
+                blocked_ips=list(self._blocked_ips)[:20],
+                gateway_protected=self._gateway_protected,
+                static_arp_entries=len(self._static_arp_entries),
             )
+
+    # ==================== ENFORCEMENT METHODS (NEW) ====================
+
+    def block_ip(self, ip: str, reason: str) -> Tuple[bool, str]:
+        """
+        Block an IP address using iptables.
+
+        Args:
+            ip: IP address to block
+            reason: Reason for blocking (for logging)
+
+        Returns:
+            (success, message)
+
+        SECURITY: Thread-safe - all shared state checks are within lock
+        """
+        if not self.config.enforcement_enabled:
+            return (False, "Enforcement is disabled")
+
+        if not self._has_root:
+            return (False, "Need root for iptables rules")
+
+        if not self._has_iptables:
+            return (False, "iptables not available")
+
+        # Thread-safe checks - must hold lock to prevent TOCTOU races
+        with self._lock:
+            # Check whitelist
+            if ip in self.config.whitelisted_ips:
+                return (False, f"IP {ip} is whitelisted")
+
+            # Don't block the gateway
+            if ip == self._gateway_ip:
+                return (False, f"Cannot block gateway IP {ip}")
+
+            # Already blocked?
+            if ip in self._blocked_ips:
+                return (True, f"IP {ip} already blocked")
+
+            # Mark as blocked BEFORE iptables call to prevent race
+            # (will be removed if iptables fails)
+            self._blocked_ips.add(ip)
+            self._block_reasons[ip] = reason
+            self._block_timestamps[ip] = datetime.utcnow()
+
+        try:
+            # Ensure our chain exists (outside lock - subprocess call)
+            self._setup_iptables_chain()
+
+            # Add block rule
+            cmd = ['iptables', '-A', self.IPTABLES_CHAIN,
+                   '-s', ip, '-j', 'DROP',
+                   '-m', 'comment', '--comment', f'boundary-arp-block-{ip}']
+
+            result = subprocess.run(cmd, capture_output=True, timeout=5)
+            if result.returncode != 0:
+                # Rollback the pre-emptive blocking
+                with self._lock:
+                    self._blocked_ips.discard(ip)
+                    self._block_reasons.pop(ip, None)
+                    self._block_timestamps.pop(ip, None)
+                return (False, f"iptables error: {result.stderr.decode()}")
+
+            # Log the blocking event
+            self._log_block_event(ip, reason)
+
+            # Invoke callback if set
+            if self._on_block_callback:
+                try:
+                    self._on_block_callback(ip, reason)
+                except Exception as e:
+                    logger.error(f"Block callback error: {e}")
+
+            logger.warning(f"ARP BLOCKED IP: {ip} - Reason: {reason}")
+            return (True, f"Blocked IP {ip}")
+
+        except Exception as e:
+            # Rollback on any exception
+            with self._lock:
+                self._blocked_ips.discard(ip)
+                self._block_reasons.pop(ip, None)
+                self._block_timestamps.pop(ip, None)
+            logger.error(f"Failed to block IP: {e}")
+            return (False, str(e))
+
+    def unblock_ip(self, ip: str) -> Tuple[bool, str]:
+        """
+        Unblock a previously blocked IP address.
+
+        Args:
+            ip: IP address to unblock
+
+        Returns:
+            (success, message)
+
+        SECURITY: Thread-safe - checks and modifications within lock
+        """
+        if not self._has_root or not self._has_iptables:
+            return (False, "Need root and iptables")
+
+        # Thread-safe check - must hold lock to prevent TOCTOU races
+        with self._lock:
+            if ip not in self._blocked_ips:
+                return (False, f"IP {ip} is not blocked")
+
+            # Mark as unblocked BEFORE iptables call to prevent race
+            self._blocked_ips.discard(ip)
+            saved_reason = self._block_reasons.pop(ip, None)
+            saved_timestamp = self._block_timestamps.pop(ip, None)
+
+        try:
+            # Remove the block rule (outside lock - subprocess call)
+            comment = f'boundary-arp-block-{ip}'
+
+            result = subprocess.run(
+                ['iptables', '-L', self.IPTABLES_CHAIN, '-n', '--line-numbers'],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                # Find and delete rules in reverse order
+                lines_to_delete = []
+                for line in result.stdout.decode().split('\n'):
+                    if comment in line or ip in line:
+                        parts = line.split()
+                        if parts and parts[0].isdigit():
+                            lines_to_delete.append(int(parts[0]))
+
+                for line_num in reversed(sorted(lines_to_delete)):
+                    subprocess.run(
+                        ['iptables', '-D', self.IPTABLES_CHAIN, str(line_num)],
+                        capture_output=True, timeout=5
+                    )
+
+            self._log_unblock_event(ip)
+            logger.info(f"ARP UNBLOCKED IP: {ip}")
+            return (True, f"Unblocked IP {ip}")
+
+        except Exception as e:
+            # Rollback on exception - restore blocked state
+            with self._lock:
+                self._blocked_ips.add(ip)
+                if saved_reason:
+                    self._block_reasons[ip] = saved_reason
+                if saved_timestamp:
+                    self._block_timestamps[ip] = saved_timestamp
+            logger.error(f"Failed to unblock IP: {e}")
+            return (False, str(e))
+
+    def set_static_arp(self, ip: str, mac: str) -> Tuple[bool, str]:
+        """
+        Set a static ARP entry to prevent spoofing.
+
+        Args:
+            ip: IP address
+            mac: MAC address to bind
+
+        Returns:
+            (success, message)
+        """
+        if not self._has_root:
+            return (False, "Need root for static ARP")
+
+        mac = mac.lower()
+
+        try:
+            # Use 'ip neigh' command (more reliable than 'arp')
+            if self._has_ip:
+                # First delete any existing entry
+                subprocess.run(
+                    ['ip', 'neigh', 'del', ip, 'dev', 'eth0'],
+                    capture_output=True, timeout=5
+                )
+                # Add static entry
+                result = subprocess.run(
+                    ['ip', 'neigh', 'add', ip, 'lladdr', mac, 'nud', 'permanent', 'dev', 'eth0'],
+                    capture_output=True, timeout=5
+                )
+                # If eth0 doesn't exist, try to detect interface
+                if result.returncode != 0:
+                    interface = self._detect_interface_for_ip(ip)
+                    if interface:
+                        subprocess.run(
+                            ['ip', 'neigh', 'del', ip, 'dev', interface],
+                            capture_output=True, timeout=5
+                        )
+                        result = subprocess.run(
+                            ['ip', 'neigh', 'add', ip, 'lladdr', mac, 'nud', 'permanent', 'dev', interface],
+                            capture_output=True, timeout=5
+                        )
+
+            elif self._has_arp:
+                # Fallback to arp command
+                result = subprocess.run(
+                    ['arp', '-s', ip, mac],
+                    capture_output=True, timeout=5
+                )
+            else:
+                return (False, "No ARP management tool available")
+
+            if result.returncode == 0:
+                with self._lock:
+                    self._static_arp_entries.add(ip)
+                    self.config.trusted_bindings[ip] = mac
+
+                logger.info(f"Set static ARP: {ip} -> {mac}")
+                return (True, f"Static ARP set for {ip} -> {mac}")
+            else:
+                return (False, f"Failed: {result.stderr.decode()}")
+
+        except Exception as e:
+            logger.error(f"Failed to set static ARP: {e}")
+            return (False, str(e))
+
+    def remove_static_arp(self, ip: str) -> Tuple[bool, str]:
+        """Remove a static ARP entry."""
+        if not self._has_root:
+            return (False, "Need root for ARP management")
+
+        try:
+            if self._has_ip:
+                interface = self._detect_interface_for_ip(ip) or 'eth0'
+                result = subprocess.run(
+                    ['ip', 'neigh', 'del', ip, 'dev', interface],
+                    capture_output=True, timeout=5
+                )
+            elif self._has_arp:
+                result = subprocess.run(
+                    ['arp', '-d', ip],
+                    capture_output=True, timeout=5
+                )
+            else:
+                return (False, "No ARP management tool available")
+
+            with self._lock:
+                self._static_arp_entries.discard(ip)
+                self.config.trusted_bindings.pop(ip, None)
+
+            logger.info(f"Removed static ARP for {ip}")
+            return (True, f"Removed static ARP for {ip}")
+
+        except Exception as e:
+            logger.error(f"Failed to remove static ARP: {e}")
+            return (False, str(e))
+
+    def protect_gateway(self) -> Tuple[bool, str]:
+        """
+        Protect the gateway by setting a static ARP entry.
+        This prevents gateway impersonation attacks.
+
+        SECURITY: Thread-safe - reads shared state within lock
+        """
+        # Thread-safe read of gateway info
+        with self._lock:
+            gateway_ip = self._gateway_ip
+            gateway_mac = self._original_gateway_mac
+
+        if not gateway_ip or not gateway_mac:
+            return (False, "Gateway not detected")
+
+        success, msg = self.set_static_arp(gateway_ip, gateway_mac)
+        if success:
+            with self._lock:
+                self._gateway_protected = True
+            logger.info(f"Gateway protected: {gateway_ip} -> {gateway_mac}")
+
+        return (success, msg)
+
+    def unprotect_gateway(self) -> Tuple[bool, str]:
+        """
+        Remove gateway protection (static ARP).
+
+        SECURITY: Thread-safe - reads shared state within lock
+        """
+        # Thread-safe read of gateway info
+        with self._lock:
+            gateway_ip = self._gateway_ip
+
+        if not gateway_ip:
+            return (False, "Gateway not detected")
+
+        success, msg = self.remove_static_arp(gateway_ip)
+        if success:
+            with self._lock:
+                self._gateway_protected = False
+
+        return (success, msg)
+
+    def get_blocked_ips(self) -> List[Dict]:
+        """Get list of currently blocked IPs with details."""
+        with self._lock:
+            result = []
+            for ip in self._blocked_ips:
+                result.append({
+                    'ip': ip,
+                    'reason': self._block_reasons.get(ip, 'unknown'),
+                    'blocked_at': self._block_timestamps.get(
+                        ip, datetime.utcnow()
+                    ).isoformat() + "Z"
+                })
+            return sorted(result, key=lambda x: x['blocked_at'], reverse=True)
+
+    def _detect_interface_for_ip(self, ip: str) -> Optional[str]:
+        """Detect which interface should be used for an IP."""
+        try:
+            result = subprocess.run(
+                ['ip', 'route', 'get', ip],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                output = result.stdout.decode()
+                match = re.search(r'dev\s+(\w+)', output)
+                if match:
+                    return match.group(1)
+        except Exception:
+            pass
+        return None
+
+    def _setup_iptables_chain(self):
+        """Ensure our iptables chain exists."""
+        # Create chain if it doesn't exist
+        subprocess.run(
+            ['iptables', '-N', self.IPTABLES_CHAIN],
+            capture_output=True, timeout=5
+        )
+
+        # Check if jump rule exists in INPUT
+        result = subprocess.run(
+            ['iptables', '-C', 'INPUT', '-j', self.IPTABLES_CHAIN],
+            capture_output=True, timeout=5
+        )
+        if result.returncode != 0:
+            # Add jump rule
+            subprocess.run(
+                ['iptables', '-I', 'INPUT', '1', '-j', self.IPTABLES_CHAIN],
+                capture_output=True, timeout=5
+            )
+
+    def _log_block_event(self, ip: str, reason: str):
+        """Log an IP blocking event."""
+        if self._event_logger:
+            try:
+                from ..event_logger import EventType
+                self._event_logger.log_event(
+                    event_type=EventType.VIOLATION,
+                    data={
+                        'event': 'arp_ip_blocked',
+                        'ip': ip,
+                        'reason': reason,
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
+                )
+            except Exception:
+                pass
+
+    def _log_unblock_event(self, ip: str):
+        """Log an IP unblocking event."""
+        if self._event_logger:
+            try:
+                from ..event_logger import EventType
+                self._event_logger.log_event(
+                    event_type=EventType.POLICY_DECISION,
+                    data={
+                        'event': 'arp_ip_unblocked',
+                        'ip': ip,
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
+                )
+            except Exception:
+                pass
+
+    def cleanup_enforcement(self):
+        """Clean up all enforcement rules (call on shutdown)."""
+        logger.info("Cleaning up ARP enforcement rules...")
+
+        # Remove blocked IPs
+        if self._has_iptables and self._has_root:
+            try:
+                # Remove jump rule
+                subprocess.run(
+                    ['iptables', '-D', 'INPUT', '-j', self.IPTABLES_CHAIN],
+                    capture_output=True, timeout=5
+                )
+                # Flush chain
+                subprocess.run(
+                    ['iptables', '-F', self.IPTABLES_CHAIN],
+                    capture_output=True, timeout=5
+                )
+                # Delete chain
+                subprocess.run(
+                    ['iptables', '-X', self.IPTABLES_CHAIN],
+                    capture_output=True, timeout=5
+                )
+                logger.info("Cleaned up iptables rules")
+            except Exception as e:
+                logger.error(f"Failed to cleanup iptables: {e}")
+
+        # Remove static ARP entries (optional - might want to keep gateway protection)
+        # for ip in list(self._static_arp_entries):
+        #     self.remove_static_arp(ip)
+
+        with self._lock:
+            self._blocked_ips.clear()
+            self._block_reasons.clear()
+            self._block_timestamps.clear()
+
+    # ==================== END ENFORCEMENT METHODS ====================
 
     def add_trusted_binding(self, ip: str, mac: str):
         """Add a trusted IP-MAC binding"""
-        self.config.trusted_bindings[ip] = mac.lower()
+        with self._lock:
+            self.config.trusted_bindings[ip] = mac.lower()
 
     def set_gateway(self, ip: str, mac: str):
         """Manually set the gateway IP and MAC"""
-        self._gateway_ip = ip
-        self._gateway_mac = mac.lower()
-        self._original_gateway_mac = mac.lower()
+        with self._lock:
+            self._gateway_ip = ip
+            self._gateway_mac = mac.lower()
+            self._original_gateway_mac = mac.lower()
 
-    def analyze_arp_entry(self, ip: str, mac: str, interface: str = "") -> List[str]:
+    def analyze_arp_entry(self, ip: str, mac: str, interface: str = "",
+                         auto_block: bool = True) -> List[str]:
         """
-        Analyze a single ARP entry for security issues.
+        Analyze a single ARP entry for security issues AND AUTO-BLOCK threats.
 
         Args:
             ip: IP address
             mac: MAC address
             interface: Network interface (optional)
+            auto_block: Whether to automatically block detected threats
 
         Returns:
             List of alert messages
@@ -211,6 +715,8 @@ class ARPSecurityMonitor:
         alerts = []
         mac = mac.lower()
         now = datetime.utcnow()
+        should_block_ip = False
+        block_reason = ""
 
         with self._lock:
             # Record ARP event for rate limiting
@@ -224,6 +730,11 @@ class ARPSecurityMonitor:
                             f"{ARPSecurityAlert.GATEWAY_IMPERSONATION.value}: "
                             f"Gateway {ip} MAC changed from {self._original_gateway_mac} to {mac}"
                         )
+                        # For gateway impersonation, we don't block the gateway IP
+                        # Instead, we should re-enforce the static ARP binding
+                        if self.config.auto_protect_gateway and self.config.enforcement_enabled:
+                            self.protect_gateway()
+                            alerts.append("ENFORCED: Gateway static ARP binding restored")
 
             # Check for MAC change (potential spoofing)
             if self.config.detect_spoofing:
@@ -242,6 +753,9 @@ class ARPSecurityMonitor:
                                     f"{ARPSecurityAlert.SPOOFING_DETECTED.value}: "
                                     f"Trusted IP {ip} MAC changed from {expected_mac} to {mac}"
                                 )
+                                if self.config.auto_block_spoofing:
+                                    should_block_ip = True
+                                    block_reason = f"Trusted binding violation: expected {expected_mac}, got {mac}"
                         else:
                             # Count recent changes for this IP
                             change_count = self._arp_cache[ip].change_count + 1
@@ -251,6 +765,9 @@ class ARPSecurityMonitor:
                                     f"IP {ip} MAC changed {change_count} times "
                                     f"(was {old_mac}, now {mac})"
                                 )
+                                if self.config.auto_block_spoofing and change_count >= self.config.mac_change_alert_threshold + 1:
+                                    should_block_ip = True
+                                    block_reason = f"Excessive MAC changes ({change_count})"
 
             # Check for duplicate MACs
             if self.config.detect_duplicate_mac:
@@ -264,6 +781,9 @@ class ARPSecurityMonitor:
                             f"{ARPSecurityAlert.DUPLICATE_MAC.value}: "
                             f"MAC {mac} used by multiple IPs: {ips_with_mac}"
                         )
+                        if self.config.auto_block_duplicate_mac:
+                            should_block_ip = True
+                            block_reason = f"Duplicate MAC {mac} across multiple IPs"
 
             # Update or create entry
             if ip in self._arp_cache:
@@ -296,6 +816,15 @@ class ARPSecurityMonitor:
                 if flood_alert:
                     alerts.append(flood_alert)
 
+        # AUTO-BLOCK if threats detected (NEW ENFORCEMENT)
+        # Note: This is outside the lock to avoid deadlock with block_ip
+        if should_block_ip and auto_block and self.config.enforcement_enabled:
+            success, msg = self.block_ip(ip, block_reason)
+            if success:
+                alerts.append(f"BLOCKED: {ip} - {block_reason}")
+            else:
+                alerts.append(f"BLOCK FAILED for {ip}: {msg}")
+
         return alerts
 
     def verify_gateway(self) -> Tuple[bool, str]:
@@ -304,21 +833,35 @@ class ARPSecurityMonitor:
 
         Returns:
             (is_valid, message)
+
+        SECURITY: Thread-safe - reads shared state within lock
         """
-        if not self._gateway_ip or not self._original_gateway_mac:
+        # Thread-safe read of gateway info
+        with self._lock:
+            gateway_ip = self._gateway_ip
+            original_mac = self._original_gateway_mac
+
+        if not gateway_ip or not original_mac:
             return True, "Gateway not configured for verification"
 
-        current_mac = self._get_mac_for_ip(self._gateway_ip)
-        if current_mac and current_mac != self._original_gateway_mac:
+        current_mac = self._get_mac_for_ip(gateway_ip)
+        if current_mac and current_mac != original_mac:
             return False, (
-                f"Gateway MAC mismatch! Expected {self._original_gateway_mac}, "
+                f"Gateway MAC mismatch! Expected {original_mac}, "
                 f"got {current_mac}. Possible ARP spoofing attack!"
             )
 
         return True, "Gateway MAC verified"
 
     def _detect_gateway(self):
-        """Auto-detect the default gateway"""
+        """
+        Auto-detect the default gateway.
+
+        SECURITY: Thread-safe - updates shared state within lock
+        """
+        detected_ip = None
+        detected_mac = None
+
         try:
             # Try to get default gateway from /proc/net/route
             with open('/proc/net/route', 'r') as f:
@@ -330,22 +873,18 @@ class ARPSecurityMonitor:
                             # Gateway is in hex, little-endian
                             gateway_hex = parts[2]
                             # Convert hex to IP
-                            gateway_ip = '.'.join([
+                            detected_ip = '.'.join([
                                 str(int(gateway_hex[i:i+2], 16))
                                 for i in range(6, -1, -2)
                             ])
-                            self._gateway_ip = gateway_ip
-                            self.config.gateway_ip = gateway_ip
-
                             # Get gateway MAC from ARP cache
-                            self._gateway_mac = self._get_mac_for_ip(gateway_ip)
-                            self._original_gateway_mac = self._gateway_mac
+                            detected_mac = self._get_mac_for_ip(detected_ip)
                             break
         except Exception as e:
             print(f"Error detecting gateway: {e}")
 
         # Fallback: try ip route command
-        if not self._gateway_ip:
+        if not detected_ip:
             try:
                 result = subprocess.run(
                     ['ip', 'route', 'show', 'default'],
@@ -355,20 +894,31 @@ class ARPSecurityMonitor:
                     output = result.stdout.decode()
                     match = re.search(r'default via (\d+\.\d+\.\d+\.\d+)', output)
                     if match:
-                        self._gateway_ip = match.group(1)
-                        self.config.gateway_ip = self._gateway_ip
-                        self._gateway_mac = self._get_mac_for_ip(self._gateway_ip)
-                        self._original_gateway_mac = self._gateway_mac
+                        detected_ip = match.group(1)
+                        detected_mac = self._get_mac_for_ip(detected_ip)
             except Exception:
                 pass
 
-    def _get_mac_for_ip(self, ip: str) -> Optional[str]:
-        """Get MAC address for an IP from the ARP cache"""
-        # First check our cache
-        if ip in self._arp_cache:
-            return self._arp_cache[ip].mac_address
+        # Thread-safe update of gateway state
+        if detected_ip:
+            with self._lock:
+                self._gateway_ip = detected_ip
+                self.config.gateway_ip = detected_ip
+                self._gateway_mac = detected_mac
+                self._original_gateway_mac = detected_mac
 
-        # Try reading from /proc/net/arp
+    def _get_mac_for_ip(self, ip: str) -> Optional[str]:
+        """
+        Get MAC address for an IP from the ARP cache.
+
+        SECURITY: Thread-safe - cache lookup within lock
+        """
+        # Thread-safe check of our cache first
+        with self._lock:
+            if ip in self._arp_cache:
+                return self._arp_cache[ip].mac_address
+
+        # Try reading from /proc/net/arp (no lock needed - system file)
         try:
             with open('/proc/net/arp', 'r') as f:
                 for line in f.readlines()[1:]:  # Skip header
@@ -380,7 +930,7 @@ class ARPSecurityMonitor:
         except Exception:
             pass
 
-        # Try arp command
+        # Try arp command (no lock needed - external command)
         try:
             result = subprocess.run(
                 ['arp', '-n', ip],

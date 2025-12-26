@@ -7,18 +7,27 @@ Commands:
     revoke      Revoke an existing token
     list        List all tokens
     info        Show token info
-    export      Export token to file
     test        Test a token
+    decrypt     Decrypt an encrypted token file
+    env-warning Show security warnings about environment variables
+
+SECURITY FEATURES:
+    - Encrypted token file output (--encrypt flag)
+    - Secure file permissions (0o600)
+    - Security warnings for environment variable usage
 
 Examples:
-    # Create a readonly token
-    authctl create --name "monitoring-service" --capabilities readonly
+    # Create a readonly token with encrypted output (RECOMMENDED)
+    authctl create --name "monitoring-service" --capabilities readonly --encrypt -o token.enc
 
     # Create an operator token that expires in 30 days
     authctl create --name "operator-1" --capabilities operator --expires 30
 
     # Create admin token
     authctl create --name "admin-token" --capabilities admin
+
+    # Decrypt a token file
+    authctl decrypt ./config/bootstrap_token.enc
 
     # List all tokens
     authctl list
@@ -28,6 +37,9 @@ Examples:
 
     # Test a token
     authctl test bd_xxxxx...
+
+    # Show environment variable security warnings
+    authctl env-warning
 """
 
 import argparse
@@ -95,28 +107,71 @@ def cmd_create(args, manager: TokenManager):
         print(f"  Name:         {token_obj.name}")
         print(f"  Capabilities: {format_capabilities([c.name for c in token_obj.capabilities])}")
         print(f"  Expires:      {format_datetime(token_obj.expires_at.isoformat() if token_obj.expires_at else None)}")
-        print(f"\n  Token (SAVE THIS - shown only once!):")
-        print(f"\n    {raw_token}")
-        print("\n" + "=" * 60)
 
         # Optionally save to file
         if args.output:
-            with open(args.output, 'w') as f:
-                f.write(f"# Boundary Daemon API Token\n")
-                f.write(f"# Name: {args.name}\n")
-                f.write(f"# Created: {datetime.utcnow().isoformat()}\n")
-                f.write(f"# Capabilities: {', '.join([c.name for c in token_obj.capabilities])}\n")
-                f.write(f"{raw_token}\n")
-            os.chmod(args.output, 0o600)
-            print(f"\n  Token saved to: {args.output}")
+            if getattr(args, 'encrypt', False):
+                # Encrypted output (RECOMMENDED)
+                try:
+                    from daemon.auth.secure_token_storage import SecureTokenStorage
+                    storage = SecureTokenStorage()
+                    success, msg = storage.write_encrypted_token_file(
+                        file_path=args.output,
+                        token=raw_token,
+                        name=args.name,
+                        capabilities=', '.join([c.name for c in token_obj.capabilities]),
+                        expires=format_datetime(token_obj.expires_at.isoformat() if token_obj.expires_at else None),
+                    )
+                    if success:
+                        print(f"\n  Token saved (ENCRYPTED): {args.output}")
+                        print(f"  To decrypt: authctl decrypt {args.output}")
+                    else:
+                        print(f"\n  Encryption failed: {msg}", file=sys.stderr)
+                        print(f"  Falling back to plaintext with warning...")
+                        _write_plaintext_token(args.output, raw_token, args.name, token_obj)
+                except ImportError:
+                    print("\n  WARNING: Encryption not available (cryptography module missing)")
+                    print("  Falling back to plaintext with warning...")
+                    _write_plaintext_token(args.output, raw_token, args.name, token_obj)
+            else:
+                # Plaintext output with security warning
+                _write_plaintext_token(args.output, raw_token, args.name, token_obj)
+                print("\n  SECURITY TIP: Use --encrypt for encrypted token storage")
+        else:
+            # No output file - show token on screen
+            print(f"\n  Token (SAVE THIS - shown only once!):")
+            print(f"\n    {raw_token}")
 
-        print("\n  Set environment variable:")
-        print(f"    export BOUNDARY_API_TOKEN='{raw_token}'")
+        print("\n" + "=" * 60)
+
+        # Show environment variable option with security warning
+        print("\n  To use with API:")
+        print(f"    boundaryctl --token-file {args.output or 'TOKEN_FILE'} status")
+        print()
+        print("  Environment variable (LESS SECURE - see 'authctl env-warning'):")
+        print(f"    export BOUNDARY_API_TOKEN='{raw_token[:20]}...'")
         print()
 
     except Exception as e:
         print(f"Error creating token: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _write_plaintext_token(output_path: str, token: str, name: str, token_obj):
+    """Write token to plaintext file with security warnings."""
+    with open(output_path, 'w') as f:
+        f.write("# SECURITY WARNING: PLAINTEXT TOKEN FILE\n")
+        f.write("# Consider using --encrypt for encrypted storage\n")
+        f.write("#\n")
+        f.write(f"# Boundary Daemon API Token\n")
+        f.write(f"# Name: {name}\n")
+        f.write(f"# Created: {datetime.utcnow().isoformat()}\n")
+        f.write(f"# Capabilities: {', '.join([c.name for c in token_obj.capabilities])}\n")
+        f.write(f"#\n")
+        f.write(f"{token}\n")
+    os.chmod(output_path, 0o600)
+    print(f"\n  Token saved (PLAINTEXT): {output_path}")
+    print("  WARNING: Token is stored in plaintext. Consider using --encrypt.")
 
 
 def cmd_revoke(args, manager: TokenManager):
@@ -239,6 +294,115 @@ def cmd_capabilities(args, manager: TokenManager):
     print()
 
 
+def cmd_decrypt(args, manager: TokenManager):
+    """Decrypt an encrypted token file."""
+    try:
+        from daemon.auth.secure_token_storage import SecureTokenStorage
+
+        storage = SecureTokenStorage()
+        token, metadata, message = storage.read_encrypted_token_file(args.file)
+
+        if token:
+            print("\n" + "=" * 60)
+            print("  DECRYPTED TOKEN")
+            print("=" * 60)
+
+            if metadata:
+                if 'name' in metadata:
+                    print(f"\n  Name:         {metadata.get('name', 'N/A')}")
+                if 'capabilities' in metadata:
+                    print(f"  Capabilities: {metadata.get('capabilities', 'N/A')}")
+                if 'expires' in metadata:
+                    print(f"  Expires:      {metadata.get('expires', 'N/A')}")
+                if 'created' in metadata:
+                    print(f"  Created:      {metadata.get('created', 'N/A')}")
+
+            print(f"\n  Token:")
+            print(f"\n    {token}")
+            print("\n" + "=" * 60)
+
+            # Security warning
+            if 'WARNING' in message:
+                print(f"\n  {message}")
+
+            # Check file permissions
+            is_secure, perm_msg = storage.check_file_permissions(args.file)
+            if not is_secure:
+                print(f"\n  {perm_msg}")
+
+            print()
+        else:
+            print(f"\nFailed to decrypt: {message}", file=sys.stderr)
+            sys.exit(1)
+
+    except ImportError:
+        print("Error: secure_token_storage module not available", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error decrypting file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_env_warning(args, manager: TokenManager):
+    """Show security warnings about environment variable token storage."""
+    try:
+        from daemon.auth.secure_token_storage import SecureTokenStorage
+        SecureTokenStorage.print_env_var_warning()
+    except ImportError:
+        # Fallback if module not available
+        print("""
+================================================================================
+  SECURITY WARNING: Environment Variable Token Storage
+================================================================================
+
+  Storing tokens in environment variables (BOUNDARY_API_TOKEN) has risks:
+
+  1. Process listing: Other users may see via 'ps auxe' or /proc
+  2. Log leakage: May appear in shell history, debug logs, crash dumps
+  3. Child process inheritance: Tokens passed to all child processes
+  4. Memory persistence: Stays in process memory until exit
+
+  SAFER ALTERNATIVES:
+
+  1. Token file (encrypted):
+     authctl create --name "my-token" --encrypt --output token.enc
+     boundaryctl --token-file token.enc status
+
+  2. Token file (restricted permissions):
+     chmod 600 ~/.boundary_token
+     boundaryctl --token-file ~/.boundary_token status
+
+  3. For production:
+     - Use a secrets manager (HashiCorp Vault, AWS Secrets Manager, etc.)
+     - Rotate tokens regularly
+     - Use short-lived tokens where possible
+
+================================================================================
+""")
+
+
+def cmd_check_permissions(args, manager: TokenManager):
+    """Check security of a token file."""
+    try:
+        from daemon.auth.secure_token_storage import SecureTokenStorage
+
+        storage = SecureTokenStorage()
+        is_secure, message = storage.check_file_permissions(args.file)
+
+        if is_secure:
+            print(f"\n  {message}")
+        else:
+            print(f"\n  {message}", file=sys.stderr)
+            sys.exit(1)
+
+    except ImportError:
+        print("Error: secure_token_storage module not available", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error checking file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Token Management CLI for Boundary Daemon API",
@@ -273,6 +437,11 @@ def main():
         '--output', '-o',
         help='Save token to file',
     )
+    create_parser.add_argument(
+        '--encrypt', '-E',
+        action='store_true',
+        help='Encrypt the output token file (RECOMMENDED)',
+    )
 
     # Revoke command
     revoke_parser = subparsers.add_parser('revoke', help='Revoke an API token')
@@ -292,6 +461,17 @@ def main():
 
     # Capabilities command
     caps_parser = subparsers.add_parser('capabilities', help='List available capabilities')
+
+    # Decrypt command
+    decrypt_parser = subparsers.add_parser('decrypt', help='Decrypt an encrypted token file')
+    decrypt_parser.add_argument('file', help='Path to encrypted token file')
+
+    # Environment variable warning command
+    env_parser = subparsers.add_parser('env-warning', help='Show security warnings about env vars')
+
+    # Check permissions command
+    check_parser = subparsers.add_parser('check-permissions', help='Check token file security')
+    check_parser.add_argument('file', help='Path to token file')
 
     args = parser.parse_args()
 
@@ -315,6 +495,12 @@ def main():
         cmd_test(args, manager)
     elif args.command == 'capabilities':
         cmd_capabilities(args, manager)
+    elif args.command == 'decrypt':
+        cmd_decrypt(args, manager)
+    elif args.command == 'env-warning':
+        cmd_env_warning(args, manager)
+    elif args.command == 'check-permissions':
+        cmd_check_permissions(args, manager)
     else:
         parser.print_help()
         sys.exit(1)

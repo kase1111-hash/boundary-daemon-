@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""
+Boundary Daemon Watchdog - External Process Monitor
+
+This script runs as a separate process to monitor the boundary daemon.
+It implements the hardened watchdog system that addresses Critical Finding #6:
+"External Watchdog Can Be Killed"
+
+SECURITY FEATURES:
+1. Cryptographic heartbeat verification (HMAC-SHA256)
+2. Challenge-response authentication with the daemon
+3. Process hardening (prctl protections)
+4. Systemd watchdog integration
+5. Hardware watchdog support
+6. Multi-watchdog redundancy capability
+7. Automatic lockdown on daemon failure
+
+USAGE:
+    # Run as primary watchdog
+    ./boundary-watchdog
+
+    # Run as secondary watchdog
+    ./boundary-watchdog --id secondary --peer /var/run/boundary-daemon/watchdog_primary.sock
+
+    # With systemd
+    systemctl start boundary-watchdog
+
+SYSTEMD UNIT EXAMPLE (/etc/systemd/system/boundary-watchdog.service):
+
+    [Unit]
+    Description=Boundary Daemon Watchdog
+    After=boundary-daemon.service
+    BindsTo=boundary-daemon.service
+
+    [Service]
+    Type=notify
+    ExecStart=/usr/bin/boundary-watchdog
+    WatchdogSec=30
+    Restart=always
+    RestartSec=1
+    User=root
+
+    [Install]
+    WantedBy=multi-user.target
+"""
+
+import os
+import sys
+import time
+import signal
+import argparse
+import logging
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from daemon.watchdog.hardened_watchdog import (
+    HardenedWatchdog,
+    generate_shared_secret,
+    WatchdogState,
+    ProcessHardening,
+)
+
+
+def setup_logging(verbose: bool = False):
+    """Setup logging configuration."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+        ]
+    )
+
+
+def on_lockdown(reason: str):
+    """Callback when lockdown is triggered."""
+    print(f"\n{'='*70}")
+    print("  WATCHDOG LOCKDOWN TRIGGERED")
+    print(f"{'='*70}")
+    print(f"  Reason: {reason}")
+    print(f"  Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*70}\n")
+
+    # Additional lockdown actions could go here:
+    # - Send alert to monitoring system
+    # - Execute custom lockdown script
+    # - etc.
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Boundary Daemon Watchdog - External Process Monitor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+
+    parser.add_argument(
+        '--id',
+        default='primary',
+        help='Unique identifier for this watchdog instance (default: primary)',
+    )
+    parser.add_argument(
+        '--daemon-socket',
+        default='/var/run/boundary-daemon/daemon.sock',
+        help='Path to daemon watchdog socket',
+    )
+    parser.add_argument(
+        '--peer',
+        action='append',
+        dest='peers',
+        help='Socket path of peer watchdog to monitor (can be specified multiple times)',
+    )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging',
+    )
+    parser.add_argument(
+        '--no-hardware-watchdog',
+        action='store_true',
+        help='Disable hardware watchdog integration',
+    )
+
+    args = parser.parse_args()
+
+    setup_logging(args.verbose)
+    logger = logging.getLogger('boundary-watchdog')
+
+    print(f"""
+{'='*70}
+  BOUNDARY DAEMON WATCHDOG
+{'='*70}
+  ID:            {args.id}
+  Primary:       {args.id == 'primary'}
+  Daemon Socket: {args.daemon_socket}
+  Peers:         {len(args.peers) if args.peers else 0}
+{'='*70}
+""")
+
+    # Generate shared secret (must match daemon's secret)
+    shared_secret = generate_shared_secret()
+
+    # Check if daemon socket directory exists
+    daemon_socket_dir = os.path.dirname(args.daemon_socket)
+    if not os.path.exists(daemon_socket_dir):
+        print(f"Warning: Daemon socket directory does not exist: {daemon_socket_dir}")
+        print("Creating directory...")
+        try:
+            os.makedirs(daemon_socket_dir, mode=0o700, exist_ok=True)
+        except Exception as e:
+            print(f"Error: Cannot create directory: {e}")
+            sys.exit(1)
+
+    # Create watchdog
+    watchdog = HardenedWatchdog(
+        watchdog_id=args.id,
+        shared_secret=shared_secret,
+        daemon_socket=args.daemon_socket,
+        is_primary=(args.id == 'primary'),
+        on_lockdown=on_lockdown,
+    )
+
+    # Add peer watchdogs
+    if args.peers:
+        for i, peer_socket in enumerate(args.peers):
+            watchdog.add_peer(f"peer_{i}", peer_socket)
+            print(f"Added peer watchdog: {peer_socket}")
+
+    # Disable hardware watchdog if requested
+    if args.no_hardware_watchdog:
+        watchdog.hardware._enabled = False
+        print("Hardware watchdog disabled by user request")
+
+    # Start watchdog
+    print("\nStarting watchdog...")
+    watchdog.start()
+
+    # Status reporting loop
+    try:
+        while True:
+            time.sleep(10)
+            status = watchdog.get_status()
+
+            # Print status update
+            state_color = {
+                'running': '\033[92m',     # Green
+                'degraded': '\033[93m',    # Yellow
+                'critical': '\033[91m',    # Red
+                'lockdown': '\033[91m',    # Red
+            }.get(status['state'], '')
+
+            reset_color = '\033[0m'
+            print(f"[{time.strftime('%H:%M:%S')}] State: {state_color}{status['state']}{reset_color} | "
+                  f"Daemon: {'OK' if status['daemon_failures'] == 0 else f'{status[\"daemon_failures\"]} failures'} | "
+                  f"Peers: {sum(1 for p in status['peers'].values() if p['alive'])}/{len(status['peers'])}")
+
+            # Check for critical state
+            if status['state'] == 'lockdown':
+                print("\nWatchdog is in LOCKDOWN state. Manual intervention required.")
+                break
+
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user...")
+
+    # Stop watchdog
+    print("Stopping watchdog...")
+    watchdog.stop()
+    print("Watchdog stopped.")
+
+
+if __name__ == '__main__':
+    main()

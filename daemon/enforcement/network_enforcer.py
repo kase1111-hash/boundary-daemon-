@@ -14,6 +14,9 @@ Security Notes:
 
 IMPORTANT: This addresses SECURITY_AUDIT.md Critical Finding #2:
 "No Network Enforcement Whatsoever"
+
+SECURITY: Protection persistence ensures rules survive daemon restarts.
+This addresses: "Cleanup on Shutdown Removes All Protection"
 """
 
 import os
@@ -80,13 +83,14 @@ class NetworkEnforcer:
     NFT_TABLE = "boundary_daemon"
     NFT_CHAIN = "output_filter"
 
-    def __init__(self, daemon=None, event_logger=None):
+    def __init__(self, daemon=None, event_logger=None, persistence_manager=None):
         """
         Initialize the NetworkEnforcer.
 
         Args:
             daemon: Reference to BoundaryDaemon for callbacks
             event_logger: EventLogger for audit logging
+            persistence_manager: ProtectionPersistenceManager for surviving restarts
         """
         self.daemon = daemon
         self.event_logger = event_logger
@@ -96,6 +100,9 @@ class NetworkEnforcer:
         self._current_mode = None
         self._vpn_interfaces: List[str] = ['tun0', 'wg0', 'ppp0']  # Common VPN interfaces
 
+        # SECURITY: Protection persistence (survives daemon restarts)
+        self._persistence_manager = persistence_manager
+
         # Verify we have root privileges
         self._has_root = os.geteuid() == 0
 
@@ -103,6 +110,44 @@ class NetworkEnforcer:
             logger.warning("No firewall backend available. Network enforcement disabled.")
         elif not self._has_root:
             logger.warning("Not running as root. Network enforcement requires CAP_NET_ADMIN.")
+
+    def set_persistence_manager(self, manager):
+        """Set the protection persistence manager."""
+        self._persistence_manager = manager
+
+    def check_and_reapply_persisted_mode(self) -> Optional[str]:
+        """
+        Check if there's a persisted mode and re-apply it.
+
+        Called on daemon startup to restore protections that should survive restarts.
+
+        Returns:
+            The mode name that was re-applied, or None if no persistence.
+        """
+        if not self._persistence_manager:
+            return None
+
+        try:
+            from .protection_persistence import ProtectionType
+            protection = self._persistence_manager.should_reapply_protection(
+                ProtectionType.NETWORK_FIREWALL
+            )
+            if protection:
+                logger.info(f"Re-applying persisted network protection: {protection.mode}")
+                from ..policy_engine import BoundaryMode
+                mode = BoundaryMode[protection.mode]
+                success, msg = self.enforce_mode(
+                    mode,
+                    reason="re-applied from persistence"
+                )
+                if success:
+                    return protection.mode
+                else:
+                    logger.error(f"Failed to re-apply persisted mode: {msg}")
+        except Exception as e:
+            logger.error(f"Error re-applying persisted mode: {e}")
+
+        return None
 
     def _detect_backend(self) -> FirewallBackend:
         """Detect available firewall backend (prefer nftables over iptables)"""
@@ -150,13 +195,23 @@ class NetworkEnforcer:
             self._vpn_interfaces = interfaces.copy()
             logger.info(f"VPN interfaces set to: {interfaces}")
 
-    def enforce_mode(self, mode, reason: str = "") -> Tuple[bool, str]:
+    def enforce_mode(
+        self,
+        mode,
+        reason: str = "",
+        persist: bool = True,
+        sticky: bool = False,
+        emergency: bool = False,
+    ) -> Tuple[bool, str]:
         """
         Apply network rules for the given boundary mode.
 
         Args:
             mode: BoundaryMode to enforce
             reason: Reason for the mode change
+            persist: Whether to persist this protection (survives restarts)
+            sticky: If True, protection requires extra auth to remove
+            emergency: If True, protection was applied during emergency
 
         Returns:
             (success, message)
@@ -191,6 +246,20 @@ class NetworkEnforcer:
 
                 self._current_mode = mode
                 self._rules_applied = True
+
+                # SECURITY: Persist protection so it survives daemon restarts
+                if persist and self._persistence_manager and mode != BoundaryMode.OPEN:
+                    try:
+                        from .protection_persistence import ProtectionType, PersistenceReason
+                        self._persistence_manager.persist_protection(
+                            protection_type=ProtectionType.NETWORK_FIREWALL,
+                            mode=mode.name,
+                            reason=PersistenceReason.MODE_CHANGE,
+                            sticky=sticky,
+                            emergency=emergency,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to persist protection: {e}")
 
                 # Log the enforcement action
                 self._log_enforcement(
@@ -501,8 +570,71 @@ class NetworkEnforcer:
         except Exception as e:
             return f"Error getting rules: {e}"
 
-    def cleanup(self):
-        """Remove all boundary firewall rules (called on daemon shutdown)"""
+    def cleanup(
+        self,
+        token: Optional[str] = None,
+        force: bool = False,
+        graceful: bool = True,
+    ) -> Tuple[bool, str]:
+        """
+        Remove all boundary firewall rules (called on daemon shutdown).
+
+        SECURITY: By default, protections are NOT removed on shutdown to prevent
+        gaps in security. This addresses "Cleanup on Shutdown Removes All Protection".
+
+        Args:
+            token: Authentication token (required for explicit cleanup)
+            force: Force cleanup even for sticky/emergency protections
+            graceful: Whether this is a graceful shutdown
+
+        Returns:
+            (success, message)
+        """
+        if not self.is_available:
+            return True, "Network enforcement not available"
+
+        # SECURITY: Check with persistence manager before cleanup
+        if self._persistence_manager:
+            try:
+                from .protection_persistence import ProtectionType
+                allowed, msg = self._persistence_manager.request_cleanup(
+                    protection_type=ProtectionType.NETWORK_FIREWALL,
+                    token=token,
+                    force=force,
+                    reason="daemon cleanup" if graceful else "daemon crash cleanup",
+                )
+                if not allowed:
+                    logger.info(f"Network cleanup blocked by persistence: {msg}")
+                    return False, f"Cleanup blocked: {msg}"
+            except Exception as e:
+                logger.warning(f"Persistence check failed: {e}")
+                # If persistence check fails, default to NOT cleaning up (fail-safe)
+                if not force:
+                    return False, "Cleanup blocked: persistence check failed"
+
+        with self._lock:
+            try:
+                if self._backend == FirewallBackend.IPTABLES:
+                    self._iptables_flush_boundary_chain()
+                else:
+                    self._nftables_flush_table()
+
+                self._rules_applied = False
+                self._current_mode = None
+                logger.info("Network enforcement rules cleaned up")
+                return True, "Network rules cleaned up"
+
+            except Exception as e:
+                logger.error(f"Error cleaning up network rules: {e}")
+                return False, f"Cleanup failed: {e}"
+
+    def cleanup_legacy(self):
+        """
+        Legacy cleanup that always removes rules (INSECURE).
+
+        WARNING: This method is deprecated and should only be used for
+        testing or when explicitly requested by an administrator.
+        """
         if not self.is_available:
             return
 
@@ -515,7 +647,7 @@ class NetworkEnforcer:
 
                 self._rules_applied = False
                 self._current_mode = None
-                logger.info("Network enforcement rules cleaned up")
+                logger.warning("Network enforcement rules cleaned up (LEGACY MODE)")
 
             except Exception as e:
                 logger.error(f"Error cleaning up network rules: {e}")
@@ -524,6 +656,10 @@ class NetworkEnforcer:
         """
         Emergency lockdown - block all network traffic immediately.
         Called when a critical security violation is detected.
+
+        SECURITY: Emergency lockdowns are persisted as sticky + emergency,
+        requiring admin authentication to remove. This ensures protection
+        remains even if an attacker crashes the daemon.
 
         Returns:
             True if lockdown was successful
@@ -534,7 +670,14 @@ class NetworkEnforcer:
 
         try:
             from ..policy_engine import BoundaryMode
-            self.enforce_mode(BoundaryMode.LOCKDOWN, reason="Emergency lockdown triggered")
+            # SECURITY: Emergency lockdowns are sticky and hard to remove
+            self.enforce_mode(
+                BoundaryMode.LOCKDOWN,
+                reason="Emergency lockdown triggered",
+                persist=True,
+                sticky=True,
+                emergency=True,
+            )
             return True
         except Exception as e:
             logger.critical(f"Emergency lockdown failed: {e}")
