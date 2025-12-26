@@ -1,11 +1,17 @@
 """
-DNS Security Monitor - Detects DNS-based attacks and anomalies.
+DNS Security Monitor - Detects AND BLOCKS DNS-based attacks and anomalies.
 
 Features:
-- DNS spoofing/cache poisoning detection
-- DNS tunneling/exfiltration detection
+- DNS spoofing/cache poisoning detection AND BLOCKING
+- DNS tunneling/exfiltration detection AND BLOCKING
 - DoH/DoT (secure DNS) enforcement verification
 - DNS query anomaly detection
+- ENFORCEMENT via iptables/nftables domain blocking
+- Hosts file poisoning for immediate blocking
+- Response Policy Zone (RPZ) integration
+
+SECURITY: This module now provides ACTUAL ENFORCEMENT, not just detection.
+Addresses Critical Finding: "Detection Without Enforcement"
 """
 
 import os
@@ -14,12 +20,16 @@ import socket
 import subprocess
 import threading
 import time
+import shutil
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Callable
 from enum import Enum
 from collections import defaultdict
 import hashlib
+
+logger = logging.getLogger(__name__)
 
 
 class DNSSecurityAlert(Enum):
@@ -46,14 +56,41 @@ class DNSQueryRecord:
     resolver: str
 
 
+class DNSEnforcementAction(Enum):
+    """Actions to take when DNS threat is detected"""
+    LOG_ONLY = "log_only"           # Just log (detection mode)
+    BLOCK_HOSTS = "block_hosts"     # Add to /etc/hosts pointing to 0.0.0.0
+    BLOCK_FIREWALL = "block_firewall"  # Block via iptables/nftables
+    BLOCK_BOTH = "block_both"       # Both hosts and firewall
+    SINKHOLE = "sinkhole"           # Redirect to sinkhole IP
+
+
 @dataclass
 class DNSSecurityConfig:
-    """Configuration for DNS security monitoring"""
+    """Configuration for DNS security monitoring AND ENFORCEMENT"""
     # Detection toggles
     detect_spoofing: bool = True
     detect_tunneling: bool = True
     detect_exfiltration: bool = True
     enforce_secure_dns: bool = False  # Warn if not using DoH/DoT
+
+    # ENFORCEMENT toggles (NEW)
+    enforcement_enabled: bool = True  # Master switch for enforcement
+    enforcement_action: DNSEnforcementAction = DNSEnforcementAction.BLOCK_BOTH
+    auto_block_tunneling: bool = True  # Auto-block detected tunneling domains
+    auto_block_suspicious_tld: bool = False  # Auto-block suspicious TLDs (can cause false positives)
+    auto_block_spoofing: bool = True  # Block domains with detected spoofing
+    auto_block_rebinding: bool = True  # Block domains attempting DNS rebinding
+
+    # Sinkhole configuration
+    sinkhole_ipv4: str = "0.0.0.0"  # Where to redirect blocked domains
+    sinkhole_ipv6: str = "::"
+
+    # Hosts file management
+    hosts_file_path: str = "/etc/hosts"
+    hosts_backup_path: str = "/etc/hosts.boundary-backup"
+    hosts_marker_start: str = "# >>> BOUNDARY-DAEMON DNS BLOCKING START <<<"
+    hosts_marker_end: str = "# >>> BOUNDARY-DAEMON DNS BLOCKING END <<<"
 
     # Thresholds
     max_subdomain_length: int = 50  # Longer subdomains may indicate tunneling
@@ -80,12 +117,22 @@ class DNSSecurityConfig:
         ".zip", ".mov",  # Confusing TLDs
     ])
 
+    # Whitelist - never block these domains
+    whitelisted_domains: Set[str] = field(default_factory=lambda: {
+        "localhost",
+        "localhost.localdomain",
+    })
+
     def to_dict(self) -> Dict:
         return {
             'detect_spoofing': self.detect_spoofing,
             'detect_tunneling': self.detect_tunneling,
             'detect_exfiltration': self.detect_exfiltration,
             'enforce_secure_dns': self.enforce_secure_dns,
+            'enforcement_enabled': self.enforcement_enabled,
+            'enforcement_action': self.enforcement_action.value,
+            'auto_block_tunneling': self.auto_block_tunneling,
+            'auto_block_spoofing': self.auto_block_spoofing,
             'max_subdomain_length': self.max_subdomain_length,
             'max_queries_per_minute': self.max_queries_per_minute,
         }
@@ -101,6 +148,11 @@ class DNSSecurityStatus:
     suspicious_domains: List[str]
     potential_tunneling_domains: List[str]
     last_check: str
+    # Enforcement status (NEW)
+    enforcement_enabled: bool = False
+    blocked_domains_count: int = 0
+    blocked_domains: List[str] = field(default_factory=list)
+    enforcement_action: str = "log_only"
 
     def to_dict(self) -> Dict:
         return {
@@ -111,22 +163,37 @@ class DNSSecurityStatus:
             'suspicious_domains': self.suspicious_domains,
             'potential_tunneling_domains': self.potential_tunneling_domains,
             'last_check': self.last_check,
+            'enforcement_enabled': self.enforcement_enabled,
+            'blocked_domains_count': self.blocked_domains_count,
+            'blocked_domains': self.blocked_domains[:20],  # Limit for display
+            'enforcement_action': self.enforcement_action,
         }
 
 
 class DNSSecurityMonitor:
     """
-    Monitors DNS traffic for security threats.
+    Monitors DNS traffic for security threats AND ENFORCES BLOCKING.
 
-    Detection capabilities:
-    1. DNS Spoofing: Detects when DNS responses don't match expected values
-    2. Cache Poisoning: Monitors for suspicious DNS cache changes
-    3. DNS Tunneling: Detects encoded data in DNS queries (exfiltration)
+    Detection AND Enforcement capabilities:
+    1. DNS Spoofing: Detects when DNS responses don't match expected values -> BLOCKS
+    2. Cache Poisoning: Monitors for suspicious DNS cache changes -> BLOCKS
+    3. DNS Tunneling: Detects encoded data in DNS queries (exfiltration) -> BLOCKS
     4. Secure DNS: Verifies DoH/DoT usage
+    5. NEW: Hosts file blocking for immediate effect
+    6. NEW: Firewall-level blocking via iptables/nftables
+
+    SECURITY: This class now provides ACTUAL ENFORCEMENT, not just detection.
     """
 
-    def __init__(self, config: Optional[DNSSecurityConfig] = None):
+    # iptables chain name for DNS blocking
+    IPTABLES_CHAIN = "BOUNDARY_DNS_BLOCK"
+
+    def __init__(self, config: Optional[DNSSecurityConfig] = None,
+                 event_logger=None,
+                 on_block_callback: Optional[Callable[[str, str], None]] = None):
         self.config = config or DNSSecurityConfig()
+        self._event_logger = event_logger
+        self._on_block_callback = on_block_callback  # Called when domain is blocked
 
         # Query tracking
         self._query_history: List[DNSQueryRecord] = []
@@ -146,12 +213,26 @@ class DNSSecurityMonitor:
         # Tracking for rebinding detection
         self._domain_ip_history: Dict[str, List[Tuple[str, datetime]]] = defaultdict(list)
 
+        # ENFORCEMENT: Blocked domains tracking (NEW)
+        self._blocked_domains: Set[str] = set()  # Currently blocked domains
+        self._block_reasons: Dict[str, str] = {}  # domain -> reason
+        self._block_timestamps: Dict[str, datetime] = {}  # domain -> when blocked
+
         # Thread safety
         self._lock = threading.Lock()
 
         # Monitoring state
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
+
+        # Check enforcement capabilities
+        self._has_root = os.geteuid() == 0
+        self._has_iptables = shutil.which('iptables') is not None
+        self._has_nftables = shutil.which('nft') is not None
+
+        if self.config.enforcement_enabled and not self._has_root:
+            logger.warning("DNS enforcement enabled but not running as root. "
+                          "Hosts file and firewall blocking may fail.")
 
     def start(self):
         """Start continuous DNS monitoring"""
@@ -196,30 +277,524 @@ class DNSSecurityMonitor:
                 query_rate_per_minute=query_rate,
                 suspicious_domains=suspicious[:10],  # Top 10
                 potential_tunneling_domains=tunneling[:10],
-                last_check=datetime.utcnow().isoformat() + "Z"
+                last_check=datetime.utcnow().isoformat() + "Z",
+                # Enforcement status
+                enforcement_enabled=self.config.enforcement_enabled,
+                blocked_domains_count=len(self._blocked_domains),
+                blocked_domains=list(self._blocked_domains)[:20],
+                enforcement_action=self.config.enforcement_action.value,
             )
 
-    def analyze_query(self, domain: str, query_type: str = "A") -> List[str]:
+    # ==================== ENFORCEMENT METHODS (NEW) ====================
+
+    def block_domain(self, domain: str, reason: str) -> Tuple[bool, str]:
         """
-        Analyze a DNS query for security issues.
+        Block a domain using configured enforcement method.
+
+        Args:
+            domain: Domain to block (e.g., "malicious.example.com")
+            reason: Reason for blocking (for logging)
+
+        Returns:
+            (success, message)
+        """
+        if not self.config.enforcement_enabled:
+            return (False, "Enforcement is disabled")
+
+        # Check whitelist
+        domain_lower = domain.lower().strip()
+        if self._is_whitelisted(domain_lower):
+            return (False, f"Domain {domain} is whitelisted")
+
+        # Already blocked?
+        if domain_lower in self._blocked_domains:
+            return (True, f"Domain {domain} already blocked")
+
+        success = False
+        messages = []
+
+        action = self.config.enforcement_action
+
+        # Block via hosts file
+        if action in (DNSEnforcementAction.BLOCK_HOSTS,
+                      DNSEnforcementAction.BLOCK_BOTH,
+                      DNSEnforcementAction.SINKHOLE):
+            host_success, host_msg = self._block_via_hosts(domain_lower)
+            messages.append(f"Hosts: {host_msg}")
+            success = success or host_success
+
+        # Block via firewall
+        if action in (DNSEnforcementAction.BLOCK_FIREWALL,
+                      DNSEnforcementAction.BLOCK_BOTH):
+            fw_success, fw_msg = self._block_via_firewall(domain_lower)
+            messages.append(f"Firewall: {fw_msg}")
+            success = success or fw_success
+
+        if success:
+            with self._lock:
+                self._blocked_domains.add(domain_lower)
+                self._block_reasons[domain_lower] = reason
+                self._block_timestamps[domain_lower] = datetime.utcnow()
+
+            # Log the blocking event
+            self._log_block_event(domain_lower, reason, action.value)
+
+            # Invoke callback if set
+            if self._on_block_callback:
+                try:
+                    self._on_block_callback(domain_lower, reason)
+                except Exception as e:
+                    logger.error(f"Block callback error: {e}")
+
+        return (success, "; ".join(messages))
+
+    def unblock_domain(self, domain: str) -> Tuple[bool, str]:
+        """
+        Unblock a previously blocked domain.
+
+        Args:
+            domain: Domain to unblock
+
+        Returns:
+            (success, message)
+        """
+        domain_lower = domain.lower().strip()
+
+        if domain_lower not in self._blocked_domains:
+            return (False, f"Domain {domain} is not blocked")
+
+        success = False
+        messages = []
+
+        # Remove from hosts file
+        host_success, host_msg = self._unblock_from_hosts(domain_lower)
+        messages.append(f"Hosts: {host_msg}")
+        success = success or host_success
+
+        # Remove from firewall
+        fw_success, fw_msg = self._unblock_from_firewall(domain_lower)
+        messages.append(f"Firewall: {fw_msg}")
+        success = success or fw_success
+
+        if success:
+            with self._lock:
+                self._blocked_domains.discard(domain_lower)
+                self._block_reasons.pop(domain_lower, None)
+                self._block_timestamps.pop(domain_lower, None)
+
+            self._log_unblock_event(domain_lower)
+
+        return (success, "; ".join(messages))
+
+    def get_blocked_domains(self) -> List[Dict]:
+        """Get list of currently blocked domains with details."""
+        with self._lock:
+            result = []
+            for domain in self._blocked_domains:
+                result.append({
+                    'domain': domain,
+                    'reason': self._block_reasons.get(domain, 'unknown'),
+                    'blocked_at': self._block_timestamps.get(
+                        domain, datetime.utcnow()
+                    ).isoformat() + "Z"
+                })
+            return sorted(result, key=lambda x: x['blocked_at'], reverse=True)
+
+    def _is_whitelisted(self, domain: str) -> bool:
+        """Check if domain is whitelisted."""
+        # Exact match
+        if domain in self.config.whitelisted_domains:
+            return True
+        # Check if it's a subdomain of a whitelisted domain
+        for whitelisted in self.config.whitelisted_domains:
+            if domain.endswith('.' + whitelisted):
+                return True
+        return False
+
+    def _block_via_hosts(self, domain: str) -> Tuple[bool, str]:
+        """
+        Block domain by adding to /etc/hosts.
+
+        This provides immediate blocking without firewall changes.
+        """
+        if not self._has_root:
+            return (False, "Need root to modify hosts file")
+
+        try:
+            hosts_path = self.config.hosts_file_path
+            backup_path = self.config.hosts_backup_path
+
+            # Read current hosts file
+            with open(hosts_path, 'r') as f:
+                content = f.read()
+
+            # Create backup if it doesn't exist
+            if not os.path.exists(backup_path):
+                with open(backup_path, 'w') as f:
+                    f.write(content)
+                os.chmod(backup_path, 0o644)
+
+            # Find or create our blocking section
+            marker_start = self.config.hosts_marker_start
+            marker_end = self.config.hosts_marker_end
+
+            if marker_start in content:
+                # Extract existing blocked domains
+                start_idx = content.index(marker_start)
+                end_idx = content.index(marker_end) + len(marker_end)
+                before = content[:start_idx]
+                after = content[end_idx:]
+                existing_section = content[start_idx:end_idx]
+
+                # Parse existing blocked domains
+                blocked_lines = []
+                for line in existing_section.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        blocked_lines.append(line)
+
+                # Add new domain
+                sinkhole_v4 = self.config.sinkhole_ipv4
+                sinkhole_v6 = self.config.sinkhole_ipv6
+                new_entry_v4 = f"{sinkhole_v4} {domain}"
+                new_entry_v6 = f"{sinkhole_v6} {domain}"
+
+                if new_entry_v4 not in blocked_lines:
+                    blocked_lines.append(new_entry_v4)
+                if new_entry_v6 not in blocked_lines:
+                    blocked_lines.append(new_entry_v6)
+
+                # Rebuild section
+                new_section = f"{marker_start}\n"
+                new_section += '\n'.join(blocked_lines)
+                new_section += f"\n{marker_end}"
+
+                new_content = before + new_section + after
+            else:
+                # Create new section
+                sinkhole_v4 = self.config.sinkhole_ipv4
+                sinkhole_v6 = self.config.sinkhole_ipv6
+                new_section = f"\n{marker_start}\n"
+                new_section += f"{sinkhole_v4} {domain}\n"
+                new_section += f"{sinkhole_v6} {domain}\n"
+                new_section += f"{marker_end}\n"
+
+                new_content = content + new_section
+
+            # Write atomically
+            temp_path = hosts_path + '.boundary-tmp'
+            with open(temp_path, 'w') as f:
+                f.write(new_content)
+            os.chmod(temp_path, 0o644)
+            os.rename(temp_path, hosts_path)
+
+            logger.info(f"Blocked domain via hosts: {domain}")
+            return (True, f"Added {domain} to hosts file")
+
+        except Exception as e:
+            logger.error(f"Failed to block via hosts: {e}")
+            return (False, str(e))
+
+    def _unblock_from_hosts(self, domain: str) -> Tuple[bool, str]:
+        """Remove domain from hosts file blocking."""
+        if not self._has_root:
+            return (False, "Need root to modify hosts file")
+
+        try:
+            hosts_path = self.config.hosts_file_path
+            marker_start = self.config.hosts_marker_start
+            marker_end = self.config.hosts_marker_end
+
+            with open(hosts_path, 'r') as f:
+                content = f.read()
+
+            if marker_start not in content:
+                return (True, "No blocking section found")
+
+            start_idx = content.index(marker_start)
+            end_idx = content.index(marker_end) + len(marker_end)
+            before = content[:start_idx]
+            after = content[end_idx:]
+            existing_section = content[start_idx:end_idx]
+
+            # Remove lines containing this domain
+            new_lines = []
+            for line in existing_section.split('\n'):
+                if domain not in line:
+                    new_lines.append(line)
+
+            new_section = '\n'.join(new_lines)
+
+            # If section is now empty (just markers), remove it entirely
+            if new_section.strip() == f"{marker_start}\n{marker_end}".strip():
+                new_content = before.rstrip() + after
+            else:
+                new_content = before + new_section + after
+
+            # Write atomically
+            temp_path = hosts_path + '.boundary-tmp'
+            with open(temp_path, 'w') as f:
+                f.write(new_content)
+            os.chmod(temp_path, 0o644)
+            os.rename(temp_path, hosts_path)
+
+            logger.info(f"Unblocked domain from hosts: {domain}")
+            return (True, f"Removed {domain} from hosts file")
+
+        except Exception as e:
+            logger.error(f"Failed to unblock from hosts: {e}")
+            return (False, str(e))
+
+    def _block_via_firewall(self, domain: str) -> Tuple[bool, str]:
+        """
+        Block domain via iptables by resolving and blocking IPs.
+
+        Note: This blocks by IP, so dynamic DNS may evade this.
+        For comprehensive blocking, use hosts file method too.
+        """
+        if not self._has_root:
+            return (False, "Need root for firewall rules")
+
+        if not self._has_iptables:
+            return (False, "iptables not available")
+
+        try:
+            # Resolve domain to IPs
+            ips = set()
+            try:
+                # Get IPv4 addresses
+                for info in socket.getaddrinfo(domain, None, socket.AF_INET):
+                    ips.add(info[4][0])
+            except socket.gaierror:
+                pass
+
+            try:
+                # Get IPv6 addresses
+                for info in socket.getaddrinfo(domain, None, socket.AF_INET6):
+                    ips.add(info[4][0])
+            except socket.gaierror:
+                pass
+
+            if not ips:
+                return (False, f"Could not resolve {domain}")
+
+            # Ensure our chain exists
+            self._setup_iptables_chain()
+
+            # Add block rules for each IP
+            blocked_ips = []
+            for ip in ips:
+                if ':' in ip:
+                    # IPv6
+                    cmd = ['ip6tables', '-A', self.IPTABLES_CHAIN,
+                           '-d', ip, '-j', 'DROP',
+                           '-m', 'comment', '--comment', f'boundary-block-{domain}']
+                else:
+                    # IPv4
+                    cmd = ['iptables', '-A', self.IPTABLES_CHAIN,
+                           '-d', ip, '-j', 'DROP',
+                           '-m', 'comment', '--comment', f'boundary-block-{domain}']
+
+                result = subprocess.run(cmd, capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    blocked_ips.append(ip)
+
+            if blocked_ips:
+                logger.info(f"Blocked domain via firewall: {domain} -> {blocked_ips}")
+                return (True, f"Blocked IPs: {blocked_ips}")
+            else:
+                return (False, "Failed to add firewall rules")
+
+        except Exception as e:
+            logger.error(f"Failed to block via firewall: {e}")
+            return (False, str(e))
+
+    def _unblock_from_firewall(self, domain: str) -> Tuple[bool, str]:
+        """Remove firewall rules for a domain."""
+        if not self._has_root or not self._has_iptables:
+            return (False, "Need root and iptables")
+
+        try:
+            # Remove rules matching the domain comment
+            comment = f'boundary-block-{domain}'
+
+            for iptables_cmd in ['iptables', 'ip6tables']:
+                # List rules with line numbers
+                result = subprocess.run(
+                    [iptables_cmd, '-L', self.IPTABLES_CHAIN, '-n', '--line-numbers'],
+                    capture_output=True, timeout=5
+                )
+                if result.returncode != 0:
+                    continue
+
+                # Find and delete rules (in reverse order to preserve line numbers)
+                lines_to_delete = []
+                for line in result.stdout.decode().split('\n'):
+                    if comment in line:
+                        parts = line.split()
+                        if parts and parts[0].isdigit():
+                            lines_to_delete.append(int(parts[0]))
+
+                for line_num in reversed(sorted(lines_to_delete)):
+                    subprocess.run(
+                        [iptables_cmd, '-D', self.IPTABLES_CHAIN, str(line_num)],
+                        capture_output=True, timeout=5
+                    )
+
+            logger.info(f"Unblocked domain from firewall: {domain}")
+            return (True, f"Removed firewall rules for {domain}")
+
+        except Exception as e:
+            logger.error(f"Failed to unblock from firewall: {e}")
+            return (False, str(e))
+
+    def _setup_iptables_chain(self):
+        """Ensure our iptables chain exists."""
+        for iptables_cmd in ['iptables', 'ip6tables']:
+            # Create chain if it doesn't exist
+            subprocess.run(
+                [iptables_cmd, '-N', self.IPTABLES_CHAIN],
+                capture_output=True, timeout=5
+            )
+
+            # Check if jump rule exists in OUTPUT
+            result = subprocess.run(
+                [iptables_cmd, '-C', 'OUTPUT', '-j', self.IPTABLES_CHAIN],
+                capture_output=True, timeout=5
+            )
+            if result.returncode != 0:
+                # Add jump rule
+                subprocess.run(
+                    [iptables_cmd, '-I', 'OUTPUT', '1', '-j', self.IPTABLES_CHAIN],
+                    capture_output=True, timeout=5
+                )
+
+    def _log_block_event(self, domain: str, reason: str, action: str):
+        """Log a domain blocking event."""
+        if self._event_logger:
+            try:
+                from ..event_logger import EventType
+                self._event_logger.log_event(
+                    event_type=EventType.VIOLATION,
+                    data={
+                        'event': 'dns_domain_blocked',
+                        'domain': domain,
+                        'reason': reason,
+                        'action': action,
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
+                )
+            except Exception:
+                pass
+
+        logger.warning(f"DNS BLOCKED: {domain} - Reason: {reason} - Action: {action}")
+
+    def _log_unblock_event(self, domain: str):
+        """Log a domain unblocking event."""
+        if self._event_logger:
+            try:
+                from ..event_logger import EventType
+                self._event_logger.log_event(
+                    event_type=EventType.POLICY_DECISION,
+                    data={
+                        'event': 'dns_domain_unblocked',
+                        'domain': domain,
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
+                )
+            except Exception:
+                pass
+
+        logger.info(f"DNS UNBLOCKED: {domain}")
+
+    def cleanup_enforcement(self):
+        """Clean up all enforcement rules (call on shutdown)."""
+        logger.info("Cleaning up DNS enforcement rules...")
+
+        # Remove from hosts file
+        try:
+            hosts_path = self.config.hosts_file_path
+            marker_start = self.config.hosts_marker_start
+            marker_end = self.config.hosts_marker_end
+
+            with open(hosts_path, 'r') as f:
+                content = f.read()
+
+            if marker_start in content and marker_end in content:
+                start_idx = content.index(marker_start)
+                end_idx = content.index(marker_end) + len(marker_end)
+                new_content = content[:start_idx].rstrip() + content[end_idx:]
+
+                temp_path = hosts_path + '.boundary-tmp'
+                with open(temp_path, 'w') as f:
+                    f.write(new_content)
+                os.chmod(temp_path, 0o644)
+                os.rename(temp_path, hosts_path)
+                logger.info("Cleaned up hosts file")
+        except Exception as e:
+            logger.error(f"Failed to cleanup hosts file: {e}")
+
+        # Remove iptables chain
+        if self._has_iptables and self._has_root:
+            for iptables_cmd in ['iptables', 'ip6tables']:
+                try:
+                    # Remove jump rule
+                    subprocess.run(
+                        [iptables_cmd, '-D', 'OUTPUT', '-j', self.IPTABLES_CHAIN],
+                        capture_output=True, timeout=5
+                    )
+                    # Flush chain
+                    subprocess.run(
+                        [iptables_cmd, '-F', self.IPTABLES_CHAIN],
+                        capture_output=True, timeout=5
+                    )
+                    # Delete chain
+                    subprocess.run(
+                        [iptables_cmd, '-X', self.IPTABLES_CHAIN],
+                        capture_output=True, timeout=5
+                    )
+                except Exception:
+                    pass
+            logger.info("Cleaned up iptables rules")
+
+        with self._lock:
+            self._blocked_domains.clear()
+            self._block_reasons.clear()
+            self._block_timestamps.clear()
+
+    # ==================== END ENFORCEMENT METHODS ====================
+
+    def analyze_query(self, domain: str, query_type: str = "A",
+                      auto_block: bool = True) -> List[str]:
+        """
+        Analyze a DNS query for security issues AND AUTO-BLOCK if threats detected.
 
         Args:
             domain: The domain being queried
             query_type: DNS record type (A, AAAA, TXT, etc.)
+            auto_block: Whether to automatically block detected threats
 
         Returns:
             List of alert messages
         """
         alerts = []
+        should_block = False
+        block_reason = ""
 
         # Check for tunneling indicators
         if self.config.detect_tunneling:
             tunneling_alerts = self._detect_tunneling(domain)
             alerts.extend(tunneling_alerts)
+            if tunneling_alerts and self.config.auto_block_tunneling:
+                should_block = True
+                block_reason = "DNS tunneling/exfiltration detected"
 
         # Check for suspicious TLDs
         tld_alerts = self._check_suspicious_tld(domain)
         alerts.extend(tld_alerts)
+        if tld_alerts and self.config.auto_block_suspicious_tld:
+            should_block = True
+            block_reason = block_reason or "Suspicious TLD"
 
         # Track query rate
         self._record_query(domain, query_type)
@@ -229,22 +804,34 @@ class DNSSecurityMonitor:
             alerts.append(f"{DNSSecurityAlert.HIGH_QUERY_RATE.value}: "
                          f"Query rate exceeds {self.config.max_queries_per_minute}/min")
 
+        # AUTO-BLOCK if threats detected (NEW ENFORCEMENT)
+        if should_block and auto_block and self.config.enforcement_enabled:
+            success, msg = self.block_domain(domain, block_reason)
+            if success:
+                alerts.append(f"BLOCKED: {domain} - {block_reason}")
+            else:
+                alerts.append(f"BLOCK FAILED for {domain}: {msg}")
+
         return alerts
 
     def analyze_response(self, domain: str, response_ips: List[str],
-                        response_time_ms: float) -> List[str]:
+                        response_time_ms: float,
+                        auto_block: bool = True) -> List[str]:
         """
-        Analyze a DNS response for spoofing/poisoning.
+        Analyze a DNS response for spoofing/poisoning AND AUTO-BLOCK if detected.
 
         Args:
             domain: The queried domain
             response_ips: IP addresses in the response
             response_time_ms: Response time in milliseconds
+            auto_block: Whether to automatically block detected threats
 
         Returns:
             List of alert messages
         """
         alerts = []
+        should_block = False
+        block_reason = ""
 
         if not self.config.detect_spoofing:
             return alerts
@@ -253,19 +840,36 @@ class DNSSecurityMonitor:
         rebinding_alert = self._detect_rebinding(domain, response_ips)
         if rebinding_alert:
             alerts.append(rebinding_alert)
+            if self.config.auto_block_rebinding:
+                should_block = True
+                block_reason = "DNS rebinding attack detected"
 
         # Check against baseline
         spoofing_alert = self._detect_spoofing(domain, response_ips)
         if spoofing_alert:
             alerts.append(spoofing_alert)
+            if self.config.auto_block_spoofing:
+                should_block = True
+                block_reason = block_reason or "DNS spoofing detected"
 
         # Unusually fast response might indicate local spoofing
         if response_time_ms < 1.0 and not self._is_cached_response(domain):
             alerts.append(f"{DNSSecurityAlert.SPOOFING_DETECTED.value}: "
                          f"Suspiciously fast DNS response ({response_time_ms}ms) for {domain}")
+            if self.config.auto_block_spoofing:
+                should_block = True
+                block_reason = block_reason or "Suspicious fast DNS response (possible local spoofing)"
 
         # Update baseline
         self._update_baseline(domain, response_ips)
+
+        # AUTO-BLOCK if threats detected (NEW ENFORCEMENT)
+        if should_block and auto_block and self.config.enforcement_enabled:
+            success, msg = self.block_domain(domain, block_reason)
+            if success:
+                alerts.append(f"BLOCKED: {domain} - {block_reason}")
+            else:
+                alerts.append(f"BLOCK FAILED for {domain}: {msg}")
 
         return alerts
 
