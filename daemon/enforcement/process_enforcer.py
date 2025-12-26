@@ -13,10 +13,14 @@ Security Notes:
 - Requires root for seccomp filter installation
 - Container operations require podman or docker
 - All enforcement actions are logged
+- Seccomp profiles are cryptographically signed and integrity-verified
 
 IMPORTANT: This addresses SECURITY_AUDIT.md Critical Finding #6:
 "Daemon Can Be Killed" and Critical Finding #4: "Lockdown Mode Is Not
 Actually Locked Down" by implementing actual process isolation.
+
+SECURITY: Seccomp profiles are now protected by SecureProfileManager which
+provides HMAC integrity verification and optional immutable flags.
 """
 
 import os
@@ -36,6 +40,14 @@ from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Import secure profile manager
+try:
+    from .secure_profile_manager import SecureProfileManager
+    SECURE_PROFILE_AVAILABLE = True
+except ImportError:
+    SECURE_PROFILE_AVAILABLE = False
+    SecureProfileManager = None
 
 
 class ProcessEnforcementError(Exception):
@@ -210,9 +222,24 @@ class ProcessEnforcer:
         if self._container_runtime == ContainerRuntime.NONE:
             logger.warning("No container runtime found. Container isolation disabled.")
 
-        # Ensure seccomp profile directory exists
-        if self._has_root:
+        # Initialize secure profile manager (SECURITY: Integrity-verified profiles)
+        self._profile_manager = None
+        if SECURE_PROFILE_AVAILABLE and SecureProfileManager and self._has_root:
+            try:
+                self._profile_manager = SecureProfileManager(
+                    profile_dir=self.SECCOMP_PROFILE_DIR,
+                    event_logger=self.event_logger,
+                    use_immutable=True,  # Use chattr +i for extra protection
+                )
+                logger.info("Secure profile manager initialized with integrity verification")
+            except Exception as e:
+                logger.warning(f"Secure profile manager failed, using legacy mode: {e}")
+                self._profile_manager = None
+
+        # Ensure seccomp profile directory exists (fallback if secure manager not available)
+        if self._has_root and not self._profile_manager:
             os.makedirs(self.SECCOMP_PROFILE_DIR, exist_ok=True)
+            logger.warning("Using legacy profile storage WITHOUT integrity verification")
 
     def _check_seccomp_support(self) -> bool:
         """Check if seccomp is available"""
@@ -421,24 +448,54 @@ class ProcessEnforcer:
         return profile
 
     def _install_seccomp_profile(self, profile: Dict):
-        """Install seccomp profile to profile directory"""
+        """
+        Install seccomp profile securely.
+
+        SECURITY: Uses SecureProfileManager for:
+        - HMAC integrity verification
+        - Restrictive file permissions (0o600)
+        - Optional immutable flag (chattr +i)
+        - Tamper detection on load
+        """
         if not self._has_root:
             return
 
+        profile_name = profile.get('name', 'boundary')
+
+        # Use secure profile manager if available
+        if self._profile_manager:
+            success, msg = self._profile_manager.install_profile(profile, profile_name)
+            if success:
+                logger.debug(f"Installed secure seccomp profile: {profile_name}")
+            else:
+                logger.warning(f"Failed to install secure profile: {msg}")
+            return
+
+        # Fallback: legacy insecure method (with warning)
+        logger.warning(f"Installing profile {profile_name} WITHOUT integrity protection!")
         try:
             profile_path = os.path.join(
                 self.SECCOMP_PROFILE_DIR,
-                f"{profile.get('name', 'boundary')}.json"
+                f"{profile_name}.json"
             )
             with open(profile_path, 'w') as f:
                 json.dump(profile, f, indent=2)
-            os.chmod(profile_path, 0o644)
-            logger.debug(f"Installed seccomp profile: {profile_path}")
+            # Use more restrictive permissions even in legacy mode
+            os.chmod(profile_path, 0o600)
+            logger.debug(f"Installed seccomp profile (legacy): {profile_path}")
         except Exception as e:
             logger.warning(f"Failed to install seccomp profile: {e}")
 
     def _remove_seccomp_profile(self, name: str):
-        """Remove a seccomp profile"""
+        """Remove a seccomp profile securely"""
+        # Use secure profile manager if available
+        if self._profile_manager:
+            success, msg = self._profile_manager.remove_profile(name)
+            if not success:
+                logger.debug(f"Failed to remove secure profile: {msg}")
+            return
+
+        # Fallback: legacy removal
         try:
             profile_path = os.path.join(self.SECCOMP_PROFILE_DIR, f"{name}.json")
             if os.path.exists(profile_path):
@@ -735,7 +792,7 @@ class ProcessEnforcer:
 
     def get_status(self) -> Dict:
         """Get current enforcement status"""
-        return {
+        status = {
             'available': self.is_available,
             'has_root': self._has_root,
             'has_seccomp': self._has_seccomp,
@@ -743,8 +800,25 @@ class ProcessEnforcer:
             'current_mode': self._current_mode.name if self._current_mode else None,
             'active_containers': len(self._active_containers),
             'watchdog_running': self._watchdog_running,
-            'seccomp_profile_dir': self.SECCOMP_PROFILE_DIR
+            'seccomp_profile_dir': self.SECCOMP_PROFILE_DIR,
+            'secure_profiles': self._profile_manager is not None,
         }
+
+        # Add secure profile manager status if available
+        if self._profile_manager:
+            profile_status = self._profile_manager.get_status()
+            status['profile_integrity'] = {
+                'enabled': True,
+                'profile_count': profile_status['profile_count'],
+                'use_immutable': profile_status['use_immutable'],
+            }
+        else:
+            status['profile_integrity'] = {
+                'enabled': False,
+                'warning': 'Profiles stored WITHOUT integrity verification',
+            }
+
+        return status
 
     def cleanup(self):
         """Cleanup on daemon shutdown"""
@@ -758,14 +832,21 @@ class ProcessEnforcer:
                 if stopped > 0:
                     logger.info(f"Stopped {stopped} managed containers")
 
-            # Remove seccomp profiles
-            try:
-                if os.path.exists(self.SECCOMP_PROFILE_DIR):
-                    for f in os.listdir(self.SECCOMP_PROFILE_DIR):
-                        if f.startswith('boundary_'):
-                            os.unlink(os.path.join(self.SECCOMP_PROFILE_DIR, f))
-            except Exception as e:
-                logger.debug(f"Error cleaning up seccomp profiles: {e}")
+            # Remove seccomp profiles using secure manager if available
+            if self._profile_manager:
+                try:
+                    self._profile_manager.cleanup()
+                except Exception as e:
+                    logger.debug(f"Error cleaning up secure profiles: {e}")
+            else:
+                # Fallback: legacy cleanup
+                try:
+                    if os.path.exists(self.SECCOMP_PROFILE_DIR):
+                        for f in os.listdir(self.SECCOMP_PROFILE_DIR):
+                            if f.startswith('boundary_'):
+                                os.unlink(os.path.join(self.SECCOMP_PROFILE_DIR, f))
+                except Exception as e:
+                    logger.debug(f"Error cleaning up seccomp profiles: {e}")
 
             self._current_mode = None
             logger.info("Process enforcement cleaned up")
