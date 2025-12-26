@@ -1945,6 +1945,26 @@ Protects against distributed attacks using many tokens:
 - **Priority**: Global limit checked before per-token limits
 - **DDoS Protection**: Prevents overwhelming the daemon even with valid tokens
 
+#### Per-Command Rate Limiting
+
+Different commands have different rate limits based on their cost and sensitivity:
+
+| Command | Max Requests | Window | Notes |
+|---------|-------------|--------|-------|
+| `status` | 200 | 60s | Read-only, high limit |
+| `get_events` | 100 | 60s | Read-only |
+| `check_recall` | 500 | 60s | Frequent memory operations |
+| `check_tool` | 300 | 60s | Frequent tool calls |
+| `check_message` | 200 | 60s | Message validation |
+| `set_mode` | 10 | 60s | Privileged operation |
+| `create_token` | 5 | 60s | Admin operation |
+| `revoke_token` | 10 | 60s | Admin operation |
+| `list_tokens` | 20 | 60s | Admin read |
+
+- **Checked After**: Global and per-token limits are checked first
+- **Independent**: Each command has its own tracking window per token
+- **Block Duration**: Half of the window period (minimum 30s)
+
 #### Rate Limit Status API
 
 Check current rate limit status via the `rate_limit_status` command:

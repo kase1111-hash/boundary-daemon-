@@ -81,6 +81,39 @@ COMMAND_CAPABILITIES = {
     'rate_limit_status': APICapability.MANAGE_TOKENS,
 }
 
+# Per-command rate limits (requests per window)
+# Commands not listed use the default per-token rate limit
+# Format: command -> (max_requests, window_seconds)
+COMMAND_RATE_LIMITS = {
+    # Read-only commands - higher limits
+    'status': (200, 60),              # 200 per minute
+    'get_events': (100, 60),          # 100 per minute
+    'verify_log': (50, 60),           # 50 per minute
+    'rate_limit_status': (30, 60),    # 30 per minute
+
+    # Check commands - moderate limits (called frequently during normal operation)
+    'check_recall': (500, 60),        # 500 per minute (memory operations are frequent)
+    'check_tool': (300, 60),          # 300 per minute (tool calls are frequent)
+    'check_message': (200, 60),       # 200 per minute
+    'check_natlangchain': (200, 60),  # 200 per minute
+    'check_agentos': (200, 60),       # 200 per minute
+
+    # Write/modify commands - stricter limits
+    'set_mode': (10, 60),             # 10 per minute (mode changes should be rare)
+
+    # Token management - very strict limits
+    'create_token': (5, 60),          # 5 per minute
+    'revoke_token': (10, 60),         # 10 per minute
+    'list_tokens': (20, 60),          # 20 per minute
+}
+
+
+@dataclass
+class CommandRateLimitEntry:
+    """Tracks rate limiting for a specific command."""
+    request_times: List[float] = field(default_factory=list)  # Monotonic timestamps
+    blocked_until: Optional[float] = None  # Monotonic timestamp
+
 
 @dataclass
 class APIToken:
@@ -220,6 +253,7 @@ class TokenManager:
 
         self._tokens: Dict[str, APIToken] = {}  # token_hash -> APIToken
         self._rate_limits: Dict[str, RateLimitEntry] = {}  # token_id -> RateLimitEntry
+        self._command_rate_limits: Dict[str, Dict[str, CommandRateLimitEntry]] = {}  # token_id -> command -> entry
         self._global_rate_limit = GlobalRateLimitState()  # Global rate limit tracking
         self._lock = threading.RLock()
 
@@ -449,6 +483,11 @@ class TokenManager:
         if not token.has_capability(required_cap):
             return False, token, f"Token lacks capability: {required_cap.name}"
 
+        # Check per-command rate limit
+        is_cmd_allowed, cmd_reason = self._check_command_rate_limit(token.token_id, command)
+        if not is_cmd_allowed:
+            return False, token, cmd_reason
+
         return True, token, "Authorized"
 
     def _check_global_rate_limit(self) -> Tuple[bool, str]:
@@ -516,6 +555,58 @@ class TokenManager:
             if len(entry.request_times) >= self.rate_limit_max_requests:
                 entry.blocked_until = now + self.rate_limit_block_duration
                 return False, f"Rate limit exceeded. Blocked for {self.rate_limit_block_duration}s"
+
+            # Record this request
+            entry.request_times.append(now)
+
+            return True, "OK"
+
+    def _check_command_rate_limit(self, token_id: str, command: str) -> Tuple[bool, str]:
+        """Check and update rate limit for a specific command.
+
+        Per-command rate limits allow different limits for different operations.
+        For example, read-only 'status' can have higher limits than 'set_mode'.
+
+        Uses monotonic time to prevent clock manipulation attacks.
+        """
+        # Check if this command has a specific rate limit
+        if command not in COMMAND_RATE_LIMITS:
+            return True, "OK"  # No per-command limit, use global/per-token only
+
+        max_requests, window_seconds = COMMAND_RATE_LIMITS[command]
+        now = time.monotonic()
+
+        with self._lock:
+            # Get or create per-token command rate limit dict
+            if token_id not in self._command_rate_limits:
+                self._command_rate_limits[token_id] = {}
+
+            token_commands = self._command_rate_limits[token_id]
+
+            # Get or create entry for this command
+            if command not in token_commands:
+                token_commands[command] = CommandRateLimitEntry()
+
+            entry = token_commands[command]
+
+            # Check if currently blocked (block duration = 1/2 of window for commands)
+            block_duration = window_seconds // 2 or 30
+            if entry.blocked_until and now < entry.blocked_until:
+                remaining = int(entry.blocked_until - now)
+                return False, f"Command '{command}' rate limited. Try again in {remaining}s"
+
+            # Clear block if expired
+            if entry.blocked_until:
+                entry.blocked_until = None
+
+            # Remove old request times
+            window_start = now - window_seconds
+            entry.request_times = [t for t in entry.request_times if t > window_start]
+
+            # Check if over limit
+            if len(entry.request_times) >= max_requests:
+                entry.blocked_until = now + block_duration
+                return False, f"Command '{command}' rate limit exceeded ({max_requests} req/{window_seconds}s). Blocked for {block_duration}s"
 
             # Record this request
             entry.request_times.append(now)
@@ -686,9 +777,53 @@ class TokenManager:
                     result['tokens'][token.token_id] = {
                         'name': token.name,
                         'status': self.get_rate_limit_status(token.token_id),
+                        'commands': self.get_command_rate_limit_status(token.token_id),
                     }
 
             return result
+
+    def get_command_rate_limit_status(self, token_id: str) -> Dict:
+        """Get per-command rate limit status for a token.
+
+        Returns:
+            Dict mapping command names to their rate limit status
+        """
+        with self._lock:
+            result = {}
+            now = time.monotonic()
+
+            token_commands = self._command_rate_limits.get(token_id, {})
+
+            for command, entry in token_commands.items():
+                if command not in COMMAND_RATE_LIMITS:
+                    continue
+
+                max_requests, window_seconds = COMMAND_RATE_LIMITS[command]
+                window_start = now - window_seconds
+                current_requests = len([t for t in entry.request_times if t > window_start])
+
+                is_blocked = entry.blocked_until is not None and now < entry.blocked_until
+                blocked_remaining = max(0, int(entry.blocked_until - now)) if is_blocked else 0
+
+                result[command] = {
+                    'requests_in_window': current_requests,
+                    'max_requests': max_requests,
+                    'window_seconds': window_seconds,
+                    'blocked': is_blocked,
+                    'blocked_remaining_seconds': blocked_remaining,
+                    'utilization_percent': round(current_requests / max_requests * 100, 1) if max_requests > 0 else 0,
+                }
+
+            return result
+
+    def get_command_rate_limits_config(self) -> Dict:
+        """Get the configured per-command rate limits.
+
+        Returns:
+            Dict mapping command names to (max_requests, window_seconds)
+        """
+        return {cmd: {'max_requests': limit[0], 'window_seconds': limit[1]}
+                for cmd, limit in COMMAND_RATE_LIMITS.items()}
 
 
 class AuthenticationMiddleware:
