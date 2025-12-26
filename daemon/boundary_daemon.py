@@ -206,6 +206,24 @@ except ImportError:
     EncryptionMode = None
     load_secure_config = None
 
+# Import redundant event logger (SECURITY: Logging redundancy)
+try:
+    from .redundant_event_logger import (
+        RedundantEventLogger,
+        RedundantLoggerConfig,
+        BackendConfig,
+        LogBackendType,
+        create_redundant_logger,
+    )
+    REDUNDANT_LOGGING_AVAILABLE = True
+except ImportError:
+    REDUNDANT_LOGGING_AVAILABLE = False
+    RedundantEventLogger = None
+    RedundantLoggerConfig = None
+    BackendConfig = None
+    LogBackendType = None
+    create_redundant_logger = None
+
 
 class BoundaryDaemon:
     """
@@ -271,6 +289,9 @@ class BoundaryDaemon:
         # Initialize event logger (Plan 3: Cryptographic Log Signing)
         log_file = os.path.join(log_dir, 'boundary_chain.log')
         self.signed_logging = False
+        self.redundant_logging = False
+        self._redundant_logger = None
+
         if SIGNED_LOGGING_AVAILABLE and SignedEventLogger:
             try:
                 signing_key_path = os.path.join(log_dir, 'signing.key')
@@ -284,6 +305,22 @@ class BoundaryDaemon:
         else:
             self.event_logger = EventLogger(log_file)
             print("Signed event logging: not available (pynacl not installed)")
+
+        # Initialize redundant logger (SECURITY: Addresses single logger dependency)
+        if REDUNDANT_LOGGING_AVAILABLE and create_redundant_logger:
+            try:
+                self._redundant_logger = create_redundant_logger(
+                    log_dir=log_dir,
+                    enable_syslog=True,
+                    enable_memory_buffer=True,
+                )
+                self.redundant_logging = True
+                healthy_count = self._redundant_logger.get_healthy_backend_count()
+                print(f"Redundant logging enabled ({healthy_count} backends available)")
+            except Exception as e:
+                print(f"Warning: Redundant logging failed: {e}")
+        else:
+            print("Redundant logging: not available")
 
         self.state_monitor = StateMonitor(poll_interval=1.0)
         self.policy_engine = PolicyEngine(initial_mode=initial_mode)
@@ -1120,6 +1157,14 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Daemon integrity monitoring failed to start: {e}")
 
+        # Start redundant logger health monitoring (SECURITY: Logging redundancy)
+        if self._redundant_logger and self.redundant_logging:
+            try:
+                self._redundant_logger.start_health_monitoring()
+                print("Redundant logger health monitoring started")
+            except Exception as e:
+                print(f"Warning: Redundant logger health monitoring failed: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -1150,6 +1195,14 @@ class BoundaryDaemon:
                 print("Daemon integrity monitoring stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop integrity monitoring: {e}")
+
+        # Stop redundant logger health monitoring
+        if self._redundant_logger and self.redundant_logging:
+            try:
+                self._redundant_logger.stop_health_monitoring()
+                print("Redundant logger health monitoring stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop redundant logger: {e}")
 
         # Stop hardened watchdog endpoint
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
@@ -1777,6 +1830,20 @@ class BoundaryDaemon:
         status['secure_config_available'] = SECURE_CONFIG_AVAILABLE
         if self._integrity_protector:
             status['integrity_verified'] = self._integrity_verified
+
+        # Add redundant logging status
+        status['redundant_logging'] = self.redundant_logging
+        if self._redundant_logger:
+            try:
+                logger_status = self._redundant_logger.get_status()
+                status['redundant_logger'] = {
+                    'running': logger_status['running'],
+                    'event_count': logger_status['event_count'],
+                    'healthy_backends': self._redundant_logger.get_healthy_backend_count(),
+                    'stats': logger_status['stats'],
+                }
+            except Exception as e:
+                status['redundant_logger'] = {'error': str(e)}
 
         return status
 
