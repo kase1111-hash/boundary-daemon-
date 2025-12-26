@@ -16,6 +16,10 @@ Addresses Critical Finding: "Detection Without Enforcement"
 SECURITY: External DNS queries and domain resolution are blocked in AIRGAP,
 COLDROOM, and LOCKDOWN modes to prevent data leakage.
 Addresses Critical Finding: "AIRGAP Mode Leaks Network Traffic"
+
+SECURITY: DNS response verification now uses pure Python sockets instead of
+external tools (dig, nslookup). This addresses the vulnerability:
+"DNS Response Verification Uses External Tools"
 """
 
 import os
@@ -34,6 +38,20 @@ from collections import defaultdict
 import hashlib
 
 logger = logging.getLogger(__name__)
+
+# Import native DNS resolver (SECURITY: replaces external tool usage)
+try:
+    from .native_dns_resolver import (
+        NativeDNSResolver,
+        SecureDNSVerifier,
+        DNSType,
+    )
+    NATIVE_DNS_AVAILABLE = True
+except ImportError:
+    NATIVE_DNS_AVAILABLE = False
+    NativeDNSResolver = None
+    SecureDNSVerifier = None
+    DNSType = None
 
 
 class DNSSecurityAlert(Enum):
@@ -250,6 +268,20 @@ class DNSSecurityMonitor:
         if self.config.enforcement_enabled and not self._has_root:
             logger.warning("DNS enforcement enabled but not running as root. "
                           "Hosts file and firewall blocking may fail.")
+
+        # SECURITY: Initialize native DNS resolver (no external tool dependencies)
+        # This addresses: "DNS Response Verification Uses External Tools"
+        self._native_resolver = None
+        self._secure_verifier = None
+        if NATIVE_DNS_AVAILABLE and NativeDNSResolver:
+            try:
+                self._native_resolver = NativeDNSResolver()
+                self._secure_verifier = SecureDNSVerifier(event_logger=event_logger)
+                logger.info("Native DNS resolver initialized (no external tools)")
+            except Exception as e:
+                logger.warning(f"Native DNS resolver failed to initialize: {e}")
+        else:
+            logger.warning("Native DNS resolver not available, falling back to external tools")
 
     def set_mode_getter(self, getter: Callable[[], str]):
         """Set the mode getter callback."""
@@ -1305,6 +1337,10 @@ class DNSSecurityMonitor:
         SECURITY: External DNS queries are blocked in AIRGAP/COLDROOM/LOCKDOWN
         modes to prevent domain name leakage to public resolvers.
 
+        SECURITY: This method now uses pure Python DNS resolution instead of
+        external tools (dig, nslookup). This addresses the vulnerability:
+        "DNS Response Verification Uses External Tools"
+
         Args:
             domain: Domain to verify
             expected_ips: Optional list of expected IP addresses
@@ -1316,7 +1352,8 @@ class DNSSecurityMonitor:
             'domain': domain,
             'consistent': True,
             'responses': {},
-            'alerts': []
+            'alerts': [],
+            'method': 'native' if self._native_resolver else 'legacy',
         }
 
         # SECURITY: Block external DNS queries in network-isolated modes
@@ -1331,6 +1368,42 @@ class DNSSecurityMonitor:
             )
             results['responses']['blocked'] = ['network_isolated']
             return results
+
+        # SECURITY: Use native Python DNS resolver if available (no external tools)
+        if self._secure_verifier:
+            try:
+                native_result = self._secure_verifier.verify_dns_response(domain, expected_ips)
+                results['consistent'] = native_result['consistent']
+                results['alerts'].extend(native_result['alerts'])
+
+                # Format responses for compatibility
+                for resolver_name, data in native_result['responses'].items():
+                    if isinstance(data, dict):
+                        if 'error' in data:
+                            results['responses'][resolver_name] = ['error']
+                        else:
+                            results['responses'][resolver_name] = data.get('ips', [])
+                    else:
+                        results['responses'][resolver_name] = data
+
+                # Add consistency alert
+                if not native_result['consistent']:
+                    results['alerts'].append(
+                        f"{DNSSecurityAlert.CACHE_POISONING.value}: "
+                        f"Inconsistent DNS responses across resolvers for {domain}"
+                    )
+
+                return results
+
+            except Exception as e:
+                logger.warning(f"Native DNS verification failed, using fallback: {e}")
+                # Fall through to legacy method
+
+        # LEGACY FALLBACK: Use external dig command (less secure)
+        # This code path is only used if native resolver is unavailable
+        logger.warning(f"Using legacy DNS verification with external tools for {domain}")
+        results['method'] = 'legacy_external_tools'
+        results['alerts'].append("WARNING: Using external tool (dig) for DNS verification")
 
         resolvers = [
             ('1.1.1.1', 'Cloudflare'),
