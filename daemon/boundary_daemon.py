@@ -125,6 +125,16 @@ except ImportError:
     NatLangChainEntry = None
     AgentOSMessage = None
 
+# Import clock monitor module (Clock Drift Protection)
+try:
+    from .security.clock_monitor import ClockMonitor, ClockStatus, TimeJumpEvent
+    CLOCK_MONITOR_AVAILABLE = True
+except ImportError:
+    CLOCK_MONITOR_AVAILABLE = False
+    ClockMonitor = None
+    ClockStatus = None
+    TimeJumpEvent = None
+
 
 class BoundaryDaemon:
     """
@@ -412,6 +422,24 @@ class BoundaryDaemon:
         else:
             print("Message checker module not loaded")
 
+        # Initialize clock monitor (Clock Drift Protection)
+        self.clock_monitor = None
+        self.clock_monitor_enabled = False
+        if CLOCK_MONITOR_AVAILABLE and ClockMonitor:
+            try:
+                self.clock_monitor = ClockMonitor(
+                    check_interval=10.0,
+                    on_time_jump=self._on_time_jump,
+                    on_ntp_lost=self._on_ntp_lost,
+                    on_manipulation=self._on_clock_manipulation,
+                )
+                self.clock_monitor_enabled = True
+                print("Clock monitor available")
+            except Exception as e:
+                print(f"Warning: Clock monitor failed to initialize: {e}")
+        else:
+            print("Clock monitor module not loaded")
+
         # Daemon state
         self._running = False
         self._shutdown_event = threading.Event()
@@ -569,6 +597,51 @@ class BoundaryDaemon:
         print(f"Details: {violation.details}")
         print(f"System entering LOCKDOWN mode\n")
 
+    def _on_time_jump(self, event: 'TimeJumpEvent'):
+        """Handle detected time jump (clock manipulation)."""
+        direction = "forward" if event.direction.name == "FORWARD" else "backward"
+        self.event_logger.log_event(
+            EventType.CLOCK_JUMP,
+            f"Time jump detected: {abs(event.jump_seconds):.1f}s {direction}",
+            metadata={
+                'direction': event.direction.name,
+                'jump_seconds': event.jump_seconds,
+                'severity': event.severity,
+                'time_before': event.timestamp_before.isoformat(),
+                'time_after': event.timestamp_after.isoformat(),
+            }
+        )
+
+        # High severity jumps may indicate attack - consider lockdown
+        if event.severity in ("HIGH", "CRITICAL"):
+            print(f"\n*** TIME MANIPULATION DETECTED ***")
+            print(f"Direction: {direction}")
+            print(f"Jump: {abs(event.jump_seconds):.1f} seconds")
+            print(f"Severity: {event.severity}")
+            print(f"This may indicate an attempt to bypass time-based security controls.\n")
+
+    def _on_ntp_lost(self):
+        """Handle NTP synchronization loss."""
+        self.event_logger.log_event(
+            EventType.NTP_SYNC_LOST,
+            "NTP synchronization lost - system clock may drift",
+            metadata={'timestamp': datetime.utcnow().isoformat()}
+        )
+        print("[CLOCK] Warning: NTP synchronization lost")
+
+    def _on_clock_manipulation(self, reason: str):
+        """Handle confirmed clock manipulation."""
+        self.event_logger.log_event(
+            EventType.CLOCK_JUMP,
+            f"Clock manipulation detected: {reason}",
+            metadata={
+                'reason': reason,
+                'timestamp': datetime.utcnow().isoformat(),
+                'action': 'logged',
+            }
+        )
+        print(f"[CLOCK] MANIPULATION: {reason}")
+
     def start(self):
         """Start the boundary daemon"""
         if self._running:
@@ -646,6 +719,16 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Log watchdog failed to start: {e}")
 
+        # Start clock monitor (Clock Drift Protection)
+        if self.clock_monitor and self.clock_monitor_enabled:
+            try:
+                self.clock_monitor.start()
+                state = self.clock_monitor.get_state()
+                ntp_status = "synced" if state['is_ntp_synced'] else "not synced"
+                print(f"Clock monitor started (NTP: {ntp_status})")
+            except Exception as e:
+                print(f"Warning: Clock monitor failed to start: {e}")
+
         # Start API server for CLI tools
         if self.api_server:
             try:
@@ -675,6 +758,14 @@ class BoundaryDaemon:
                 print("API server stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop API server: {e}")
+
+        # Stop clock monitor
+        if self.clock_monitor and self.clock_monitor_enabled:
+            try:
+                self.clock_monitor.stop()
+                print("Clock monitor stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop clock monitor: {e}")
 
         # Wait for enforcement thread
         if self._enforcement_thread:
@@ -1222,6 +1313,27 @@ class BoundaryDaemon:
                 'pii_detection': True,
                 'ambiguity_detection': True,
             }
+
+        # Add clock monitor information (Clock Drift Protection)
+        status['clock_monitor_enabled'] = self.clock_monitor_enabled
+        if self.clock_monitor and self.clock_monitor_enabled:
+            try:
+                clock_state = self.clock_monitor.get_state()
+                is_trustworthy, trust_reason = self.clock_monitor.is_time_trustworthy()
+                status['clock'] = {
+                    'status': clock_state['status'],
+                    'is_ntp_synced': clock_state['is_ntp_synced'],
+                    'ntp_server': clock_state['ntp_server'],
+                    'drift_ppm': clock_state['drift_ppm'],
+                    'jump_count': clock_state['jump_count'],
+                    'is_trustworthy': is_trustworthy,
+                    'trust_reason': trust_reason,
+                    'uptime_seconds': round(clock_state['uptime_seconds'], 1),
+                }
+                if clock_state.get('last_jump'):
+                    status['clock']['last_jump'] = clock_state['last_jump']
+            except Exception as e:
+                status['clock'] = {'error': str(e)}
 
         return status
 

@@ -29,6 +29,9 @@ class EventType(Enum):
     HEALTH_CHECK = "health_check"
     MESSAGE_CHECK = "message_check"  # NatLangChain/Agent-OS message validation
     API_REQUEST = "api_request"  # Authenticated API request
+    CLOCK_JUMP = "clock_jump"  # Time manipulation detected
+    CLOCK_DRIFT = "clock_drift"  # Excessive clock drift
+    NTP_SYNC_LOST = "ntp_sync_lost"  # NTP synchronization lost
 
 
 @dataclass

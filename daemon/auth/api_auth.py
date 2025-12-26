@@ -149,9 +149,9 @@ class APIToken:
 
 @dataclass
 class RateLimitEntry:
-    """Tracks rate limiting for a client."""
-    request_times: List[float] = field(default_factory=list)
-    blocked_until: Optional[float] = None
+    """Tracks rate limiting for a client using monotonic time."""
+    request_times: List[float] = field(default_factory=list)  # Monotonic timestamps
+    blocked_until: Optional[float] = None  # Monotonic timestamp
 
 
 class TokenManager:
@@ -421,8 +421,11 @@ class TokenManager:
         return True, token, "Authorized"
 
     def _check_rate_limit(self, token_id: str) -> Tuple[bool, str]:
-        """Check and update rate limit for a token."""
-        now = time.time()
+        """Check and update rate limit for a token.
+
+        Uses monotonic time to prevent clock manipulation attacks.
+        """
+        now = time.monotonic()  # Monotonic clock cannot be manipulated
 
         with self._lock:
             entry = self._rate_limits.get(token_id)
@@ -544,7 +547,10 @@ class TokenManager:
             return len(to_remove)
 
     def get_rate_limit_status(self, token_id: str) -> Dict:
-        """Get rate limit status for a token."""
+        """Get rate limit status for a token.
+
+        Uses monotonic time for accurate tracking regardless of clock changes.
+        """
         with self._lock:
             entry = self._rate_limits.get(token_id)
             if not entry:
@@ -553,19 +559,22 @@ class TokenManager:
                     'max_requests': self.rate_limit_max_requests,
                     'window_seconds': self.rate_limit_window,
                     'blocked': False,
-                    'blocked_until': None,
+                    'blocked_remaining_seconds': 0,
                 }
 
-            now = time.time()
+            now = time.monotonic()
             window_start = now - self.rate_limit_window
             current_requests = len([t for t in entry.request_times if t > window_start])
+
+            is_blocked = entry.blocked_until is not None and now < entry.blocked_until
+            blocked_remaining = max(0, int(entry.blocked_until - now)) if is_blocked else 0
 
             return {
                 'requests_in_window': current_requests,
                 'max_requests': self.rate_limit_max_requests,
                 'window_seconds': self.rate_limit_window,
-                'blocked': entry.blocked_until is not None and now < entry.blocked_until,
-                'blocked_until': entry.blocked_until,
+                'blocked': is_blocked,
+                'blocked_remaining_seconds': blocked_remaining,
             }
 
 

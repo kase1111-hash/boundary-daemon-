@@ -308,6 +308,19 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Remote Endpoint**: BOUNDARY_TELEMETRY_ENDPOINT for OTLP collector
 - **Daemon Integration**: BoundaryDaemon provides get_telemetry_summary(), record_telemetry_span(), record_telemetry_metric(), get_recent_telemetry_spans(), get_telemetry_metrics()
 
+#### 20. Clock Drift Protection (`daemon/security/clock_monitor.py`) ✅ NEW
+- **Time Manipulation Detection**: Detects sudden clock jumps (forward/backward)
+- **NTP Sync Verification**: Checks NTP synchronization via timedatectl, ntpstat, chronyc
+- **Monotonic Time Usage**: Rate limiting uses monotonic clock (cannot be manipulated)
+- **Drift Tracking**: Tracks clock drift in parts per million (ppm)
+- **Severity Classification**: LOW (<1min), MEDIUM (<5min), HIGH (<1hr), CRITICAL (>1day)
+- **Event Logging**: Logs CLOCK_JUMP, CLOCK_DRIFT, NTP_SYNC_LOST events
+- **Secure Timer**: Provides SecureTimer class for manipulation-resistant timing
+- **Trust Verification**: is_time_trustworthy() checks clock integrity
+- **Jump History**: Maintains history of detected time jumps
+- **Callback System**: Supports callbacks for time_jump, ntp_lost, manipulation events
+- **Daemon Integration**: BoundaryDaemon provides clock status in get_status()
+
 ### ⚠️ Partially Implemented / Limited
 
 #### 1. Enforcement Mechanism
