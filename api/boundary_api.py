@@ -343,6 +343,22 @@ class BoundaryAPIServer:
         elif command == 'check_agentos':
             return self._handle_check_agentos(params)
 
+        # Monitoring commands (Plan 11)
+        elif command == 'get_memory_stats':
+            return self._handle_get_memory_stats()
+
+        elif command == 'get_resource_stats':
+            return self._handle_get_resource_stats()
+
+        elif command == 'get_health_stats':
+            return self._handle_get_health_stats()
+
+        elif command == 'get_queue_stats':
+            return self._handle_get_queue_stats()
+
+        elif command == 'get_monitoring_summary':
+            return self._handle_get_monitoring_summary()
+
         else:
             return {'error': f'Unknown command: {command}'}
 
@@ -775,6 +791,192 @@ class BoundaryAPIServer:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    # === Monitoring API Handlers (Plan 11) ===
+
+    def _handle_get_memory_stats(self) -> Dict[str, Any]:
+        """
+        Get memory monitoring statistics.
+
+        Returns memory usage, leak detection status, and growth trends.
+        """
+        try:
+            if not hasattr(self.daemon, 'memory_monitor') or not self.daemon.memory_monitor:
+                return {'success': False, 'error': 'Memory monitor not available'}
+
+            if not getattr(self.daemon, 'memory_monitor_enabled', False):
+                return {'success': False, 'error': 'Memory monitor not enabled'}
+
+            stats = self.daemon.memory_monitor.get_stats()
+            return {
+                'success': True,
+                'memory_stats': stats,
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_resource_stats(self) -> Dict[str, Any]:
+        """
+        Get resource monitoring statistics.
+
+        Returns CPU, file descriptor, thread, disk, and connection stats.
+        """
+        try:
+            if not hasattr(self.daemon, 'resource_monitor') or not self.daemon.resource_monitor:
+                return {'success': False, 'error': 'Resource monitor not available'}
+
+            if not getattr(self.daemon, 'resource_monitor_enabled', False):
+                return {'success': False, 'error': 'Resource monitor not enabled'}
+
+            result = {
+                'success': True,
+                'sample_count': self.daemon.resource_monitor._sample_count,
+            }
+
+            # Get CPU stats if available
+            if hasattr(self.daemon.resource_monitor, 'get_cpu_stats'):
+                result['cpu_stats'] = self.daemon.resource_monitor.get_cpu_stats()
+
+            # Get connection stats if available
+            if hasattr(self.daemon.resource_monitor, 'get_connection_stats'):
+                result['connection_stats'] = self.daemon.resource_monitor.get_connection_stats()
+
+            # Get current snapshot
+            if hasattr(self.daemon.resource_monitor, 'get_current_snapshot'):
+                snapshot = self.daemon.resource_monitor.get_current_snapshot()
+                if snapshot:
+                    result['current_snapshot'] = {
+                        'timestamp': snapshot.timestamp,
+                        'fd_count': snapshot.fd_count,
+                        'thread_count': snapshot.thread_count,
+                        'disk_used_percent': snapshot.disk_used_percent,
+                        'cpu_percent': snapshot.cpu_percent,
+                        'connection_count': snapshot.connection_count,
+                    }
+
+            return result
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_health_stats(self) -> Dict[str, Any]:
+        """
+        Get health monitoring statistics.
+
+        Returns overall health status, component health, and heartbeat info.
+        """
+        try:
+            if not hasattr(self.daemon, 'health_monitor') or not self.daemon.health_monitor:
+                return {'success': False, 'error': 'Health monitor not available'}
+
+            if not getattr(self.daemon, 'health_monitor_enabled', False):
+                return {'success': False, 'error': 'Health monitor not enabled'}
+
+            summary = self.daemon.health_monitor.get_summary()
+            return {
+                'success': True,
+                'health_stats': summary,
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_queue_stats(self) -> Dict[str, Any]:
+        """
+        Get queue monitoring statistics.
+
+        Returns queue depths, backpressure state, and latency info.
+        """
+        try:
+            if not hasattr(self.daemon, 'queue_monitor') or not self.daemon.queue_monitor:
+                return {'success': False, 'error': 'Queue monitor not available'}
+
+            if not getattr(self.daemon, 'queue_monitor_enabled', False):
+                return {'success': False, 'error': 'Queue monitor not enabled'}
+
+            summary = self.daemon.queue_monitor.get_summary()
+            return {
+                'success': True,
+                'queue_stats': summary,
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_monitoring_summary(self) -> Dict[str, Any]:
+        """
+        Get a combined summary of all monitoring systems.
+
+        Returns memory, resource, health, and queue stats in one response.
+        """
+        try:
+            result = {
+                'success': True,
+                'monitors': {},
+            }
+
+            # Memory monitor
+            if hasattr(self.daemon, 'memory_monitor') and self.daemon.memory_monitor:
+                if getattr(self.daemon, 'memory_monitor_enabled', False):
+                    try:
+                        result['monitors']['memory'] = {
+                            'enabled': True,
+                            'stats': self.daemon.memory_monitor.get_stats(),
+                        }
+                    except Exception as e:
+                        result['monitors']['memory'] = {'enabled': True, 'error': str(e)}
+                else:
+                    result['monitors']['memory'] = {'enabled': False}
+            else:
+                result['monitors']['memory'] = {'available': False}
+
+            # Resource monitor
+            if hasattr(self.daemon, 'resource_monitor') and self.daemon.resource_monitor:
+                if getattr(self.daemon, 'resource_monitor_enabled', False):
+                    try:
+                        resource_data = {'enabled': True}
+                        if hasattr(self.daemon.resource_monitor, 'get_cpu_stats'):
+                            resource_data['cpu'] = self.daemon.resource_monitor.get_cpu_stats()
+                        if hasattr(self.daemon.resource_monitor, 'get_connection_stats'):
+                            resource_data['connections'] = self.daemon.resource_monitor.get_connection_stats()
+                        result['monitors']['resource'] = resource_data
+                    except Exception as e:
+                        result['monitors']['resource'] = {'enabled': True, 'error': str(e)}
+                else:
+                    result['monitors']['resource'] = {'enabled': False}
+            else:
+                result['monitors']['resource'] = {'available': False}
+
+            # Health monitor
+            if hasattr(self.daemon, 'health_monitor') and self.daemon.health_monitor:
+                if getattr(self.daemon, 'health_monitor_enabled', False):
+                    try:
+                        result['monitors']['health'] = {
+                            'enabled': True,
+                            'stats': self.daemon.health_monitor.get_summary(),
+                        }
+                    except Exception as e:
+                        result['monitors']['health'] = {'enabled': True, 'error': str(e)}
+                else:
+                    result['monitors']['health'] = {'enabled': False}
+            else:
+                result['monitors']['health'] = {'available': False}
+
+            # Queue monitor
+            if hasattr(self.daemon, 'queue_monitor') and self.daemon.queue_monitor:
+                if getattr(self.daemon, 'queue_monitor_enabled', False):
+                    try:
+                        result['monitors']['queue'] = {
+                            'enabled': True,
+                            'stats': self.daemon.queue_monitor.get_summary(),
+                        }
+                    except Exception as e:
+                        result['monitors']['queue'] = {'enabled': True, 'error': str(e)}
+                else:
+                    result['monitors']['queue'] = {'enabled': False}
+            else:
+                result['monitors']['queue'] = {'available': False}
+
+            return result
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
 
 class BoundaryAPIClient:
     """
@@ -1179,6 +1381,53 @@ class BoundaryAPIClient:
             Response containing list of tokens
         """
         return self._send_request('list_tokens', {'include_revoked': include_revoked})
+
+    # Monitoring methods (Plan 11)
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """
+        Get memory monitoring statistics.
+
+        Returns:
+            Response containing memory usage, leak detection, and growth trends.
+        """
+        return self._send_request('get_memory_stats')
+
+    def get_resource_stats(self) -> Dict[str, Any]:
+        """
+        Get resource monitoring statistics.
+
+        Returns:
+            Response containing CPU, FD, thread, disk, and connection stats.
+        """
+        return self._send_request('get_resource_stats')
+
+    def get_health_stats(self) -> Dict[str, Any]:
+        """
+        Get health monitoring statistics.
+
+        Returns:
+            Response containing overall health, component status, and heartbeat info.
+        """
+        return self._send_request('get_health_stats')
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        """
+        Get queue monitoring statistics.
+
+        Returns:
+            Response containing queue depths, backpressure, and latency info.
+        """
+        return self._send_request('get_queue_stats')
+
+    def get_monitoring_summary(self) -> Dict[str, Any]:
+        """
+        Get a combined summary of all monitoring systems.
+
+        Returns:
+            Response containing memory, resource, health, and queue stats.
+        """
+        return self._send_request('get_monitoring_summary')
 
 
 if __name__ == '__main__':
