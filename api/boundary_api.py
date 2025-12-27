@@ -359,6 +359,19 @@ class BoundaryAPIServer:
         elif command == 'get_monitoring_summary':
             return self._handle_get_monitoring_summary()
 
+        # Report generation commands (Plan 11)
+        elif command == 'generate_report':
+            return self._handle_generate_report(params)
+
+        elif command == 'get_raw_report':
+            return self._handle_get_raw_report(params)
+
+        elif command == 'check_ollama_status':
+            return self._handle_check_ollama_status()
+
+        elif command == 'get_report_history':
+            return self._handle_get_report_history(params)
+
         else:
             return {'error': f'Unknown command: {command}'}
 
@@ -977,6 +990,131 @@ class BoundaryAPIServer:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    # === Report Generation Handlers (Plan 11) ===
+
+    def _handle_generate_report(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate a monitoring report with Ollama interpretation.
+
+        Params:
+            report_type: str (optional) - 'full', 'summary', 'alerts', 'health' (default: 'full')
+            interpret: bool (optional) - Whether to send to Ollama (default: True)
+            custom_prompt: str (optional) - Custom prompt for Ollama
+            ollama_model: str (optional) - Override Ollama model
+            ollama_endpoint: str (optional) - Override Ollama endpoint
+        """
+        try:
+            if not hasattr(self.daemon, 'report_generator') or not self.daemon.report_generator:
+                return {'success': False, 'error': 'Report generator not available'}
+
+            # Import ReportType
+            from daemon.monitoring_report import ReportType, OllamaConfig
+
+            # Parse report type
+            report_type_str = params.get('report_type', 'full')
+            report_type_map = {
+                'full': ReportType.FULL,
+                'summary': ReportType.SUMMARY,
+                'alerts': ReportType.ALERTS,
+                'health': ReportType.HEALTH,
+            }
+            report_type = report_type_map.get(report_type_str, ReportType.FULL)
+
+            # Check for Ollama config overrides
+            if params.get('ollama_model') or params.get('ollama_endpoint'):
+                config = OllamaConfig(
+                    endpoint=params.get('ollama_endpoint', 'http://localhost:11434'),
+                    model=params.get('ollama_model', 'llama3.2'),
+                )
+                self.daemon.report_generator.set_ollama_config(config)
+
+            # Generate report
+            interpret = params.get('interpret', True)
+            custom_prompt = params.get('custom_prompt')
+
+            report = self.daemon.report_generator.generate_report(
+                report_type=report_type,
+                interpret=interpret,
+                custom_prompt=custom_prompt,
+            )
+
+            return {
+                'success': True,
+                'report': report.to_dict(),
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_raw_report(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate a raw monitoring report without Ollama interpretation.
+
+        Params:
+            report_type: str (optional) - 'full', 'summary', 'alerts', 'health' (default: 'full')
+        """
+        try:
+            if not hasattr(self.daemon, 'report_generator') or not self.daemon.report_generator:
+                return {'success': False, 'error': 'Report generator not available'}
+
+            from daemon.monitoring_report import ReportType
+
+            report_type_str = params.get('report_type', 'full')
+            report_type_map = {
+                'full': ReportType.FULL,
+                'summary': ReportType.SUMMARY,
+                'alerts': ReportType.ALERTS,
+                'health': ReportType.HEALTH,
+            }
+            report_type = report_type_map.get(report_type_str, ReportType.FULL)
+
+            raw_data = self.daemon.report_generator.generate_raw_report(report_type)
+
+            return {
+                'success': True,
+                'raw_report': raw_data,
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_check_ollama_status(self) -> Dict[str, Any]:
+        """
+        Check Ollama availability and list available models.
+        """
+        try:
+            if not hasattr(self.daemon, 'report_generator') or not self.daemon.report_generator:
+                return {'success': False, 'error': 'Report generator not available'}
+
+            status = self.daemon.report_generator.check_ollama_status()
+
+            return {
+                'success': True,
+                'ollama_status': status,
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_report_history(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get recent report generation history.
+
+        Params:
+            limit: int (optional) - Number of reports to return (default: 10)
+        """
+        try:
+            if not hasattr(self.daemon, 'report_generator') or not self.daemon.report_generator:
+                return {'success': False, 'error': 'Report generator not available'}
+
+            limit = params.get('limit', 10)
+            history = self.daemon.report_generator.get_report_history(limit=limit)
+
+            return {
+                'success': True,
+                'history': history,
+                'count': len(history),
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
 
 class BoundaryAPIClient:
     """
@@ -1428,6 +1566,71 @@ class BoundaryAPIClient:
             Response containing memory, resource, health, and queue stats.
         """
         return self._send_request('get_monitoring_summary')
+
+    # Report generation methods (Plan 11)
+
+    def generate_report(
+        self,
+        report_type: str = 'full',
+        interpret: bool = True,
+        custom_prompt: Optional[str] = None,
+        ollama_model: Optional[str] = None,
+        ollama_endpoint: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate a monitoring report with Ollama interpretation.
+
+        Args:
+            report_type: Type of report - 'full', 'summary', 'alerts', 'health'
+            interpret: Whether to send to Ollama for interpretation
+            custom_prompt: Custom prompt for Ollama analysis
+            ollama_model: Override the configured Ollama model
+            ollama_endpoint: Override the configured Ollama endpoint
+
+        Returns:
+            Response containing the report with raw data and interpretation.
+        """
+        params = {'report_type': report_type, 'interpret': interpret}
+        if custom_prompt:
+            params['custom_prompt'] = custom_prompt
+        if ollama_model:
+            params['ollama_model'] = ollama_model
+        if ollama_endpoint:
+            params['ollama_endpoint'] = ollama_endpoint
+        return self._send_request('generate_report', params)
+
+    def get_raw_report(self, report_type: str = 'full') -> Dict[str, Any]:
+        """
+        Generate a raw monitoring report without Ollama interpretation.
+
+        Args:
+            report_type: Type of report - 'full', 'summary', 'alerts', 'health'
+
+        Returns:
+            Response containing raw monitoring data.
+        """
+        return self._send_request('get_raw_report', {'report_type': report_type})
+
+    def check_ollama_status(self) -> Dict[str, Any]:
+        """
+        Check Ollama availability and list available models.
+
+        Returns:
+            Response containing Ollama status and available models.
+        """
+        return self._send_request('check_ollama_status')
+
+    def get_report_history(self, limit: int = 10) -> Dict[str, Any]:
+        """
+        Get recent report generation history.
+
+        Args:
+            limit: Number of reports to return
+
+        Returns:
+            Response containing recent report history.
+        """
+        return self._send_request('get_report_history', {'limit': limit})
 
 
 if __name__ == '__main__':

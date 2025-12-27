@@ -302,6 +302,22 @@ except ImportError:
     BackpressureState = None
     create_queue_monitor = None
 
+# Import monitoring report generator (Plan 11: Report Generation)
+try:
+    from .monitoring_report import (
+        MonitoringReportGenerator,
+        OllamaConfig,
+        ReportType,
+        create_report_generator,
+    )
+    REPORT_GENERATOR_AVAILABLE = True
+except ImportError:
+    REPORT_GENERATOR_AVAILABLE = False
+    MonitoringReportGenerator = None
+    OllamaConfig = None
+    ReportType = None
+    create_report_generator = None
+
 
 class BoundaryDaemon:
     """
@@ -875,6 +891,29 @@ class BoundaryDaemon:
                 print(f"Warning: Queue monitor failed to initialize: {e}")
         else:
             print("Queue monitor module not loaded")
+
+        # Initialize report generator (Plan 11: Report Generation with Ollama)
+        self.report_generator = None
+        if REPORT_GENERATOR_AVAILABLE and MonitoringReportGenerator:
+            try:
+                # Get Ollama config from environment
+                ollama_endpoint = os.environ.get('OLLAMA_ENDPOINT', 'http://localhost:11434')
+                ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2')
+
+                ollama_config = OllamaConfig(
+                    endpoint=ollama_endpoint,
+                    model=ollama_model,
+                )
+
+                self.report_generator = MonitoringReportGenerator(
+                    daemon=self,
+                    ollama_config=ollama_config,
+                )
+                print(f"Report generator available (Ollama: {ollama_endpoint}, model: {ollama_model})")
+            except Exception as e:
+                print(f"Warning: Report generator failed to initialize: {e}")
+        else:
+            print("Report generator module not loaded")
 
         # Initialize message checker (Plan 10: Message Checking for NatLangChain/Agent-OS)
         self.message_checker = None
