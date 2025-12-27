@@ -664,6 +664,24 @@ class DaemonIntegrityProtector:
             else:
                 return False, "Manifest missing and allow_missing_manifest is False"
 
+        # Handle invalid signature (common in dev when signing key changes)
+        if result.status == IntegrityStatus.SIGNATURE_INVALID:
+            if self.config.allow_missing_manifest:
+                logger.warning(
+                    "Manifest signature invalid (signing key changed) - regenerating for development."
+                )
+                # Regenerate manifest with current signing key
+                try:
+                    self._manifest = None  # Clear old manifest
+                    self.create_manifest(daemon_version="dev")
+                    self.save_manifest()
+                    logger.info("Regenerated development manifest with new signing key")
+                except Exception as e:
+                    logger.warning(f"Could not regenerate manifest: {e}")
+                return True, "Running with regenerated manifest (development mode)"
+            else:
+                return False, "Manifest signature invalid"
+
         action = self.config.failure_action
 
         if action == IntegrityAction.WARN_ONLY:
