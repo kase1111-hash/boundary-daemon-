@@ -406,6 +406,23 @@ class TelemetryManager:
             unit="s"
         )
 
+        # Memory metrics (Plan 11: Memory Leak Monitoring)
+        self._counters['memory_alerts'] = self._meter.create_counter(
+            "boundary.memory.alerts.total",
+            description="Total number of memory alerts",
+            unit="1"
+        )
+        self._histograms['memory_rss'] = self._meter.create_histogram(
+            "boundary.memory.rss",
+            description="Resident Set Size",
+            unit="MB"
+        )
+        self._histograms['memory_growth_rate'] = self._meter.create_histogram(
+            "boundary.memory.growth_rate",
+            description="Memory growth rate",
+            unit="MB/h"
+        )
+
     def shutdown(self):
         """Shutdown telemetry providers"""
         if not self._initialized:
@@ -557,6 +574,56 @@ class TelemetryManager:
         attrs = {'scan_type': scan_type, 'advisory_count': str(advisory_count)}
         self.increment_counter('security_scans', 1, attrs)
         self.record_histogram('scan_duration', duration_s, attrs)
+
+    # Memory monitoring methods (Plan 11: Memory Leak Monitoring)
+
+    def record_memory_snapshot(self, rss_mb: float, vms_mb: float, gc_objects: int,
+                               leak_indicator: str = "none"):
+        """
+        Record a memory snapshot.
+
+        Args:
+            rss_mb: Resident Set Size in MB
+            vms_mb: Virtual Memory Size in MB
+            gc_objects: Number of tracked GC objects
+            leak_indicator: Current leak indicator status
+        """
+        attrs = {'leak_indicator': leak_indicator}
+        self.record_histogram('memory_rss', rss_mb, attrs)
+        self.set_gauge('memory.rss_mb', int(rss_mb))
+        self.set_gauge('memory.vms_mb', int(vms_mb))
+        self.set_gauge('memory.gc_objects', gc_objects)
+
+    def record_memory_alert(self, alert_type: str, level: str, current_value: float,
+                           threshold: float):
+        """
+        Record a memory alert.
+
+        Args:
+            alert_type: Type of alert (rss_warning, leak_detected, etc.)
+            level: Alert severity level
+            current_value: Current metric value
+            threshold: Threshold that was exceeded
+        """
+        attrs = {
+            'alert_type': alert_type,
+            'level': level,
+            'threshold': str(threshold),
+        }
+        self.increment_counter('memory_alerts', 1, attrs)
+
+    def record_memory_growth_rate(self, growth_rate_mb_per_hour: float,
+                                   leak_indicator: str = "none"):
+        """
+        Record memory growth rate.
+
+        Args:
+            growth_rate_mb_per_hour: Growth rate in MB per hour
+            leak_indicator: Current leak indicator status
+        """
+        attrs = {'leak_indicator': leak_indicator}
+        self.record_histogram('memory_growth_rate', growth_rate_mb_per_hour, attrs)
+        self.set_gauge('memory.growth_rate_mb_h', int(growth_rate_mb_per_hour))
 
     def get_summary_stats(self) -> dict:
         """Get summary statistics"""

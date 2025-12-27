@@ -224,6 +224,24 @@ except ImportError:
     LogBackendType = None
     create_redundant_logger = None
 
+# Import memory monitor (Plan 11: Memory Leak Monitoring)
+try:
+    from .memory_monitor import (
+        MemoryMonitor,
+        MemoryMonitorConfig,
+        MemoryAlertLevel,
+        LeakIndicator,
+        create_memory_monitor,
+    )
+    MEMORY_MONITOR_AVAILABLE = True
+except ImportError:
+    MEMORY_MONITOR_AVAILABLE = False
+    MemoryMonitor = None
+    MemoryMonitorConfig = None
+    MemoryAlertLevel = None
+    LeakIndicator = None
+    create_memory_monitor = None
+
 
 class BoundaryDaemon:
     """
@@ -645,6 +663,46 @@ class BoundaryDaemon:
         else:
             print("Telemetry module not loaded")
 
+        # Initialize memory monitor (Plan 11: Memory Leak Monitoring)
+        self.memory_monitor = None
+        self.memory_monitor_enabled = False
+        if MEMORY_MONITOR_AVAILABLE and MemoryMonitor:
+            try:
+                # Get optional config from environment
+                sample_interval = float(os.environ.get('BOUNDARY_MEMORY_INTERVAL', '5.0'))
+                rss_warning_mb = float(os.environ.get('BOUNDARY_MEMORY_WARNING_MB', '500'))
+                rss_critical_mb = float(os.environ.get('BOUNDARY_MEMORY_CRITICAL_MB', '1000'))
+                leak_detection = os.environ.get('BOUNDARY_MEMORY_LEAK_DETECT', 'true').lower() == 'true'
+
+                config = MemoryMonitorConfig(
+                    sample_interval=sample_interval,
+                    rss_warning_mb=rss_warning_mb,
+                    rss_critical_mb=rss_critical_mb,
+                    leak_detection_enabled=leak_detection,
+                )
+
+                self.memory_monitor = MemoryMonitor(
+                    daemon=self,
+                    config=config,
+                    on_alert=self._on_memory_alert,
+                )
+
+                # Connect telemetry if available
+                if self.telemetry_manager:
+                    self.memory_monitor.set_telemetry_manager(self.telemetry_manager)
+
+                self.memory_monitor_enabled = self.memory_monitor.is_available
+                if self.memory_monitor_enabled:
+                    print(f"Memory monitor available (interval: {sample_interval}s)")
+                    print(f"  RSS warning: {rss_warning_mb} MB, critical: {rss_critical_mb} MB")
+                    print(f"  Leak detection: {'enabled' if leak_detection else 'disabled'}")
+                else:
+                    print("Memory monitor: psutil not available")
+            except Exception as e:
+                print(f"Warning: Memory monitor failed to initialize: {e}")
+        else:
+            print("Memory monitor module not loaded")
+
         # Initialize message checker (Plan 10: Message Checking for NatLangChain/Agent-OS)
         self.message_checker = None
         self.message_checker_enabled = False
@@ -1047,6 +1105,44 @@ class BoundaryDaemon:
         )
         print(f"[CLOCK] MANIPULATION: {reason}")
 
+    def _on_memory_alert(self, alert):
+        """Handle memory alert from memory monitor."""
+        # Log to event logger
+        event_type = EventType.ALERT if alert.level.value == 'critical' else EventType.INFO
+        self.event_logger.log_event(
+            event_type,
+            f"Memory alert [{alert.level.value}]: {alert.message}",
+            metadata={
+                'alert_type': alert.alert_type,
+                'level': alert.level.value,
+                'current_value': alert.current_value,
+                'threshold': alert.threshold,
+                **alert.metadata,
+            }
+        )
+
+        # Log to telemetry if available
+        if self.telemetry_manager and self.telemetry_enabled:
+            self.telemetry_manager.record_memory_alert(
+                alert_type=alert.alert_type,
+                level=alert.level.value,
+                current_value=alert.current_value,
+                threshold=alert.threshold,
+            )
+
+        # Print to console
+        level_prefix = {
+            'info': '[MEMORY]',
+            'warning': '[MEMORY] WARNING:',
+            'critical': '[MEMORY] CRITICAL:',
+        }.get(alert.level.value, '[MEMORY]')
+        print(f"{level_prefix} {alert.message}")
+
+        # For critical memory alerts (confirmed leaks or very high usage),
+        # consider taking action
+        if alert.level.value == 'critical' and 'confirmed' in alert.alert_type:
+            print("[MEMORY] Confirmed memory leak detected - consider restarting daemon")
+
     def start(self):
         """Start the boundary daemon"""
         if self._running:
@@ -1165,6 +1261,14 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Redundant logger health monitoring failed: {e}")
 
+        # Start memory monitor (Plan 11: Memory Leak Monitoring)
+        if self.memory_monitor and self.memory_monitor_enabled:
+            try:
+                self.memory_monitor.start()
+                print("Memory monitor started")
+            except Exception as e:
+                print(f"Warning: Memory monitor failed to start: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -1203,6 +1307,20 @@ class BoundaryDaemon:
                 print("Redundant logger health monitoring stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop redundant logger: {e}")
+
+        # Stop memory monitor (Plan 11: Memory Leak Monitoring)
+        if self.memory_monitor and self.memory_monitor_enabled:
+            try:
+                # Log final memory stats before shutdown
+                stats = self.memory_monitor.get_summary_stats()
+                if stats.get('current'):
+                    current = stats['current']
+                    print(f"Memory at shutdown: RSS={current['rss_mb']:.1f} MB, "
+                          f"Leak indicator={stats.get('leak_indicator', 'none')}")
+                self.memory_monitor.stop()
+                print("Memory monitor stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop memory monitor: {e}")
 
         # Stop hardened watchdog endpoint
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
@@ -1803,6 +1921,31 @@ class BoundaryDaemon:
                     status['clock']['last_jump'] = clock_state['last_jump']
             except Exception as e:
                 status['clock'] = {'error': str(e)}
+
+        # Add memory monitor information (Plan 11: Memory Leak Monitoring)
+        status['memory_monitor_enabled'] = self.memory_monitor_enabled
+        if self.memory_monitor and self.memory_monitor_enabled:
+            try:
+                mem_stats = self.memory_monitor.get_summary_stats()
+                status['memory'] = {
+                    'available': mem_stats.get('available', False),
+                    'running': mem_stats.get('running', False),
+                    'samples_collected': mem_stats.get('samples_collected', 0),
+                    'alerts_total': mem_stats.get('alerts_total', 0),
+                    'leak_indicator': mem_stats.get('leak_indicator', 'none'),
+                }
+                if mem_stats.get('current'):
+                    current = mem_stats['current']
+                    status['memory']['current_rss_mb'] = current.get('rss_mb', 0)
+                    status['memory']['current_vms_mb'] = current.get('vms_mb', 0)
+                    status['memory']['gc_objects'] = current.get('gc_objects', 0)
+                    status['memory']['gc_garbage'] = current.get('gc_garbage', 0)
+                if mem_stats.get('baseline_rss_mb'):
+                    status['memory']['baseline_rss_mb'] = mem_stats['baseline_rss_mb']
+                if mem_stats.get('growth_since_baseline_percent'):
+                    status['memory']['growth_percent'] = mem_stats['growth_since_baseline_percent']
+            except Exception as e:
+                status['memory'] = {'error': str(e)}
 
         # Add privilege/enforcement status (SECURITY: Addresses silent failure issue)
         if self.privilege_manager:
