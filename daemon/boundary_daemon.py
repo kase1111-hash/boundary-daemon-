@@ -231,6 +231,8 @@ try:
         MemoryMonitorConfig,
         MemoryAlertLevel,
         LeakIndicator,
+        TraceMallocDebugger,
+        LeakReport,
         create_memory_monitor,
     )
     MEMORY_MONITOR_AVAILABLE = True
@@ -240,6 +242,8 @@ except ImportError:
     MemoryMonitorConfig = None
     MemoryAlertLevel = None
     LeakIndicator = None
+    TraceMallocDebugger = None
+    LeakReport = None
     create_memory_monitor = None
 
 
@@ -674,11 +678,17 @@ class BoundaryDaemon:
                 rss_critical_mb = float(os.environ.get('BOUNDARY_MEMORY_CRITICAL_MB', '1000'))
                 leak_detection = os.environ.get('BOUNDARY_MEMORY_LEAK_DETECT', 'true').lower() == 'true'
 
+                # Debug mode (tracemalloc) - WARNING: performance overhead
+                debug_enabled = os.environ.get('BOUNDARY_MEMORY_DEBUG', 'false').lower() == 'true'
+                debug_auto_disable = int(os.environ.get('BOUNDARY_MEMORY_DEBUG_TIMEOUT', '300'))
+
                 config = MemoryMonitorConfig(
                     sample_interval=sample_interval,
                     rss_warning_mb=rss_warning_mb,
                     rss_critical_mb=rss_critical_mb,
                     leak_detection_enabled=leak_detection,
+                    debug_enabled=debug_enabled,
+                    debug_auto_disable_after=debug_auto_disable,
                 )
 
                 self.memory_monitor = MemoryMonitor(
@@ -696,6 +706,9 @@ class BoundaryDaemon:
                     print(f"Memory monitor available (interval: {sample_interval}s)")
                     print(f"  RSS warning: {rss_warning_mb} MB, critical: {rss_critical_mb} MB")
                     print(f"  Leak detection: {'enabled' if leak_detection else 'disabled'}")
+                    if debug_enabled:
+                        print(f"  DEBUG MODE: enabled (auto-disable: {debug_auto_disable}s)")
+                        print(f"  WARNING: tracemalloc causes performance overhead")
                 else:
                     print("Memory monitor: psutil not available")
             except Exception as e:

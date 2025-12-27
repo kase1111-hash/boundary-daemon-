@@ -8,6 +8,7 @@ Features:
 - Python garbage collector statistics
 - Configurable alert thresholds
 - Integration with OpenTelemetry metrics
+- Optional tracemalloc debug mode for pinpointing leak sources
 """
 
 import gc
@@ -15,8 +16,9 @@ import os
 import time
 import threading
 import logging
+import tracemalloc
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Callable, Any
+from typing import Optional, Dict, List, Callable, Any, Tuple
 from datetime import datetime
 from enum import Enum
 from collections import deque
@@ -45,6 +47,324 @@ class LeakIndicator(Enum):
     POSSIBLE = "possible"       # Memory growing but could be normal
     LIKELY = "likely"           # Consistent growth pattern detected
     CONFIRMED = "confirmed"     # Sustained growth over extended period
+
+
+@dataclass
+class AllocationSite:
+    """Represents a memory allocation site from tracemalloc"""
+    filename: str
+    lineno: int
+    size_bytes: int
+    count: int
+
+    def to_dict(self) -> Dict:
+        return {
+            'filename': self.filename,
+            'lineno': self.lineno,
+            'location': f"{self.filename}:{self.lineno}",
+            'size_bytes': self.size_bytes,
+            'size_mb': round(self.size_bytes / (1024 * 1024), 3),
+            'count': self.count,
+        }
+
+
+@dataclass
+class TraceMallocSnapshot:
+    """Wrapper for tracemalloc snapshot with analysis"""
+    timestamp: float
+    total_size: int
+    total_count: int
+    top_allocations: List[AllocationSite]
+
+    def to_dict(self) -> Dict:
+        return {
+            'timestamp': self.timestamp,
+            'timestamp_iso': datetime.fromtimestamp(self.timestamp).isoformat(),
+            'total_size_bytes': self.total_size,
+            'total_size_mb': round(self.total_size / (1024 * 1024), 2),
+            'total_count': self.total_count,
+            'top_allocations': [a.to_dict() for a in self.top_allocations],
+        }
+
+
+@dataclass
+class LeakReport:
+    """Report of detected memory leak with allocation details"""
+    timestamp: float
+    growth_bytes: int
+    growth_sites: List[Dict]  # Sites that grew the most
+    new_sites: List[Dict]     # New allocation sites
+    total_current: int
+    total_baseline: int
+
+    def to_dict(self) -> Dict:
+        return {
+            'timestamp': self.timestamp,
+            'timestamp_iso': datetime.fromtimestamp(self.timestamp).isoformat(),
+            'growth_bytes': self.growth_bytes,
+            'growth_mb': round(self.growth_bytes / (1024 * 1024), 2),
+            'growth_sites': self.growth_sites,
+            'new_sites': self.new_sites,
+            'total_current_mb': round(self.total_current / (1024 * 1024), 2),
+            'total_baseline_mb': round(self.total_baseline / (1024 * 1024), 2),
+        }
+
+
+class TraceMallocDebugger:
+    """
+    Optional tracemalloc integration for debugging memory leaks.
+
+    This is a heavier-weight debugging tool that should only be enabled
+    when actively investigating memory issues. It provides:
+    - Exact allocation sites (file:line)
+    - Memory growth comparison between snapshots
+    - Top allocation analysis
+
+    Performance impact: 5-30% CPU overhead, 10-30% memory overhead
+    """
+
+    def __init__(self, top_count: int = 20, nframe: int = 5):
+        """
+        Initialize TraceMallocDebugger.
+
+        Args:
+            top_count: Number of top allocations to track
+            nframe: Number of frames to capture in tracebacks
+        """
+        self.top_count = top_count
+        self.nframe = nframe
+        self._enabled = False
+        self._baseline_snapshot = None
+        self._snapshots: List[TraceMallocSnapshot] = []
+        self._leak_reports: List[LeakReport] = []
+        self._lock = threading.Lock()
+        self._max_snapshots = 10
+        self._max_reports = 20
+
+    @property
+    def is_enabled(self) -> bool:
+        """Check if tracemalloc is currently enabled"""
+        return self._enabled and tracemalloc.is_tracing()
+
+    def start(self) -> bool:
+        """
+        Start tracemalloc tracing.
+
+        Returns:
+            True if started successfully
+        """
+        if self._enabled:
+            return True
+
+        try:
+            tracemalloc.start(self.nframe)
+            self._enabled = True
+            logger.info(f"tracemalloc started (nframe={self.nframe})")
+
+            # Take initial baseline snapshot
+            self._baseline_snapshot = self._take_raw_snapshot()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start tracemalloc: {e}")
+            return False
+
+    def stop(self):
+        """Stop tracemalloc tracing"""
+        if not self._enabled:
+            return
+
+        try:
+            tracemalloc.stop()
+            self._enabled = False
+            logger.info("tracemalloc stopped")
+        except Exception as e:
+            logger.error(f"Failed to stop tracemalloc: {e}")
+
+    def _take_raw_snapshot(self):
+        """Take a raw tracemalloc snapshot"""
+        if not tracemalloc.is_tracing():
+            return None
+        return tracemalloc.take_snapshot()
+
+    def take_snapshot(self) -> Optional[TraceMallocSnapshot]:
+        """
+        Take a tracemalloc snapshot and analyze top allocations.
+
+        Returns:
+            TraceMallocSnapshot with analysis, or None if not enabled
+        """
+        if not self.is_enabled:
+            return None
+
+        try:
+            raw_snapshot = self._take_raw_snapshot()
+            if not raw_snapshot:
+                return None
+
+            # Filter to focus on our code (exclude stdlib, site-packages)
+            snapshot = raw_snapshot.filter_traces((
+                tracemalloc.Filter(False, "<frozen*"),
+                tracemalloc.Filter(False, "<unknown>"),
+                tracemalloc.Filter(False, tracemalloc.__file__),
+            ))
+
+            # Get top allocations by size
+            top_stats = snapshot.statistics('lineno')[:self.top_count]
+
+            total_size = sum(stat.size for stat in snapshot.statistics('filename'))
+            total_count = sum(stat.count for stat in snapshot.statistics('filename'))
+
+            top_allocations = [
+                AllocationSite(
+                    filename=stat.traceback[0].filename if stat.traceback else "<unknown>",
+                    lineno=stat.traceback[0].lineno if stat.traceback else 0,
+                    size_bytes=stat.size,
+                    count=stat.count,
+                )
+                for stat in top_stats
+            ]
+
+            result = TraceMallocSnapshot(
+                timestamp=time.time(),
+                total_size=total_size,
+                total_count=total_count,
+                top_allocations=top_allocations,
+            )
+
+            # Store snapshot
+            with self._lock:
+                self._snapshots.append(result)
+                if len(self._snapshots) > self._max_snapshots:
+                    self._snapshots = self._snapshots[-self._max_snapshots:]
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to take tracemalloc snapshot: {e}")
+            return None
+
+    def compare_to_baseline(self) -> Optional[LeakReport]:
+        """
+        Compare current memory state to baseline and identify leak sources.
+
+        Returns:
+            LeakReport with growth analysis, or None if not available
+        """
+        if not self.is_enabled or not self._baseline_snapshot:
+            return None
+
+        try:
+            current_snapshot = self._take_raw_snapshot()
+            if not current_snapshot:
+                return None
+
+            # Compare snapshots
+            diff_stats = current_snapshot.compare_to(
+                self._baseline_snapshot, 'lineno'
+            )
+
+            # Get sites that grew the most
+            growth_sites = []
+            for stat in sorted(diff_stats, key=lambda s: s.size_diff, reverse=True)[:self.top_count]:
+                if stat.size_diff > 0:
+                    growth_sites.append({
+                        'location': f"{stat.traceback[0].filename}:{stat.traceback[0].lineno}" if stat.traceback else "<unknown>",
+                        'size_diff_bytes': stat.size_diff,
+                        'size_diff_mb': round(stat.size_diff / (1024 * 1024), 3),
+                        'count_diff': stat.count_diff,
+                        'current_size_bytes': stat.size,
+                        'current_count': stat.count,
+                    })
+
+            # Get new allocation sites (didn't exist in baseline)
+            new_sites = []
+            for stat in diff_stats:
+                if stat.count_diff == stat.count and stat.size > 10000:  # New site, >10KB
+                    new_sites.append({
+                        'location': f"{stat.traceback[0].filename}:{stat.traceback[0].lineno}" if stat.traceback else "<unknown>",
+                        'size_bytes': stat.size,
+                        'size_mb': round(stat.size / (1024 * 1024), 3),
+                        'count': stat.count,
+                    })
+            new_sites = sorted(new_sites, key=lambda s: s['size_bytes'], reverse=True)[:10]
+
+            # Calculate totals
+            current_total = sum(stat.size for stat in current_snapshot.statistics('filename'))
+            baseline_total = sum(stat.size for stat in self._baseline_snapshot.statistics('filename'))
+            growth = current_total - baseline_total
+
+            report = LeakReport(
+                timestamp=time.time(),
+                growth_bytes=growth,
+                growth_sites=growth_sites,
+                new_sites=new_sites,
+                total_current=current_total,
+                total_baseline=baseline_total,
+            )
+
+            # Store report
+            with self._lock:
+                self._leak_reports.append(report)
+                if len(self._leak_reports) > self._max_reports:
+                    self._leak_reports = self._leak_reports[-self._max_reports:]
+
+            return report
+
+        except Exception as e:
+            logger.error(f"Failed to compare tracemalloc snapshots: {e}")
+            return None
+
+    def reset_baseline(self):
+        """Reset the baseline snapshot to current state"""
+        if not self.is_enabled:
+            return
+
+        self._baseline_snapshot = self._take_raw_snapshot()
+        logger.info("tracemalloc baseline reset")
+
+    def get_current_traced_memory(self) -> Tuple[int, int]:
+        """
+        Get current traced memory usage.
+
+        Returns:
+            (current_bytes, peak_bytes)
+        """
+        if not self.is_enabled:
+            return (0, 0)
+
+        try:
+            return tracemalloc.get_traced_memory()
+        except Exception:
+            return (0, 0)
+
+    def get_snapshots(self, limit: Optional[int] = None) -> List[TraceMallocSnapshot]:
+        """Get stored snapshots"""
+        with self._lock:
+            if limit:
+                return self._snapshots[-limit:]
+            return list(self._snapshots)
+
+    def get_leak_reports(self, limit: Optional[int] = None) -> List[LeakReport]:
+        """Get stored leak reports"""
+        with self._lock:
+            if limit:
+                return self._leak_reports[-limit:]
+            return list(self._leak_reports)
+
+    def get_status(self) -> Dict:
+        """Get debugger status"""
+        current, peak = self.get_current_traced_memory()
+        return {
+            'enabled': self._enabled,
+            'is_tracing': tracemalloc.is_tracing() if self._enabled else False,
+            'nframe': self.nframe,
+            'top_count': self.top_count,
+            'snapshots_stored': len(self._snapshots),
+            'leak_reports_stored': len(self._leak_reports),
+            'has_baseline': self._baseline_snapshot is not None,
+            'current_traced_mb': round(current / (1024 * 1024), 2),
+            'peak_traced_mb': round(peak / (1024 * 1024), 2),
+        }
 
 
 @dataclass
@@ -131,6 +451,13 @@ class MemoryMonitorConfig:
     leak_confirmation_samples: int = 120  # 10 min at 5s intervals
     leak_growth_threshold_percent: float = 10.0  # 10% growth = possible leak
 
+    # Debug mode (tracemalloc) - WARNING: significant performance overhead
+    debug_enabled: bool = False           # Enable tracemalloc debugging
+    debug_nframe: int = 5                 # Number of frames to capture
+    debug_top_count: int = 20             # Top allocations to track
+    debug_snapshot_on_alert: bool = True  # Auto-snapshot on leak alerts
+    debug_auto_disable_after: int = 300   # Auto-disable after N seconds (0=never)
+
     def to_dict(self) -> Dict:
         return {
             'sample_interval': self.sample_interval,
@@ -145,6 +472,11 @@ class MemoryMonitorConfig:
             'leak_detection_enabled': self.leak_detection_enabled,
             'leak_confirmation_samples': self.leak_confirmation_samples,
             'leak_growth_threshold_percent': self.leak_growth_threshold_percent,
+            'debug_enabled': self.debug_enabled,
+            'debug_nframe': self.debug_nframe,
+            'debug_top_count': self.debug_top_count,
+            'debug_snapshot_on_alert': self.debug_snapshot_on_alert,
+            'debug_auto_disable_after': self.debug_auto_disable_after,
         }
 
 
@@ -202,6 +534,15 @@ class MemoryMonitor:
         self._telemetry_manager = None
         self._metrics_registered = False
 
+        # Debug mode (tracemalloc)
+        self._debugger: Optional[TraceMallocDebugger] = None
+        self._debug_start_time: Optional[float] = None
+        if self.config.debug_enabled:
+            self._debugger = TraceMallocDebugger(
+                top_count=self.config.debug_top_count,
+                nframe=self.config.debug_nframe,
+            )
+
     @property
     def is_available(self) -> bool:
         """Check if memory monitoring is available"""
@@ -239,11 +580,26 @@ class MemoryMonitor:
         self._thread.start()
         logger.info(f"Memory monitor started (interval: {self.config.sample_interval}s)")
 
+        # Start debugger if enabled
+        if self._debugger and self.config.debug_enabled:
+            if self._debugger.start():
+                self._debug_start_time = time.time()
+                logger.warning("tracemalloc DEBUG MODE enabled - expect performance overhead")
+
     def stop(self):
         """Stop memory monitoring"""
         self._running = False
         if self._thread:
             self._thread.join(timeout=5.0)
+
+        # Stop debugger
+        if self._debugger and self._debugger.is_enabled:
+            # Take final leak report before stopping
+            report = self._debugger.compare_to_baseline()
+            if report:
+                logger.info(f"Final memory growth: {report.growth_bytes / (1024*1024):.2f} MB")
+            self._debugger.stop()
+
         logger.info("Memory monitor stopped")
 
     def _monitor_loop(self):
@@ -269,11 +625,54 @@ class MemoryMonitor:
                 # Export metrics to telemetry
                 self._export_metrics(snapshot)
 
+                # Check debug mode auto-disable timer
+                self._check_debug_auto_disable()
+
                 time.sleep(self.config.sample_interval)
 
             except Exception as e:
                 logger.error(f"Error in memory monitor loop: {e}")
                 time.sleep(self.config.sample_interval)
+
+    def _check_debug_auto_disable(self):
+        """Check if debug mode should be auto-disabled"""
+        if not self._debugger or not self._debugger.is_enabled:
+            return
+
+        if self.config.debug_auto_disable_after <= 0:
+            return  # Never auto-disable
+
+        if self._debug_start_time:
+            elapsed = time.time() - self._debug_start_time
+            if elapsed >= self.config.debug_auto_disable_after:
+                # Take final report before disabling
+                report = self._debugger.compare_to_baseline()
+                if report:
+                    logger.info(f"Debug mode auto-disable: growth={report.growth_bytes/(1024*1024):.2f} MB")
+                    self._log_leak_report(report)
+                self._debugger.stop()
+                logger.info(f"tracemalloc debug mode auto-disabled after {elapsed:.0f}s")
+
+    def _log_leak_report(self, report: LeakReport):
+        """Log a leak report to the daemon event logger"""
+        if not self.daemon or not hasattr(self.daemon, 'event_logger'):
+            return
+
+        try:
+            from .event_logger import EventType
+            # Log top growth sites
+            top_sites = report.growth_sites[:5] if report.growth_sites else []
+            self.daemon.event_logger.log_event(
+                EventType.INFO,
+                f"Memory debug report: {report.growth_bytes/(1024*1024):.2f} MB growth",
+                metadata={
+                    'growth_mb': round(report.growth_bytes / (1024 * 1024), 2),
+                    'top_growth_sites': top_sites,
+                    'new_sites_count': len(report.new_sites),
+                }
+            )
+        except Exception:
+            pass
 
     def _take_snapshot(self) -> MemorySnapshot:
         """Take a memory snapshot"""
@@ -523,6 +922,23 @@ class MemoryMonitor:
             except Exception:
                 pass
 
+        # Capture tracemalloc snapshot on critical leak alerts
+        if (level == MemoryAlertLevel.CRITICAL and
+            'leak' in alert_type and
+            self.config.debug_snapshot_on_alert and
+            self._debugger and self._debugger.is_enabled):
+            try:
+                report = self._debugger.compare_to_baseline()
+                if report:
+                    logger.info(f"Leak debug snapshot captured: {len(report.growth_sites)} growth sites")
+                    self._log_leak_report(report)
+                    # Log top sites to console for immediate visibility
+                    for i, site in enumerate(report.growth_sites[:3]):
+                        logger.warning(f"  Top leak site #{i+1}: {site['location']} "
+                                      f"(+{site['size_diff_mb']:.2f} MB)")
+            except Exception as e:
+                logger.debug(f"Failed to capture debug snapshot: {e}")
+
     def _export_metrics(self, snapshot: MemorySnapshot):
         """Export metrics to telemetry system"""
         if not self._telemetry_manager:
@@ -612,7 +1028,96 @@ class MemoryMonitor:
             stats['growth_since_baseline_mb'] = round(growth / (1024 * 1024), 2)
             stats['growth_since_baseline_percent'] = round(growth_percent, 2)
 
+        # Add debug mode info
+        if self._debugger:
+            stats['debug'] = self._debugger.get_status()
+            if self._debug_start_time:
+                stats['debug']['running_seconds'] = round(time.time() - self._debug_start_time, 1)
+
         return stats
+
+    # Debug mode control methods
+
+    def enable_debug_mode(self, auto_disable_after: int = 300) -> bool:
+        """
+        Enable tracemalloc debug mode at runtime.
+
+        Args:
+            auto_disable_after: Seconds until auto-disable (0=never)
+
+        Returns:
+            True if enabled successfully
+        """
+        if self._debugger and self._debugger.is_enabled:
+            logger.info("Debug mode already enabled")
+            return True
+
+        # Create debugger if not exists
+        if not self._debugger:
+            self._debugger = TraceMallocDebugger(
+                top_count=self.config.debug_top_count,
+                nframe=self.config.debug_nframe,
+            )
+
+        if self._debugger.start():
+            self._debug_start_time = time.time()
+            self.config.debug_auto_disable_after = auto_disable_after
+            logger.warning(f"tracemalloc DEBUG MODE enabled (auto-disable: {auto_disable_after}s)")
+            return True
+        return False
+
+    def disable_debug_mode(self) -> Optional[LeakReport]:
+        """
+        Disable tracemalloc debug mode.
+
+        Returns:
+            Final LeakReport if available
+        """
+        if not self._debugger or not self._debugger.is_enabled:
+            return None
+
+        # Capture final report
+        report = self._debugger.compare_to_baseline()
+        if report:
+            self._log_leak_report(report)
+
+        self._debugger.stop()
+        self._debug_start_time = None
+        logger.info("tracemalloc debug mode disabled")
+        return report
+
+    def get_debug_snapshot(self) -> Optional[TraceMallocSnapshot]:
+        """
+        Take a tracemalloc snapshot (debug mode must be enabled).
+
+        Returns:
+            TraceMallocSnapshot or None
+        """
+        if not self._debugger or not self._debugger.is_enabled:
+            return None
+        return self._debugger.take_snapshot()
+
+    def get_debug_leak_report(self) -> Optional[LeakReport]:
+        """
+        Compare current allocations to baseline (debug mode must be enabled).
+
+        Returns:
+            LeakReport with growth analysis or None
+        """
+        if not self._debugger or not self._debugger.is_enabled:
+            return None
+        return self._debugger.compare_to_baseline()
+
+    def get_debug_reports(self, limit: int = 10) -> List[LeakReport]:
+        """Get stored leak reports from debug mode"""
+        if not self._debugger:
+            return []
+        return self._debugger.get_leak_reports(limit)
+
+    def reset_debug_baseline(self):
+        """Reset the tracemalloc baseline to current state"""
+        if self._debugger and self._debugger.is_enabled:
+            self._debugger.reset_baseline()
 
     def force_gc(self) -> Dict:
         """Force garbage collection and return stats"""
