@@ -3,5 +3,8 @@
 # System monitoring
 psutil>=5.9.0
 
+# Cryptography (for signed event logger)
+pynacl>=1.5.0
+
 # No other dependencies required
 # Minimal attack surface by design
