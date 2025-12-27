@@ -264,6 +264,60 @@ except ImportError:
     ResourceType = None
     create_resource_monitor = None
 
+# Import health monitor (Plan 11: Health Monitoring)
+try:
+    from .health_monitor import (
+        HealthMonitor,
+        HealthMonitorConfig,
+        HealthStatus,
+        ComponentStatus,
+        create_health_monitor,
+    )
+    HEALTH_MONITOR_AVAILABLE = True
+except ImportError:
+    HEALTH_MONITOR_AVAILABLE = False
+    HealthMonitor = None
+    HealthMonitorConfig = None
+    HealthStatus = None
+    ComponentStatus = None
+    create_health_monitor = None
+
+# Import queue monitor (Plan 11: Queue Monitoring)
+try:
+    from .queue_monitor import (
+        QueueMonitor,
+        QueueMonitorConfig,
+        QueueConfig,
+        QueueAlertLevel,
+        BackpressureState,
+        create_queue_monitor,
+    )
+    QUEUE_MONITOR_AVAILABLE = True
+except ImportError:
+    QUEUE_MONITOR_AVAILABLE = False
+    QueueMonitor = None
+    QueueMonitorConfig = None
+    QueueConfig = None
+    QueueAlertLevel = None
+    BackpressureState = None
+    create_queue_monitor = None
+
+# Import monitoring report generator (Plan 11: Report Generation)
+try:
+    from .monitoring_report import (
+        MonitoringReportGenerator,
+        OllamaConfig,
+        ReportType,
+        create_report_generator,
+    )
+    REPORT_GENERATOR_AVAILABLE = True
+except ImportError:
+    REPORT_GENERATOR_AVAILABLE = False
+    MonitoringReportGenerator = None
+    OllamaConfig = None
+    ReportType = None
+    create_report_generator = None
+
 
 class BoundaryDaemon:
     """
@@ -774,6 +828,93 @@ class BoundaryDaemon:
         else:
             print("Resource monitor module not loaded")
 
+        # Initialize health monitor (Plan 11: Health Monitoring)
+        self.health_monitor = None
+        self.health_monitor_enabled = False
+        if HEALTH_MONITOR_AVAILABLE and HealthMonitor:
+            try:
+                check_interval = float(os.environ.get('BOUNDARY_HEALTH_INTERVAL', '30.0'))
+                heartbeat_timeout = float(os.environ.get('BOUNDARY_HEARTBEAT_TIMEOUT', '60.0'))
+
+                config = HealthMonitorConfig(
+                    check_interval=check_interval,
+                    heartbeat_timeout=heartbeat_timeout,
+                )
+
+                self.health_monitor = HealthMonitor(
+                    daemon=self,
+                    config=config,
+                    on_alert=self._on_health_alert,
+                )
+
+                # Connect telemetry if available
+                if self.telemetry_manager:
+                    self.health_monitor.set_telemetry_manager(self.telemetry_manager)
+
+                self.health_monitor_enabled = True
+                print(f"Health monitor available (check interval: {check_interval}s)")
+                print(f"  Heartbeat timeout: {heartbeat_timeout}s")
+            except Exception as e:
+                print(f"Warning: Health monitor failed to initialize: {e}")
+        else:
+            print("Health monitor module not loaded")
+
+        # Initialize queue monitor (Plan 11: Queue Monitoring)
+        self.queue_monitor = None
+        self.queue_monitor_enabled = False
+        if QUEUE_MONITOR_AVAILABLE and QueueMonitor:
+            try:
+                sample_interval = float(os.environ.get('BOUNDARY_QUEUE_INTERVAL', '5.0'))
+                warning_depth = int(os.environ.get('BOUNDARY_QUEUE_WARNING', '100'))
+                critical_depth = int(os.environ.get('BOUNDARY_QUEUE_CRITICAL', '500'))
+
+                config = QueueMonitorConfig(
+                    sample_interval=sample_interval,
+                    default_warning_depth=warning_depth,
+                    default_critical_depth=critical_depth,
+                )
+
+                self.queue_monitor = QueueMonitor(
+                    daemon=self,
+                    config=config,
+                    on_alert=self._on_queue_alert,
+                )
+
+                # Connect telemetry if available
+                if self.telemetry_manager:
+                    self.queue_monitor.set_telemetry_manager(self.telemetry_manager)
+
+                self.queue_monitor_enabled = True
+                print(f"Queue monitor available (sample interval: {sample_interval}s)")
+                print(f"  Warning depth: {warning_depth}, Critical depth: {critical_depth}")
+            except Exception as e:
+                print(f"Warning: Queue monitor failed to initialize: {e}")
+        else:
+            print("Queue monitor module not loaded")
+
+        # Initialize report generator (Plan 11: Report Generation with Ollama)
+        self.report_generator = None
+        if REPORT_GENERATOR_AVAILABLE and MonitoringReportGenerator:
+            try:
+                # Get Ollama config from environment
+                ollama_endpoint = os.environ.get('OLLAMA_ENDPOINT', 'http://localhost:11434')
+                ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2')
+
+                ollama_config = OllamaConfig(
+                    endpoint=ollama_endpoint,
+                    model=ollama_model,
+                )
+
+                self.report_generator = MonitoringReportGenerator(
+                    daemon=self,
+                    ollama_config=ollama_config,
+                )
+                print(f"Report generator available (Ollama: {ollama_endpoint}, model: {ollama_model})")
+            except Exception as e:
+                print(f"Warning: Report generator failed to initialize: {e}")
+        else:
+            print("Report generator module not loaded")
+
         # Initialize message checker (Plan 10: Message Checking for NatLangChain/Agent-OS)
         self.message_checker = None
         self.message_checker_enabled = False
@@ -1253,6 +1394,48 @@ class BoundaryDaemon:
         }.get(alert.level.value, '[RESOURCE]')
         print(f"{level_prefix} {alert.message}")
 
+    def _on_health_alert(self, alert):
+        """Handle health alert from health monitor."""
+        # Log to event logger
+        self.event_logger.log_event(
+            EventType.ALERT,
+            f"Health alert [{alert.component}]: {alert.message}",
+            metadata={
+                'component': alert.component,
+                'previous_status': alert.previous_status.value,
+                'new_status': alert.new_status.value,
+            }
+        )
+
+        # Print to console
+        if alert.new_status.value in ('error', 'unresponsive'):
+            print(f"[HEALTH] ALERT: {alert.component} - {alert.message}")
+        else:
+            print(f"[HEALTH] {alert.component} - {alert.message}")
+
+    def _on_queue_alert(self, alert):
+        """Handle alert from queue monitor."""
+        # Log to event logger
+        self.event_logger.log_event(
+            EventType.ALERT if alert.level.value == 'critical' else EventType.INFO,
+            f"Queue alert [{alert.queue_name}]: {alert.message}",
+            metadata={
+                'queue_name': alert.queue_name,
+                'alert_type': alert.alert_type,
+                'level': alert.level.value,
+                'current_depth': alert.current_depth,
+                'threshold': alert.threshold,
+            }
+        )
+
+        # Print to console
+        level_prefix = {
+            'info': '[QUEUE]',
+            'warning': '[QUEUE] WARNING:',
+            'critical': '[QUEUE] CRITICAL:',
+        }.get(alert.level.value, '[QUEUE]')
+        print(f"{level_prefix} {alert.queue_name} - {alert.message}")
+
     def start(self):
         """Start the boundary daemon"""
         if self._running:
@@ -1387,6 +1570,22 @@ class BoundaryDaemon:
             except Exception as e:
                 print(f"Warning: Resource monitor failed to start: {e}")
 
+        # Start health monitor (Plan 11: Health Monitoring)
+        if self.health_monitor and self.health_monitor_enabled:
+            try:
+                self.health_monitor.start()
+                print("Health monitor started")
+            except Exception as e:
+                print(f"Warning: Health monitor failed to start: {e}")
+
+        # Start queue monitor (Plan 11: Queue Monitoring)
+        if self.queue_monitor and self.queue_monitor_enabled:
+            try:
+                self.queue_monitor.start()
+                print("Queue monitor started")
+            except Exception as e:
+                print(f"Warning: Queue monitor failed to start: {e}")
+
         print("Boundary Daemon running. Press Ctrl+C to stop.")
         print("=" * 70)
 
@@ -1454,6 +1653,30 @@ class BoundaryDaemon:
                 print("Resource monitor stopped")
             except Exception as e:
                 print(f"Warning: Failed to stop resource monitor: {e}")
+
+        # Stop health monitor (Plan 11: Health Monitoring)
+        if self.health_monitor and self.health_monitor_enabled:
+            try:
+                # Log final health status
+                summary = self.health_monitor.get_summary()
+                print(f"Health at shutdown: {summary['status']}, "
+                      f"Uptime: {summary['uptime_formatted']}")
+                self.health_monitor.stop()
+                print("Health monitor stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop health monitor: {e}")
+
+        # Stop queue monitor (Plan 11: Queue Monitoring)
+        if self.queue_monitor and self.queue_monitor_enabled:
+            try:
+                # Log final queue status
+                summary = self.queue_monitor.get_summary()
+                print(f"Queues at shutdown: {summary['queue_count']} monitored, "
+                      f"total depth: {summary['total_depth']}")
+                self.queue_monitor.stop()
+                print("Queue monitor stopped")
+            except Exception as e:
+                print(f"Warning: Failed to stop queue monitor: {e}")
 
         # Stop hardened watchdog endpoint
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
@@ -2106,6 +2329,39 @@ class BoundaryDaemon:
                     status['resources']['thread_growth'] = res_stats['thread_growth']
             except Exception as e:
                 status['resources'] = {'error': str(e)}
+
+        # Add health monitor information (Plan 11: Health Monitoring)
+        status['health_monitor_enabled'] = self.health_monitor_enabled
+        if self.health_monitor and self.health_monitor_enabled:
+            try:
+                health_summary = self.health_monitor.get_summary()
+                status['health'] = {
+                    'status': health_summary['status'],
+                    'uptime_seconds': health_summary['uptime_seconds'],
+                    'uptime_formatted': health_summary['uptime_formatted'],
+                    'heartbeat_count': health_summary['heartbeat_count'],
+                    'seconds_since_heartbeat': health_summary['seconds_since_heartbeat'],
+                    'components': health_summary['component_summary'],
+                    'alerts_count': health_summary['alerts_count'],
+                }
+            except Exception as e:
+                status['health'] = {'error': str(e)}
+
+        # Add queue monitor information (Plan 11: Queue Monitoring)
+        status['queue_monitor_enabled'] = self.queue_monitor_enabled
+        if self.queue_monitor and self.queue_monitor_enabled:
+            try:
+                queue_summary = self.queue_monitor.get_summary()
+                status['queues'] = {
+                    'queue_count': queue_summary['queue_count'],
+                    'queues': queue_summary['queues'],
+                    'total_depth': queue_summary['total_depth'],
+                    'queues_with_backpressure': queue_summary['queues_with_backpressure'],
+                    'alerts_count': queue_summary['alerts_count'],
+                    'sample_count': queue_summary['sample_count'],
+                }
+            except Exception as e:
+                status['queues'] = {'error': str(e)}
 
         # Add privilege/enforcement status (SECURITY: Addresses silent failure issue)
         if self.privilege_manager:
