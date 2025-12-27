@@ -795,7 +795,7 @@ class BoundaryDaemon:
             try:
                 sample_interval = float(os.environ.get('BOUNDARY_RESOURCE_INTERVAL', '10.0'))
                 fd_warning = float(os.environ.get('BOUNDARY_FD_WARNING_PERCENT', '70'))
-                disk_warning = float(os.environ.get('BOUNDARY_DISK_WARNING_PERCENT', '80'))
+                disk_warning = float(os.environ.get('BOUNDARY_DISK_WARNING_PERCENT', '90'))
 
                 # Get log directory for disk monitoring
                 disk_paths = [log_dir, '/var/log', '/tmp']
