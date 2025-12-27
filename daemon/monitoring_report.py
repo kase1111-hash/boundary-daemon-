@@ -568,6 +568,77 @@ Be concise and actionable. Focus on what matters most."""
 
         return report
 
+    def query(self, question: str, include_history: bool = False) -> Dict[str, Any]:
+        """
+        Query the daemon using natural language via Ollama.
+
+        Args:
+            question: Natural language question about the daemon
+            include_history: Whether to include recent alerts/events in context
+
+        Returns:
+            Dict with 'answer', 'context_used', and timing info
+        """
+        start_time = time.monotonic()
+
+        # Check Ollama availability
+        if not self.ollama_client.is_available():
+            return {
+                'success': False,
+                'error': 'Ollama is not available. Start Ollama with: ollama serve',
+                'answer': None,
+            }
+
+        # Collect current daemon state for context
+        raw_data = self.generate_raw_report(ReportType.FULL)
+        formatted_context = self._format_for_llm(raw_data)
+
+        # Build the prompt
+        system_prompt = """You are an AI assistant for the Boundary Daemon security system.
+You have access to the current daemon state and monitoring data.
+Answer questions accurately based on the provided data.
+If you don't have enough information to answer, say so.
+Be concise and helpful. Use specific numbers from the data when relevant.
+
+The Boundary Daemon is a security enforcement system with these modes:
+- OPEN: Permissive mode, monitoring only
+- GUARDED: Active monitoring with warnings
+- AIRGAP: Network isolation enforced
+- LOCKDOWN: All external access blocked
+
+Key metrics to watch:
+- Memory usage (warning at 500MB, critical at 1000MB)
+- Disk usage (warning at 90%, critical at 95%)
+- CPU usage (sustained high values indicate problems)
+- Queue depth (high values indicate backlog)
+- Health status (healthy, degraded, or unhealthy)"""
+
+        prompt = f"""Current Boundary Daemon State:
+
+{formatted_context}
+
+User Question: {question}
+
+Please answer the question based on the daemon state shown above."""
+
+        # Query Ollama
+        answer = self.ollama_client.generate(
+            prompt=prompt,
+            system=system_prompt,
+        )
+
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        return {
+            'success': True,
+            'question': question,
+            'answer': answer,
+            'model': self.ollama_config.model,
+            'response_time_ms': elapsed_ms,
+            'daemon_mode': raw_data.get('daemon', {}).get('mode', 'unknown'),
+            'daemon_running': raw_data.get('daemon', {}).get('running', False),
+        }
+
     def get_report_history(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent report history"""
         reports = self._report_history[-limit:]
