@@ -30,9 +30,16 @@ if errorlevel 1 (
     )
 )
 
-REM Check if required dependencies are installed
-echo Checking dependencies...
-pip install -r requirements.txt >nul 2>&1
+REM Install required dependencies from requirements.txt
+echo.
+echo Installing dependencies from requirements.txt...
+pip install -r requirements.txt
+if errorlevel 1 (
+    echo ERROR: Failed to install dependencies
+    pause
+    exit /b 1
+)
+echo Dependencies installed successfully.
 
 REM Create dist directory if it doesn't exist
 if not exist "dist" mkdir dist
@@ -66,6 +73,11 @@ python -m PyInstaller ^
     --hidden-import=nacl ^
     --hidden-import=nacl.bindings ^
     --hidden-import=nacl.signing ^
+    --hidden-import=cryptography ^
+    --hidden-import=cryptography.fernet ^
+    --hidden-import=cryptography.hazmat.primitives ^
+    --hidden-import=cryptography.hazmat.primitives.kdf.pbkdf2 ^
+    --hidden-import=cryptography.hazmat.backends ^
     --hidden-import=daemon.memory_monitor ^
     --hidden-import=daemon.resource_monitor ^
     --hidden-import=daemon.health_monitor ^
@@ -81,6 +93,7 @@ python -m PyInstaller ^
     --collect-submodules=api ^
     --collect-submodules=nacl ^
     --collect-submodules=cffi ^
+    --collect-submodules=cryptography ^
     --noconfirm ^
     --clean ^
     %MAIN_SCRIPT%
