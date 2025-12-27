@@ -355,6 +355,154 @@ class MonitoringReportGenerator:
 
         return report_data
 
+    def _format_for_llm(self, raw_data: Dict[str, Any]) -> str:
+        """
+        Format raw monitoring data into human-readable text that an LLM can understand.
+        Each section includes explanations of what the metrics mean.
+        """
+        lines = []
+        lines.append("=" * 60)
+        lines.append("BOUNDARY DAEMON MONITORING REPORT")
+        lines.append("=" * 60)
+        lines.append(f"Generated: {raw_data.get('generated_at', 'Unknown')}")
+        lines.append(f"Report Type: {raw_data.get('report_type', 'Unknown')}")
+        lines.append("")
+
+        # Daemon Status
+        daemon = raw_data.get('daemon', {})
+        lines.append("-" * 40)
+        lines.append("DAEMON STATUS")
+        lines.append("-" * 40)
+        lines.append(f"  Running: {daemon.get('running', 'Unknown')}")
+        lines.append(f"    (Whether the daemon process is actively running)")
+        lines.append(f"  Mode: {daemon.get('mode', 'Unknown')}")
+        lines.append(f"    (Security mode: OPEN=permissive, GUARDED=monitored, AIRGAP=isolated, LOCKDOWN=blocked)")
+        lines.append("")
+
+        # Memory Monitoring
+        memory = raw_data.get('memory', {})
+        if memory.get('enabled'):
+            stats = memory.get('stats', {})
+            lines.append("-" * 40)
+            lines.append("MEMORY USAGE")
+            lines.append("-" * 40)
+            lines.append(f"  Current Memory: {stats.get('current_mb', 'N/A')} MB")
+            lines.append(f"    (RAM currently used by the daemon process)")
+            lines.append(f"  Peak Memory: {stats.get('peak_mb', 'N/A')} MB")
+            lines.append(f"    (Highest RAM usage since daemon started)")
+            lines.append(f"  Warning Threshold: {stats.get('warning_threshold_mb', 'N/A')} MB")
+            lines.append(f"    (Memory usage above this triggers a warning)")
+            lines.append(f"  Critical Threshold: {stats.get('critical_threshold_mb', 'N/A')} MB")
+            lines.append(f"    (Memory usage above this is a critical issue)")
+            lines.append(f"  Samples Collected: {stats.get('samples', 'N/A')}")
+            lines.append(f"    (Number of memory readings taken)")
+            if stats.get('leak_detected'):
+                lines.append(f"  ⚠ MEMORY LEAK DETECTED: {stats.get('leak_details', 'Unknown')}")
+                lines.append(f"    (Memory is growing over time without being freed - investigate immediately)")
+            lines.append("")
+
+        # Resource Monitoring
+        resources = raw_data.get('resources', {})
+        if resources.get('enabled'):
+            current = resources.get('current', {})
+            lines.append("-" * 40)
+            lines.append("SYSTEM RESOURCES")
+            lines.append("-" * 40)
+            lines.append(f"  CPU Usage: {current.get('cpu_percent', 'N/A')}%")
+            lines.append(f"    (Percentage of CPU being used - high sustained values indicate heavy load)")
+            lines.append(f"  Open File Descriptors: {current.get('fd_count', 'N/A')}")
+            lines.append(f"    (Number of open files/sockets - growth over time may indicate resource leak)")
+            lines.append(f"  Thread Count: {current.get('thread_count', 'N/A')}")
+            lines.append(f"    (Number of active threads - unexpected growth is concerning)")
+            lines.append(f"  Disk Usage: {current.get('disk_used_percent', 'N/A')}%")
+            lines.append(f"    (Percentage of disk space used - above 90% is a warning, above 95% is critical)")
+            lines.append(f"  Network Connections: {current.get('connection_count', 'N/A')}")
+            lines.append(f"    (Active network connections - sudden spikes may indicate attack or leak)")
+
+            # CPU stats if available
+            cpu = resources.get('cpu', {})
+            if cpu:
+                lines.append(f"  CPU Average (1min): {cpu.get('avg_1min', 'N/A')}%")
+                lines.append(f"  CPU Average (5min): {cpu.get('avg_5min', 'N/A')}%")
+                lines.append(f"    (Sustained high averages indicate ongoing heavy load)")
+
+            # Connection stats if available
+            conn = resources.get('connections', {})
+            if conn:
+                lines.append(f"  CLOSE_WAIT Connections: {conn.get('close_wait', 'N/A')}")
+                lines.append(f"    (Connections waiting to close - high count indicates connection leak)")
+                lines.append(f"  TIME_WAIT Connections: {conn.get('time_wait', 'N/A')}")
+                lines.append(f"    (Connections in cooldown - high count may indicate rapid connect/disconnect)")
+            lines.append("")
+
+        # Health Monitoring
+        health = raw_data.get('health', {})
+        if health.get('enabled'):
+            summary = health.get('summary', {})
+            lines.append("-" * 40)
+            lines.append("HEALTH STATUS")
+            lines.append("-" * 40)
+            status = summary.get('status', 'Unknown')
+            lines.append(f"  Overall Health: {status}")
+            if status == 'healthy':
+                lines.append(f"    (All systems operating normally)")
+            elif status == 'degraded':
+                lines.append(f"    (Some issues detected but system is functional)")
+            elif status == 'unhealthy':
+                lines.append(f"    (Significant issues detected - investigate immediately)")
+            lines.append(f"  Last Heartbeat: {summary.get('last_heartbeat', 'N/A')}")
+            lines.append(f"    (Time of last health check - stale heartbeats indicate daemon problems)")
+            lines.append(f"  Uptime: {summary.get('uptime_seconds', 'N/A')} seconds")
+            lines.append(f"    (How long the daemon has been running)")
+            if summary.get('issues'):
+                lines.append(f"  Active Issues:")
+                for issue in summary.get('issues', []):
+                    lines.append(f"    - {issue}")
+            lines.append("")
+
+        # Queue Monitoring
+        queues = raw_data.get('queues', {})
+        if queues.get('enabled'):
+            summary = queues.get('summary', {})
+            lines.append("-" * 40)
+            lines.append("EVENT QUEUES")
+            lines.append("-" * 40)
+            lines.append(f"  Queue Depth: {summary.get('current_depth', 'N/A')}")
+            lines.append(f"    (Number of events waiting to be processed - high values indicate backlog)")
+            lines.append(f"  Peak Depth: {summary.get('peak_depth', 'N/A')}")
+            lines.append(f"    (Highest queue size seen - indicates peak load)")
+            lines.append(f"  Events Processed: {summary.get('total_processed', 'N/A')}")
+            lines.append(f"    (Total events handled since startup)")
+            lines.append(f"  Warning Threshold: {summary.get('warning_threshold', 'N/A')}")
+            lines.append(f"    (Queue depth above this triggers a warning)")
+            if summary.get('is_backed_up'):
+                lines.append(f"  ⚠ QUEUE BACKUP DETECTED")
+                lines.append(f"    (Events are arriving faster than they can be processed)")
+            lines.append("")
+
+        # Recent Alerts
+        alerts = raw_data.get('recent_alerts', [])
+        if alerts:
+            lines.append("-" * 40)
+            lines.append(f"RECENT ALERTS ({len(alerts)} total)")
+            lines.append("-" * 40)
+            for alert in alerts[:10]:  # Show last 10
+                severity = alert.get('severity', 'info').upper()
+                event_type = alert.get('event_type', 'unknown')
+                message = alert.get('message', 'No message')
+                timestamp = alert.get('timestamp', 'Unknown time')
+                lines.append(f"  [{severity}] {event_type}: {message}")
+                lines.append(f"    Time: {timestamp}")
+            if len(alerts) > 10:
+                lines.append(f"  ... and {len(alerts) - 10} more alerts")
+            lines.append("")
+
+        lines.append("=" * 60)
+        lines.append("END OF REPORT")
+        lines.append("=" * 60)
+
+        return "\n".join(lines)
+
     def generate_report(
         self,
         report_type: ReportType = ReportType.FULL,
@@ -389,19 +537,20 @@ class MonitoringReportGenerator:
         if interpret:
             interp_start = time.monotonic()
 
-            # Format the raw data as a prompt
-            raw_json = json.dumps(raw_data, indent=2, default=str)
-            prompt = custom_prompt or f"""Analyze this system monitoring report:
+            # Format data in a human-readable way for the LLM
+            formatted_report = self._format_for_llm(raw_data)
 
-```json
-{raw_json}
-```
+            prompt = custom_prompt or f"""Analyze this Boundary Daemon monitoring report and provide insights:
 
-Provide a concise analysis focusing on:
-- Any critical issues or warnings
-- Resource utilization trends
-- Health status assessment
-- Recommended actions if needed"""
+{formatted_report}
+
+Based on this data, please provide:
+1. A brief overall health assessment (1-2 sentences)
+2. Any critical issues that need immediate attention
+3. Any warning signs or concerning trends
+4. Specific recommendations for the system administrator
+
+Be concise and actionable. Focus on what matters most."""
 
             interpretation = self.ollama_client.generate(
                 prompt=prompt,

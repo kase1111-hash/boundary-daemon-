@@ -468,11 +468,18 @@ class BoundaryDaemon:
                         "Requires root and iptables/nftables"
                     )
         else:
-            print("Network enforcement module not loaded")
-            if self.privilege_manager:
-                self.privilege_manager.register_module(
-                    EnforcementModule.NETWORK, False, "Module not loaded"
-                )
+            if IS_WINDOWS:
+                print("Network enforcement: Windows mode (iptables/nftables not available)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.NETWORK, False, "Linux-only (uses iptables/nftables)"
+                    )
+            else:
+                print("Network enforcement module not loaded")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.NETWORK, False, "Module not loaded"
+                    )
 
         # Initialize USB enforcer (Plan 1 Phase 2: USB Enforcement)
         self.usb_enforcer = None
@@ -495,11 +502,18 @@ class BoundaryDaemon:
                         "Requires root and udev"
                     )
         else:
-            print("USB enforcement module not loaded")
-            if self.privilege_manager:
-                self.privilege_manager.register_module(
-                    EnforcementModule.USB, False, "Module not loaded"
-                )
+            if IS_WINDOWS:
+                print("USB enforcement: Windows mode (udev not available)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.USB, False, "Linux-only (uses udev)"
+                    )
+            else:
+                print("USB enforcement module not loaded")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.USB, False, "Module not loaded"
+                    )
 
         # Initialize process enforcer (Plan 1 Phase 3: Process Enforcement)
         self.process_enforcer = None
@@ -523,11 +537,18 @@ class BoundaryDaemon:
                         "Requires root"
                     )
         else:
-            print("Process enforcement module not loaded")
-            if self.privilege_manager:
-                self.privilege_manager.register_module(
-                    EnforcementModule.PROCESS, False, "Module not loaded"
-                )
+            if IS_WINDOWS:
+                print("Process enforcement: Windows mode (seccomp not available)")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.PROCESS, False, "Linux-only (uses seccomp)"
+                    )
+            else:
+                print("Process enforcement module not loaded")
+                if self.privilege_manager:
+                    self.privilege_manager.register_module(
+                        EnforcementModule.PROCESS, False, "Module not loaded"
+                    )
 
         # Initialize protection persistence manager (Critical: Survives Restarts)
         # SECURITY: This addresses "Cleanup on Shutdown Removes All Protection"

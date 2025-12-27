@@ -211,12 +211,19 @@ class PrivilegeManager:
         self._module_reasons[module] = reason
 
         if not is_available:
+            # On Windows, Linux-only modules are expected to be unavailable - not a critical issue
+            is_linux_only = reason.startswith("Linux-only")
+            if _is_windows() and is_linux_only:
+                alert_level = PrivilegeAlert.INFO
+            else:
+                alert_level = PrivilegeAlert.CRITICAL if module in self._get_critical_modules() else PrivilegeAlert.WARNING
+
             issue = PrivilegeIssue(
                 module=module,
                 required_privilege=PrivilegeLevel.ROOT,
                 actual_privilege=PrivilegeLevel.NONE if not self._has_root else PrivilegeLevel.ROOT,
                 operation="module_initialization",
-                alert_level=PrivilegeAlert.CRITICAL if module in self._get_critical_modules() else PrivilegeAlert.WARNING,
+                alert_level=alert_level,
                 message=f"Module {module.value} unavailable: {reason}",
             )
             self._issues.append(issue)
