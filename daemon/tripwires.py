@@ -510,9 +510,12 @@ class TripwireSystem:
         import os
         import sys
 
-        # Basic sanity checks
-        if not os.path.exists('/proc/self'):
-            return False
+        # Basic sanity checks (cross-platform)
+        # On Linux, check /proc/self exists
+        # On Windows, skip this check as /proc doesn't exist
+        if sys.platform != 'win32':
+            if not os.path.exists('/proc/self'):
+                return False
 
         # Check if we're still running as expected
         try:

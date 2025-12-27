@@ -650,10 +650,17 @@ class DaemonIntegrityProtector:
         if result.status == IntegrityStatus.MANIFEST_MISSING:
             if self.config.allow_missing_manifest:
                 logger.warning(
-                    "No manifest found - running without integrity protection. "
-                    "Generate a manifest for production use."
+                    "No manifest found - auto-generating for development. "
+                    "Generate a signed manifest for production use."
                 )
-                return True, "Running without integrity protection (no manifest)"
+                # Auto-create manifest to prevent runtime monitoring spam
+                try:
+                    self.create_manifest(daemon_version="dev")
+                    self.save_manifest()
+                    logger.info("Auto-generated development manifest")
+                except Exception as e:
+                    logger.warning(f"Could not auto-generate manifest: {e}")
+                return True, "Running with auto-generated manifest (development mode)"
             else:
                 return False, "Manifest missing and allow_missing_manifest is False"
 

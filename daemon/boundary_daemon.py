@@ -384,14 +384,14 @@ class BoundaryDaemon:
         print("Initializing Boundary Daemon (Agent Smith)...")
 
         # Initialize event logger (Plan 3: Cryptographic Log Signing)
-        log_file = os.path.join(log_dir, 'boundary_chain.log')
+        log_file = os.path.join(self.log_dir, 'boundary_chain.log')
         self.signed_logging = False
         self.redundant_logging = False
         self._redundant_logger = None
 
         if SIGNED_LOGGING_AVAILABLE and SignedEventLogger:
             try:
-                signing_key_path = os.path.join(log_dir, 'signing.key')
+                signing_key_path = os.path.join(self.log_dir, 'signing.key')
                 self.event_logger = SignedEventLogger(log_file, signing_key_path)
                 self.signed_logging = True
                 print(f"Signed event logging enabled (key: {signing_key_path})")
