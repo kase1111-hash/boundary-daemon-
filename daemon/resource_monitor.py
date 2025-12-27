@@ -147,7 +147,7 @@ class ResourceMonitorConfig:
     cpu_alert_cooldown: int = 30       # Samples between repeated alerts (5 min)
 
     # Disk thresholds
-    disk_warning_percent: float = 80.0
+    disk_warning_percent: float = 90.0
     disk_critical_percent: float = 95.0
     disk_paths: List[str] = field(default_factory=list)  # Paths to monitor
 
