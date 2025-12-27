@@ -388,6 +388,9 @@ class BoundaryAPIServer:
         elif command == 'get_report_history':
             return self._handle_get_report_history(params)
 
+        elif command == 'query':
+            return self._handle_query(params)
+
         else:
             return {'error': f'Unknown command: {command}'}
 
@@ -1131,6 +1134,34 @@ class BoundaryAPIServer:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def _handle_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Query the daemon using natural language via Ollama.
+
+        Params:
+            question: str - Natural language question about the daemon
+            include_history: bool (optional) - Include recent events in context
+        """
+        try:
+            if not hasattr(self.daemon, 'report_generator') or not self.daemon.report_generator:
+                return {'success': False, 'error': 'Report generator not available'}
+
+            question = params.get('question')
+            if not question:
+                return {'success': False, 'error': 'question parameter required'}
+
+            include_history = params.get('include_history', False)
+
+            result = self.daemon.report_generator.query(
+                question=question,
+                include_history=include_history,
+            )
+
+            return result
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
 
 class BoundaryAPIClient:
     """
@@ -1647,6 +1678,27 @@ class BoundaryAPIClient:
             Response containing recent report history.
         """
         return self._send_request('get_report_history', {'limit': limit})
+
+    def query(self, question: str, include_history: bool = False) -> Dict[str, Any]:
+        """
+        Query the daemon using natural language via Ollama.
+
+        Args:
+            question: Natural language question about the daemon
+            include_history: Whether to include recent events in context
+
+        Returns:
+            Response containing the AI-generated answer.
+
+        Examples:
+            client.query("What is the current memory usage?")
+            client.query("Are there any critical issues?")
+            client.query("What security mode is the daemon in?")
+        """
+        return self._send_request('query', {
+            'question': question,
+            'include_history': include_history,
+        })
 
 
 if __name__ == '__main__':
