@@ -19,6 +19,7 @@ when this is not the case.
 """
 
 import os
+import sys
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,6 +27,47 @@ from enum import Enum
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# Cross-platform privilege detection
+def _is_windows() -> bool:
+    """Check if running on Windows."""
+    return sys.platform == 'win32'
+
+
+def _is_admin_windows() -> bool:
+    """Check if running as admin on Windows."""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def is_elevated() -> bool:
+    """Check if running with elevated/root privileges (cross-platform)."""
+    if _is_windows():
+        return _is_admin_windows()
+    else:
+        return os.geteuid() == 0
+
+
+def get_effective_uid() -> int:
+    """Get effective user ID (cross-platform)."""
+    if _is_windows():
+        # On Windows, return 0 if admin, 1000 otherwise
+        return 0 if _is_admin_windows() else 1000
+    else:
+        return os.geteuid()
+
+
+def get_effective_gid() -> int:
+    """Get effective group ID (cross-platform)."""
+    if _is_windows():
+        # On Windows, return 0 if admin, 1000 otherwise
+        return 0 if _is_admin_windows() else 1000
+    else:
+        return os.getegid()
 
 
 class PrivilegeLevel(Enum):
@@ -112,10 +154,10 @@ class PrivilegeManager:
         self._event_logger = event_logger
         self._on_critical = on_critical_callback
 
-        # Track privileges
-        self._has_root = os.geteuid() == 0
-        self._effective_uid = os.geteuid()
-        self._effective_gid = os.getegid()
+        # Track privileges (cross-platform)
+        self._has_root = is_elevated()
+        self._effective_uid = get_effective_uid()
+        self._effective_gid = get_effective_gid()
 
         # Track module status
         self._module_status: Dict[EnforcementModule, bool] = {}
@@ -464,9 +506,9 @@ def check_root_or_log(
         boundary_mode: Current boundary mode
 
     Returns:
-        True if running as root, False otherwise (with logging)
+        True if running as root/admin, False otherwise (with logging)
     """
-    if os.geteuid() == 0:
+    if is_elevated():
         return True
 
     manager = get_privilege_manager()
@@ -477,6 +519,6 @@ def check_root_or_log(
             boundary_mode=boundary_mode,
         )
     else:
-        logger.warning(f"Root required for {module.value}/{operation} but running as non-root")
+        logger.warning(f"Root/admin required for {module.value}/{operation} but running without elevation")
 
     return False
