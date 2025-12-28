@@ -452,11 +452,21 @@ class DaemonIntegrityProtector:
         # Ensure directory exists
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
+        # Make file writable if it exists (may be read-only from previous save)
+        if os.path.exists(save_path):
+            try:
+                os.chmod(save_path, 0o644)
+            except OSError:
+                pass  # Ignore if we can't change permissions
+
         with open(save_path, 'w') as f:
             json.dump(self._manifest.to_dict(), f, indent=2)
 
-        # Set restrictive permissions
-        os.chmod(save_path, 0o444)
+        # Set restrictive permissions (read-only for safety)
+        try:
+            os.chmod(save_path, 0o444)
+        except OSError:
+            pass  # Ignore on Windows or if permissions can't be set
 
         logger.info(f"Saved manifest to {save_path}")
 

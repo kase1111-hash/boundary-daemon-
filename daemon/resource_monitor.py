@@ -160,6 +160,9 @@ class ResourceMonitorConfig:
     connection_established_warning: int = 200  # Many established connections
     connection_growth_window: int = 6        # Samples for growth detection (1 min)
 
+    # Alert rate limiting (prevent spam)
+    alert_cooldown_seconds: float = 300.0  # 5 minutes between same alert type
+
     def to_dict(self) -> Dict:
         return {
             'sample_interval': self.sample_interval,
@@ -184,6 +187,7 @@ class ResourceMonitorConfig:
             'connection_time_wait_warning': self.connection_time_wait_warning,
             'connection_established_warning': self.connection_established_warning,
             'connection_growth_window': self.connection_growth_window,
+            'alert_cooldown_seconds': self.alert_cooldown_seconds,
         }
 
 
@@ -227,6 +231,9 @@ class ResourceMonitor:
         self._history: deque = deque(maxlen=self.config.history_size)
         self._alerts: List[ResourceAlert] = []
         self._alert_history_size = 100
+
+        # Alert cooldown tracking (prevent spam)
+        self._last_alert_time: Dict[str, float] = {}
 
         # Current state
         self._current_snapshot: Optional[ResourceSnapshot] = None
@@ -838,9 +845,20 @@ class ResourceMonitor:
         threshold: float,
         metadata: Optional[Dict] = None,
     ):
-        """Raise a resource alert"""
+        """Raise a resource alert with cooldown to prevent spam"""
+        current_time = time.time()
+
+        # Check cooldown - skip if same alert type was raised recently
+        last_time = self._last_alert_time.get(alert_type, 0)
+        if current_time - last_time < self.config.alert_cooldown_seconds:
+            # Still in cooldown, skip this alert
+            return
+
+        # Update last alert time for this type
+        self._last_alert_time[alert_type] = current_time
+
         alert = ResourceAlert(
-            timestamp=time.time(),
+            timestamp=current_time,
             level=level,
             resource_type=resource_type,
             alert_type=alert_type,

@@ -451,6 +451,9 @@ class MemoryMonitorConfig:
     leak_confirmation_samples: int = 120  # 10 min at 5s intervals
     leak_growth_threshold_percent: float = 10.0  # 10% growth = possible leak
 
+    # Alert rate limiting (prevent spam)
+    alert_cooldown_seconds: float = 300.0  # 5 minutes between same alert type
+
     # Debug mode (tracemalloc) - WARNING: significant performance overhead
     debug_enabled: bool = False           # Enable tracemalloc debugging
     debug_nframe: int = 5                 # Number of frames to capture
@@ -472,6 +475,7 @@ class MemoryMonitorConfig:
             'leak_detection_enabled': self.leak_detection_enabled,
             'leak_confirmation_samples': self.leak_confirmation_samples,
             'leak_growth_threshold_percent': self.leak_growth_threshold_percent,
+            'alert_cooldown_seconds': self.alert_cooldown_seconds,
             'debug_enabled': self.debug_enabled,
             'debug_nframe': self.debug_nframe,
             'debug_top_count': self.debug_top_count,
@@ -519,6 +523,9 @@ class MemoryMonitor:
         self._history: deque = deque(maxlen=self.config.history_size)
         self._alerts: List[MemoryAlert] = []
         self._alert_history_size = 100
+
+        # Alert cooldown tracking (prevent spam)
+        self._last_alert_time: Dict[str, float] = {}
 
         # Current state
         self._current_snapshot: Optional[MemorySnapshot] = None
@@ -871,9 +878,20 @@ class MemoryMonitor:
         threshold: float,
         metadata: Optional[Dict] = None,
     ):
-        """Raise a memory alert"""
+        """Raise a memory alert with cooldown to prevent spam"""
+        current_time = time.time()
+
+        # Check cooldown - skip if same alert type was raised recently
+        last_time = self._last_alert_time.get(alert_type, 0)
+        if current_time - last_time < self.config.alert_cooldown_seconds:
+            # Still in cooldown, skip this alert
+            return
+
+        # Update last alert time for this type
+        self._last_alert_time[alert_type] = current_time
+
         alert = MemoryAlert(
-            timestamp=time.time(),
+            timestamp=current_time,
             level=level,
             alert_type=alert_type,
             message=message,
