@@ -29,6 +29,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import secure memory utilities for key cleanup
+try:
+    from daemon.security.secure_memory import (
+        SecureBytes,
+        secure_zero_memory,
+        secure_key_context,
+    )
+    SECURE_MEMORY_AVAILABLE = True
+except ImportError:
+    SECURE_MEMORY_AVAILABLE = False
+    SecureBytes = None
+    secure_zero_memory = None
+    secure_key_context = None
+
 # Try to import cryptography library, fall back to a simpler approach if not available
 try:
     from cryptography.fernet import Fernet
@@ -70,8 +84,56 @@ class SecureTokenStorage:
         self._key_file = Path(key_file) if key_file else None
         self._encryption_key: Optional[bytes] = None
 
+        # SECURITY: Track key material for secure cleanup
+        self._key_material: Optional[bytearray] = None
+
         # Initialize encryption key
         self._initialize_key()
+
+    def __del__(self):
+        """Destructor - ensure encryption keys are zeroed."""
+        self.cleanup()
+
+    def cleanup(self) -> bool:
+        """
+        Securely zero encryption keys from memory.
+
+        SECURITY: Call this method when the SecureTokenStorage instance
+        is no longer needed to minimize the exposure window for
+        encryption key material in memory.
+
+        Returns:
+            True if cleanup was successful
+        """
+        success = True
+
+        # Zero the key material if secure memory is available
+        if self._key_material is not None:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+                try:
+                    if not secure_zero_memory(self._key_material):
+                        logger.warning("Failed to zero token encryption key material")
+                        success = False
+                except Exception as e:
+                    logger.warning(f"Error zeroing key material: {e}")
+                    success = False
+            else:
+                # Fallback: manual zeroing
+                for i in range(len(self._key_material)):
+                    self._key_material[i] = 0
+            self._key_material = None
+
+        # Clear the encryption key
+        self._encryption_key = None
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+        if success:
+            logger.debug("Token encryption keys zeroed from memory")
+
+        return success
 
     def _initialize_key(self):
         """Initialize the encryption key from file or derive from machine ID."""
@@ -143,23 +205,40 @@ class SecureTokenStorage:
                 pass
 
         # Combine and derive key
-        combined = "|".join(machine_data).encode() + salt
+        # SECURITY: Use bytearray so we can zero it after derivation
+        combined = bytearray("|".join(machine_data).encode() + salt)
 
-        if CRYPTO_AVAILABLE:
-            # Use proper KDF
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=salt,
-                iterations=self.KDF_ITERATIONS,
-            )
-            key = base64.urlsafe_b64encode(kdf.derive(combined))
-        else:
-            # Fallback: simple PBKDF2 implementation
-            key = self._simple_pbkdf2(combined, salt, 32)
-            key = base64.urlsafe_b64encode(key)
+        try:
+            if CRYPTO_AVAILABLE:
+                # Use proper KDF
+                kdf = PBKDF2HMAC(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt=salt,
+                    iterations=self.KDF_ITERATIONS,
+                )
+                derived = kdf.derive(bytes(combined))
+                key = base64.urlsafe_b64encode(derived)
 
-        return key
+                # SECURITY: Track derived key material for later cleanup
+                self._key_material = bytearray(derived)
+            else:
+                # Fallback: simple PBKDF2 implementation
+                derived = self._simple_pbkdf2(bytes(combined), salt, 32)
+                key = base64.urlsafe_b64encode(derived)
+
+                # SECURITY: Track derived key material for later cleanup
+                self._key_material = bytearray(derived)
+
+            return key
+        finally:
+            # SECURITY: Zero the combined input data after derivation
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+                secure_zero_memory(combined)
+            else:
+                # Fallback: manual zeroing
+                for i in range(len(combined)):
+                    combined[i] = 0
 
     def _simple_pbkdf2(self, password: bytes, salt: bytes, key_length: int) -> bytes:
         """Simple PBKDF2 fallback when cryptography is not available."""

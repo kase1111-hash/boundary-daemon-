@@ -45,6 +45,24 @@ from .native_dns_resolver import (
     DNSRecord,
 )
 
+# Secure memory utilities (SECURITY: Secret zeroing after use)
+try:
+    from .secure_memory import (
+        SecureBytes,
+        secure_zero_memory,
+        secure_key_context,
+        secure_compare,
+        generate_secure_random,
+    )
+    SECURE_MEMORY_AVAILABLE = True
+except ImportError:
+    SECURE_MEMORY_AVAILABLE = False
+    SecureBytes = None
+    secure_zero_memory = None
+    secure_key_context = None
+    secure_compare = None
+    generate_secure_random = None
+
 # Daemon integrity protection (SECURITY: Binary tampering prevention)
 try:
     from .daemon_integrity import (
@@ -100,4 +118,11 @@ __all__ = [
     'IntegrityCheckResult',
     'verify_daemon_integrity',
     'DAEMON_INTEGRITY_AVAILABLE',
+    # Secure memory (SECURITY: Secret zeroing)
+    'SecureBytes',
+    'secure_zero_memory',
+    'secure_key_context',
+    'secure_compare',
+    'generate_secure_random',
+    'SECURE_MEMORY_AVAILABLE',
 ]

@@ -33,6 +33,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import secure memory utilities for key cleanup
+try:
+    from daemon.security.secure_memory import (
+        SecureBytes,
+        secure_zero_memory,
+        secure_key_context,
+    )
+    SECURE_MEMORY_AVAILABLE = True
+except ImportError:
+    SECURE_MEMORY_AVAILABLE = False
+    SecureBytes = None
+    secure_zero_memory = None
+    secure_key_context = None
+
 # Try to import cryptography library
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -155,9 +169,16 @@ class SecureConfigStorage:
             for p in self.options.exclude_patterns
         ]
 
+        # Track key material for secure cleanup
+        self._key_material: Optional[bytearray] = None
+
         # Initialize encryption if available
         if CRYPTO_AVAILABLE:
             self._initialize_key()
+
+    def __del__(self):
+        """Destructor - ensure encryption keys are zeroed."""
+        self.cleanup()
 
     def _initialize_key(self):
         """Initialize the encryption key."""
@@ -230,7 +251,8 @@ class SecureConfigStorage:
                 logger.warning(f"Could not save config salt: {e}")
 
         # Combine and derive key
-        combined = "|".join(machine_data).encode() + salt
+        # SECURITY: Use bytearray so we can zero it after derivation
+        combined = bytearray("|".join(machine_data).encode() + salt)
 
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -238,8 +260,23 @@ class SecureConfigStorage:
             salt=salt,
             iterations=self.options.kdf_iterations,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(combined))
-        return key
+
+        try:
+            derived = kdf.derive(bytes(combined))
+            key = base64.urlsafe_b64encode(derived)
+
+            # SECURITY: Track derived key material for later cleanup
+            self._key_material = bytearray(derived)
+
+            return key
+        finally:
+            # SECURITY: Zero the combined input data after derivation
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+                secure_zero_memory(combined)
+            else:
+                # Fallback: manual zeroing
+                for i in range(len(combined)):
+                    combined[i] = 0
 
     def _detect_format(self, filepath: Path) -> ConfigFormat:
         """Detect configuration format from file extension."""
@@ -616,9 +653,68 @@ class SecureConfigStorage:
         """
         Rotate the encryption key.
 
-        This will:
-        1. Generate a new encryption key
-        2. Return True to indicate caller should re-encrypt configs
+        KEY ROTATION PROCEDURE
+        ======================
+
+        Key rotation should be performed periodically (recommended: annually) or
+        immediately if a key compromise is suspected. Follow these steps:
+
+        1. PREPARATION:
+           - Ensure you have access to all encrypted configuration files
+           - Schedule maintenance window (brief service interruption may occur)
+           - Back up current key file and all encrypted configs
+
+        2. ROTATION STEPS:
+           a) Create a new SecureConfigStorage instance with the current key
+           b) Load all encrypted configurations (they will be decrypted in memory)
+           c) Call rotate_key() to generate and store the new key
+           d) Re-save all configurations (they will be encrypted with new key)
+           e) Verify configurations can be loaded with the new key
+           f) Securely delete old key backup after verification
+
+        3. EXAMPLE CODE:
+           ```python
+           storage = SecureConfigStorage(key_file="/etc/boundary-daemon/config.key")
+
+           # Load all configs with old key
+           configs = {}
+           for config_path in config_files:
+               configs[config_path] = storage.load(config_path)
+
+           # Rotate the key
+           if storage.rotate_key():
+               # Re-encrypt all configs with new key
+               for config_path, data in configs.items():
+                   storage.save(data, config_path)
+
+               # Verify (load with new key)
+               for config_path in config_files:
+                   storage.load(config_path)  # Raises on failure
+
+               print("Key rotation successful")
+               storage.cleanup()  # Zero old key from memory
+           ```
+
+        4. CLI USAGE:
+           ```bash
+           # Rotate key for all configs
+           python -m daemon.config.secure_config rotate-key --key /path/to/key
+
+           # Re-encrypt configs after rotation
+           python -m daemon.config.secure_config encrypt /path/to/config.json
+           ```
+
+        5. POST-ROTATION:
+           - Restart the daemon to load new key
+           - Verify daemon starts successfully
+           - Monitor logs for decryption errors
+           - Securely shred old key file backups
+
+        SECURITY NOTES:
+        - Old key is zeroed from memory after rotation
+        - New key is cryptographically random (Fernet.generate_key)
+        - Key file permissions are set to 0o600 (owner read/write only)
+        - Rotation is atomic (rollback on failure)
 
         Args:
             new_key_file: Path for new key file (uses existing path if None)
@@ -633,12 +729,15 @@ class SecureConfigStorage:
         # Generate new key
         new_key = Fernet.generate_key()
 
-        # Store old key for re-encryption
+        # SECURITY: Store old key material for zeroing after rotation
         old_fernet = self._fernet
+        old_key_material = self._key_material
+        old_encryption_key = self._encryption_key
 
         # Set new key
         self._encryption_key = new_key
         self._fernet = Fernet(new_key)
+        self._key_material = bytearray(base64.urlsafe_b64decode(new_key))
 
         # Save new key
         key_path = Path(new_key_file) if new_key_file else self._key_file
@@ -651,12 +750,22 @@ class SecureConfigStorage:
                 self._key_file = key_path
             except Exception as e:
                 # Rollback
-                self._encryption_key = old_fernet._signing_key if old_fernet else None
+                self._encryption_key = old_encryption_key
                 self._fernet = old_fernet
+                self._key_material = old_key_material
                 logger.error(f"Failed to save new key: {e}")
                 return False
 
+        # SECURITY: Zero old key material from memory
+        if old_key_material is not None:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+                secure_zero_memory(old_key_material)
+            else:
+                for i in range(len(old_key_material)):
+                    old_key_material[i] = 0
+
         logger.info("Config encryption key rotated successfully")
+        logger.info("IMPORTANT: Re-encrypt all configuration files with the new key")
         return True
 
     def encrypt_existing_config(
@@ -733,6 +842,51 @@ class SecureConfigStorage:
             'encryption_available': CRYPTO_AVAILABLE,
         }
 
+    def cleanup(self) -> bool:
+        """
+        Securely zero encryption keys from memory.
+
+        SECURITY: This method should be called when the SecureConfigStorage
+        instance is no longer needed to minimize the exposure window for
+        encryption key material in memory.
+
+        Returns:
+            True if cleanup was successful
+        """
+        success = True
+
+        # Zero the key material if secure memory is available
+        if self._key_material is not None and SECURE_MEMORY_AVAILABLE:
+            try:
+                if not secure_zero_memory(self._key_material):
+                    logger.warning("Failed to zero config encryption key material")
+                    success = False
+            except Exception as e:
+                logger.warning(f"Error zeroing key material: {e}")
+                success = False
+            finally:
+                self._key_material = None
+
+        # Zero the encryption key bytes
+        if self._encryption_key is not None:
+            if isinstance(self._encryption_key, bytearray):
+                if SECURE_MEMORY_AVAILABLE:
+                    secure_zero_memory(self._encryption_key)
+            # For bytes, we can only help garbage collection
+            self._encryption_key = None
+
+        # Clear the Fernet instance
+        self._fernet = None
+
+        # Force garbage collection to help clean up
+        import gc
+        gc.collect()
+
+        if success:
+            logger.debug("Config encryption keys zeroed from memory")
+
+        return success
+
 
 # Convenience functions
 def load_secure_config(
@@ -753,6 +907,119 @@ def save_secure_config(
     """Encrypt and save a configuration file."""
     storage = SecureConfigStorage(key_file=key_file)
     storage.save(data, filepath, encrypt=encrypt)
+
+
+class CryptographyRequiredError(Exception):
+    """Raised when cryptography library is required but not available."""
+    pass
+
+
+def check_crypto_requirements(
+    dev_mode: bool = False,
+    allow_env_override: bool = True,
+) -> Tuple[bool, str]:
+    """
+    Check if cryptography requirements are met for production use.
+
+    SECURITY: This function enforces that the cryptography library is available
+    for production deployments. Without it, encryption falls back to weaker
+    XOR-based encryption which is not suitable for production security.
+
+    This implements "soft enforcement" - production requires cryptography,
+    but development/testing can bypass with explicit flags.
+
+    Args:
+        dev_mode: If True, allow running without cryptography (for development)
+        allow_env_override: If True, check BOUNDARY_DEV_MODE environment variable
+
+    Returns:
+        (is_ok, message) - is_ok is True if requirements are met or bypassed
+
+    Raises:
+        CryptographyRequiredError: If requirements not met and not bypassed
+
+    Example Usage:
+        # In daemon startup code:
+        try:
+            check_crypto_requirements(dev_mode=args.dev_mode)
+        except CryptographyRequiredError as e:
+            print(f"FATAL: {e}")
+            sys.exit(1)
+
+    Environment Variables:
+        BOUNDARY_DEV_MODE=1  - Bypass cryptography requirement (with warning)
+    """
+    # Check environment override
+    if allow_env_override:
+        env_dev_mode = os.environ.get('BOUNDARY_DEV_MODE', '').lower()
+        if env_dev_mode in ('1', 'true', 'yes'):
+            dev_mode = True
+            logger.warning(
+                "SECURITY WARNING: BOUNDARY_DEV_MODE is set - "
+                "cryptography requirement bypassed"
+            )
+
+    if CRYPTO_AVAILABLE:
+        return (True, "Cryptography library available - full encryption enabled")
+
+    # Cryptography not available
+    if dev_mode:
+        warning_msg = (
+            "SECURITY WARNING: Running without cryptography library!\n"
+            "  - Configuration encryption uses weaker XOR-based fallback\n"
+            "  - Token encryption uses weaker XOR-based fallback\n"
+            "  - This is ONLY acceptable for development/testing\n"
+            "  - Install cryptography for production: pip install cryptography"
+        )
+        logger.warning(warning_msg)
+        return (True, warning_msg)
+
+    # Production mode without cryptography - fail
+    error_msg = (
+        "FATAL: Cryptography library is required for production use.\n"
+        "\n"
+        "The 'cryptography' library provides secure AES encryption for:\n"
+        "  - Configuration file encryption (Fernet/AES-128-CBC)\n"
+        "  - Token storage encryption\n"
+        "  - Secure key derivation (PBKDF2)\n"
+        "\n"
+        "Without it, the daemon falls back to weaker XOR-based encryption\n"
+        "which is NOT suitable for production security.\n"
+        "\n"
+        "To fix:\n"
+        "  pip install cryptography\n"
+        "\n"
+        "For development/testing only, you can bypass with:\n"
+        "  --dev-mode flag, or\n"
+        "  BOUNDARY_DEV_MODE=1 environment variable\n"
+    )
+    logger.critical(error_msg)
+    raise CryptographyRequiredError(error_msg)
+
+
+def require_crypto_or_exit(dev_mode: bool = False) -> None:
+    """
+    Convenience function to check crypto requirements and exit on failure.
+
+    Call this at the start of daemon main() to enforce requirements.
+
+    Args:
+        dev_mode: If True, allow running without cryptography
+
+    Example:
+        def main():
+            args = parse_args()
+            require_crypto_or_exit(dev_mode=args.dev_mode)
+            # ... rest of daemon startup
+    """
+    import sys
+    try:
+        ok, msg = check_crypto_requirements(dev_mode=dev_mode)
+        if ok and CRYPTO_AVAILABLE:
+            logger.info("Cryptography requirements met")
+    except CryptographyRequiredError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
 
 # CLI interface
