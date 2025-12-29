@@ -21,6 +21,11 @@ try:
         EncryptionMode,
         load_secure_config,
         save_secure_config,
+        # Cryptography enforcement (SECURITY: Soft enforcement)
+        CryptographyRequiredError,
+        check_crypto_requirements,
+        require_crypto_or_exit,
+        CRYPTO_AVAILABLE,
     )
     SECURE_CONFIG_AVAILABLE = True
 except ImportError as e:
@@ -31,6 +36,10 @@ except ImportError as e:
     EncryptionMode = None
     load_secure_config = None
     save_secure_config = None
+    CryptographyRequiredError = None
+    check_crypto_requirements = None
+    require_crypto_or_exit = None
+    CRYPTO_AVAILABLE = False
 
 __all__ = [
     'SecureConfigStorage',
@@ -40,4 +49,9 @@ __all__ = [
     'load_secure_config',
     'save_secure_config',
     'SECURE_CONFIG_AVAILABLE',
+    # Cryptography enforcement
+    'CryptographyRequiredError',
+    'check_crypto_requirements',
+    'require_crypto_or_exit',
+    'CRYPTO_AVAILABLE',
 ]

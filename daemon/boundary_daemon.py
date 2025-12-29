@@ -3216,8 +3216,19 @@ def main():
                        help='Initial boundary mode')
     parser.add_argument('--log-dir', type=str, default='./logs',
                        help='Directory for log files')
+    parser.add_argument('--dev-mode', action='store_true',
+                       help='Development mode - bypass cryptography requirement (NOT for production)')
 
     args = parser.parse_args()
+
+    # SECURITY: Check cryptography requirements before starting
+    # Production requires the cryptography library; dev-mode allows bypass
+    try:
+        from .config.secure_config import require_crypto_or_exit
+        require_crypto_or_exit(dev_mode=args.dev_mode)
+    except ImportError:
+        # Config module not available - continue without check
+        pass
 
     # Map mode string to enum
     mode_map = {

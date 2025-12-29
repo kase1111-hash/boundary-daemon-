@@ -909,6 +909,119 @@ def save_secure_config(
     storage.save(data, filepath, encrypt=encrypt)
 
 
+class CryptographyRequiredError(Exception):
+    """Raised when cryptography library is required but not available."""
+    pass
+
+
+def check_crypto_requirements(
+    dev_mode: bool = False,
+    allow_env_override: bool = True,
+) -> Tuple[bool, str]:
+    """
+    Check if cryptography requirements are met for production use.
+
+    SECURITY: This function enforces that the cryptography library is available
+    for production deployments. Without it, encryption falls back to weaker
+    XOR-based encryption which is not suitable for production security.
+
+    This implements "soft enforcement" - production requires cryptography,
+    but development/testing can bypass with explicit flags.
+
+    Args:
+        dev_mode: If True, allow running without cryptography (for development)
+        allow_env_override: If True, check BOUNDARY_DEV_MODE environment variable
+
+    Returns:
+        (is_ok, message) - is_ok is True if requirements are met or bypassed
+
+    Raises:
+        CryptographyRequiredError: If requirements not met and not bypassed
+
+    Example Usage:
+        # In daemon startup code:
+        try:
+            check_crypto_requirements(dev_mode=args.dev_mode)
+        except CryptographyRequiredError as e:
+            print(f"FATAL: {e}")
+            sys.exit(1)
+
+    Environment Variables:
+        BOUNDARY_DEV_MODE=1  - Bypass cryptography requirement (with warning)
+    """
+    # Check environment override
+    if allow_env_override:
+        env_dev_mode = os.environ.get('BOUNDARY_DEV_MODE', '').lower()
+        if env_dev_mode in ('1', 'true', 'yes'):
+            dev_mode = True
+            logger.warning(
+                "SECURITY WARNING: BOUNDARY_DEV_MODE is set - "
+                "cryptography requirement bypassed"
+            )
+
+    if CRYPTO_AVAILABLE:
+        return (True, "Cryptography library available - full encryption enabled")
+
+    # Cryptography not available
+    if dev_mode:
+        warning_msg = (
+            "SECURITY WARNING: Running without cryptography library!\n"
+            "  - Configuration encryption uses weaker XOR-based fallback\n"
+            "  - Token encryption uses weaker XOR-based fallback\n"
+            "  - This is ONLY acceptable for development/testing\n"
+            "  - Install cryptography for production: pip install cryptography"
+        )
+        logger.warning(warning_msg)
+        return (True, warning_msg)
+
+    # Production mode without cryptography - fail
+    error_msg = (
+        "FATAL: Cryptography library is required for production use.\n"
+        "\n"
+        "The 'cryptography' library provides secure AES encryption for:\n"
+        "  - Configuration file encryption (Fernet/AES-128-CBC)\n"
+        "  - Token storage encryption\n"
+        "  - Secure key derivation (PBKDF2)\n"
+        "\n"
+        "Without it, the daemon falls back to weaker XOR-based encryption\n"
+        "which is NOT suitable for production security.\n"
+        "\n"
+        "To fix:\n"
+        "  pip install cryptography\n"
+        "\n"
+        "For development/testing only, you can bypass with:\n"
+        "  --dev-mode flag, or\n"
+        "  BOUNDARY_DEV_MODE=1 environment variable\n"
+    )
+    logger.critical(error_msg)
+    raise CryptographyRequiredError(error_msg)
+
+
+def require_crypto_or_exit(dev_mode: bool = False) -> None:
+    """
+    Convenience function to check crypto requirements and exit on failure.
+
+    Call this at the start of daemon main() to enforce requirements.
+
+    Args:
+        dev_mode: If True, allow running without cryptography
+
+    Example:
+        def main():
+            args = parse_args()
+            require_crypto_or_exit(dev_mode=args.dev_mode)
+            # ... rest of daemon startup
+    """
+    import sys
+    try:
+        ok, msg = check_crypto_requirements(dev_mode=dev_mode)
+        if ok and CRYPTO_AVAILABLE:
+            logger.info("Cryptography requirements met")
+    except CryptographyRequiredError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+
+
 # CLI interface
 if __name__ == '__main__':
     import argparse
