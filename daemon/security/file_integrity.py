@@ -296,13 +296,24 @@ class FileIntegrityMonitor:
     def _calculate_hash(self, path: str) -> str:
         """Calculate file hash"""
         try:
+            # SECURITY: Only allow secure hash algorithms
+            # MD5 is cryptographically broken and should not be used for integrity checks
             if self.config.hash_algorithm == "sha256":
                 hasher = hashlib.sha256()
             elif self.config.hash_algorithm == "sha512":
                 hasher = hashlib.sha512()
+            elif self.config.hash_algorithm == "sha384":
+                hasher = hashlib.sha384()
+            elif self.config.hash_algorithm == "blake2b":
+                hasher = hashlib.blake2b()
             elif self.config.hash_algorithm == "md5":
-                hasher = hashlib.md5()
+                # SECURITY: MD5 is insecure - reject with error
+                raise ValueError(
+                    "MD5 is cryptographically broken and not allowed for file integrity. "
+                    "Use sha256, sha512, sha384, or blake2b instead."
+                )
             else:
+                # Default to SHA-256 for unknown algorithms
                 hasher = hashlib.sha256()
 
             with open(path, 'rb') as f:

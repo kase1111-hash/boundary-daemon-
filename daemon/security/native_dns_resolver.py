@@ -25,7 +25,7 @@ USAGE:
 
 import socket
 import struct
-import random
+import secrets
 import logging
 import time
 from dataclasses import dataclass, field
@@ -126,8 +126,9 @@ class DNSPacketBuilder:
         Returns:
             (packet bytes, query ID)
         """
-        # Generate random query ID
-        query_id = random.randint(0, 65535)
+        # Generate cryptographically secure random query ID
+        # SECURITY: Using secrets module instead of random to prevent DNS cache poisoning
+        query_id = secrets.randbelow(65536)
 
         # Build header
         # Flags: QR=0 (query), OPCODE=0 (standard), AA=0, TC=0, RD=1, RA=0, Z=0, RCODE=0

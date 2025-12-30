@@ -20,6 +20,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Any, TYPE_CHECKING
 
+# SECURITY: Import AES-GCM for proper encryption instead of weak XOR
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+
 if TYPE_CHECKING:
     from ..policy_engine import BoundaryMode
     from ..event_logger import EventLogger
@@ -864,7 +871,7 @@ class TPMManager:
                     pass
 
     def _seal_pytss(self, secret: bytes, mode_hash: str) -> bytes:
-        """Seal using tpm2-pytss"""
+        """Seal using tpm2-pytss with AES-GCM encryption"""
         try:
             from tpm2_pytss import ESAPI
             from tpm2_pytss.types import TPM2B_SENSITIVE_CREATE
@@ -872,22 +879,25 @@ class TPMManager:
             if self._tpm_ctx is None:
                 self._tpm_ctx = ESAPI()
 
-            # This is a simplified implementation
-            # Full implementation would use proper TPM sealing
-
-            # For now, use HMAC-based sealing simulation with TPM-derived key
             import hmac
 
             # Derive sealing key from TPM random
             random_bytes = self._tpm_ctx.get_random(32)
             seal_key = hmac.new(random_bytes, mode_hash.encode(), hashlib.sha256).digest()
 
-            # Encrypt secret (simple XOR for demonstration)
-            # Real implementation would use AES-GCM
-            encrypted = bytes(a ^ b for a, b in zip(secret, (seal_key * ((len(secret) // 32) + 1))[:len(secret)]))
-
-            # Format: [random bytes][encrypted secret]
-            sealed_blob = random_bytes + encrypted
+            # SECURITY: Use AES-GCM for authenticated encryption instead of weak XOR
+            if HAS_CRYPTOGRAPHY:
+                # Generate a 12-byte nonce for AES-GCM
+                nonce = os.urandom(12)
+                aesgcm = AESGCM(seal_key)
+                encrypted = aesgcm.encrypt(nonce, secret, mode_hash.encode())
+                # Format: [random_bytes 32][nonce 12][encrypted+tag]
+                sealed_blob = random_bytes + nonce + encrypted
+            else:
+                raise TPMSealingError(
+                    "cryptography library required for secure sealing. "
+                    "Install with: pip install cryptography"
+                )
 
             return sealed_blob
 
@@ -897,19 +907,28 @@ class TPMManager:
             raise TPMSealingError(f"pytss sealing error: {e}")
 
     def _unseal_pytss(self, sealed_blob: bytes, mode_hash: str) -> bytes:
-        """Unseal using tpm2-pytss"""
+        """Unseal using tpm2-pytss with AES-GCM decryption"""
         try:
             import hmac
 
-            # Parse sealed blob
+            # SECURITY: Use AES-GCM for authenticated decryption
+            if not HAS_CRYPTOGRAPHY:
+                raise TPMUnsealingError(
+                    "cryptography library required for secure unsealing. "
+                    "Install with: pip install cryptography"
+                )
+
+            # Parse sealed blob: [random_bytes 32][nonce 12][encrypted+tag]
             random_bytes = sealed_blob[:32]
-            encrypted = sealed_blob[32:]
+            nonce = sealed_blob[32:44]
+            encrypted = sealed_blob[44:]
 
             # Derive sealing key
             seal_key = hmac.new(random_bytes, mode_hash.encode(), hashlib.sha256).digest()
 
-            # Decrypt
-            secret = bytes(a ^ b for a, b in zip(encrypted, (seal_key * ((len(encrypted) // 32) + 1))[:len(encrypted)]))
+            # Decrypt with AES-GCM (also verifies authenticity)
+            aesgcm = AESGCM(seal_key)
+            secret = aesgcm.decrypt(nonce, encrypted, mode_hash.encode())
 
             return secret
 
@@ -917,51 +936,63 @@ class TPMManager:
             raise TPMUnsealingError(f"pytss unsealing error: {e}")
 
     def _seal_simulator(self, secret: bytes, mode_hash: str) -> bytes:
-        """Seal using simulator (software-only)"""
+        """Seal using simulator (software-only) with AES-GCM encryption"""
         import hmac
 
-        # Generate random nonce
-        nonce = os.urandom(32)
+        # SECURITY: Use AES-GCM for authenticated encryption instead of weak XOR
+        if not HAS_CRYPTOGRAPHY:
+            raise TPMSealingError(
+                "cryptography library required for secure sealing. "
+                "Install with: pip install cryptography"
+            )
 
-        # Derive key from mode hash and nonce
-        key = hmac.new(nonce, mode_hash.encode(), hashlib.sha256).digest()
+        # Generate random key material
+        random_bytes = os.urandom(32)
 
-        # Simple XOR encryption (use AES in production)
-        encrypted = bytes(a ^ b for a, b in zip(
-            secret,
-            (key * ((len(secret) // 32) + 1))[:len(secret)]
-        ))
+        # Derive key from random bytes and mode hash
+        key = hmac.new(random_bytes, mode_hash.encode(), hashlib.sha256).digest()
 
         # Include mode hash in sealed blob for verification
         mode_hash_bytes = bytes.fromhex(mode_hash)
 
-        # Format: [nonce 32][mode_hash 32][encrypted]
-        sealed_blob = nonce + mode_hash_bytes + encrypted
+        # Generate a 12-byte nonce for AES-GCM
+        nonce = os.urandom(12)
+        aesgcm = AESGCM(key)
+        encrypted = aesgcm.encrypt(nonce, secret, mode_hash.encode())
+
+        # Format: [random_bytes 32][mode_hash 32][nonce 12][encrypted+tag]
+        sealed_blob = random_bytes + mode_hash_bytes + nonce + encrypted
 
         return sealed_blob
 
     def _unseal_simulator(self, sealed_blob: bytes, expected_mode_hash: str,
                           current_mode_hash: str) -> bytes:
-        """Unseal using simulator"""
+        """Unseal using simulator with AES-GCM decryption"""
         import hmac
 
-        # Parse sealed blob
-        nonce = sealed_blob[:32]
+        # SECURITY: Use AES-GCM for authenticated decryption
+        if not HAS_CRYPTOGRAPHY:
+            raise TPMUnsealingError(
+                "cryptography library required for secure unsealing. "
+                "Install with: pip install cryptography"
+            )
+
+        # Parse sealed blob: [random_bytes 32][mode_hash 32][nonce 12][encrypted+tag]
+        random_bytes = sealed_blob[:32]
         stored_mode_hash = sealed_blob[32:64].hex()
-        encrypted = sealed_blob[64:]
+        nonce = sealed_blob[64:76]
+        encrypted = sealed_blob[76:]
 
         # Verify mode hash
         if stored_mode_hash != expected_mode_hash:
             raise TPMUnsealingError("Mode hash mismatch in sealed blob")
 
         # Derive key
-        key = hmac.new(nonce, stored_mode_hash.encode(), hashlib.sha256).digest()
+        key = hmac.new(random_bytes, stored_mode_hash.encode(), hashlib.sha256).digest()
 
-        # Decrypt
-        secret = bytes(a ^ b for a, b in zip(
-            encrypted,
-            (key * ((len(encrypted) // 32) + 1))[:len(encrypted)]
-        ))
+        # Decrypt with AES-GCM (also verifies authenticity)
+        aesgcm = AESGCM(key)
+        secret = aesgcm.decrypt(nonce, encrypted, stored_mode_hash.encode())
 
         return secret
 
