@@ -8,10 +8,13 @@ import socket
 import threading
 import time
 import uuid
+import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Callable
+
+logger = logging.getLogger(__name__)
 
 from ..policy_engine import BoundaryMode
 from ..tripwires import TripwireViolation
@@ -86,7 +89,7 @@ class ClusterManager:
         self._mode_change_callbacks: List[Callable] = []
         self._violation_callbacks: List[Callable] = []
 
-        print(f"ClusterManager initialized: node_id={self.node_id}, hostname={self.hostname}")
+        logger.info(f"ClusterManager initialized: node_id={self.node_id}, hostname={self.hostname}")
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID"""
@@ -110,7 +113,7 @@ class ClusterManager:
         self._sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
         self._sync_thread.start()
 
-        print(f"Cluster coordination started for node {self.node_id}")
+        logger.info(f"Cluster coordination started for node {self.node_id}")
 
     def stop(self):
         """Stop cluster coordination"""
@@ -122,7 +125,7 @@ class ClusterManager:
         # Deregister node
         self._deregister_node()
 
-        print(f"Cluster coordination stopped for node {self.node_id}")
+        logger.info(f"Cluster coordination stopped for node {self.node_id}")
 
     def _register_node(self):
         """Register this node in the cluster"""
@@ -141,13 +144,13 @@ class ClusterManager:
 
         key = f'/boundary/nodes/{self.node_id}'
         self.coordinator.put(key, json.dumps(node_data), ttl=60)
-        print(f"Node {self.node_id} registered in cluster")
+        logger.info(f"Node {self.node_id} registered in cluster")
 
     def _deregister_node(self):
         """Remove this node from the cluster"""
         key = f'/boundary/nodes/{self.node_id}'
         self.coordinator.delete(key)
-        print(f"Node {self.node_id} deregistered from cluster")
+        logger.info(f"Node {self.node_id} deregistered from cluster")
 
     def _heartbeat_loop(self):
         """Send periodic heartbeats to cluster"""
@@ -156,7 +159,7 @@ class ClusterManager:
                 self._send_heartbeat()
                 time.sleep(10)  # Heartbeat every 10 seconds
             except Exception as e:
-                print(f"Error in heartbeat loop: {e}")
+                logger.error(f"Error in heartbeat loop: {e}")
                 time.sleep(10)
 
     def _send_heartbeat(self):
@@ -183,7 +186,7 @@ class ClusterManager:
                 self._sync_with_cluster()
                 time.sleep(5)  # Sync every 5 seconds
             except Exception as e:
-                print(f"Error in sync loop: {e}")
+                logger.error(f"Error in sync loop: {e}")
                 time.sleep(5)
 
     def _sync_with_cluster(self):
@@ -195,19 +198,19 @@ class ClusterManager:
         current_mode_name = self.daemon.policy_engine.current_mode.name
 
         if cluster_mode_name != current_mode_name:
-            print(f"Cluster mode mismatch: local={current_mode_name}, cluster={cluster_mode_name}")
+            logger.warning(f"Cluster mode mismatch: local={current_mode_name}, cluster={cluster_mode_name}")
             # Optionally auto-sync (based on policy)
             if self.sync_policy == ClusterSyncPolicy.MOST_RESTRICTIVE:
                 # Let cluster dictate mode
                 try:
                     new_mode = BoundaryMode[cluster_mode_name]
                     if new_mode != self.daemon.policy_engine.current_mode:
-                        print(f"Syncing to cluster mode: {cluster_mode_name}")
+                        logger.info(f"Syncing to cluster mode: {cluster_mode_name}")
                         # Trigger mode change callbacks
                         for callback in self._mode_change_callbacks:
                             callback(new_mode)
                 except Exception as e:
-                    print(f"Error syncing mode: {e}")
+                    logger.error(f"Error syncing mode: {e}")
 
     def broadcast_mode_change(self, mode: BoundaryMode):
         """
@@ -225,7 +228,7 @@ class ClusterManager:
 
         key = f'/boundary/cluster/mode'
         self.coordinator.put(key, json.dumps(mode_data))
-        print(f"Broadcast mode change to cluster: {mode.name}")
+        logger.info(f"Broadcast mode change to cluster: {mode.name}")
 
     def report_violation(self, violation: TripwireViolation):
         """
@@ -248,7 +251,7 @@ class ClusterManager:
         for callback in self._violation_callbacks:
             callback(violation)
 
-        print(f"Reported violation to cluster: {violation.violation_type.value}")
+        logger.info(f"Reported violation to cluster: {violation.violation_type.value}")
 
     def get_cluster_state(self) -> ClusterState:
         """
@@ -267,7 +270,7 @@ class ClusterManager:
                 node = ClusterNode(**node_dict)
                 nodes[node.node_id] = node
             except Exception as e:
-                print(f"Error parsing node data from {key}: {e}")
+                logger.error(f"Error parsing node data from {key}: {e}")
 
         # Calculate cluster mode based on sync policy
         cluster_mode = self._calculate_cluster_mode(nodes)
@@ -330,7 +333,7 @@ class ClusterManager:
                 violation = json.loads(value)
                 violations.append(violation)
             except Exception as e:
-                print(f"Error parsing violation from {key}: {e}")
+                logger.error(f"Error parsing violation from {key}: {e}")
 
         # Sort by timestamp (newest first)
         violations.sort(key=lambda v: v.get('timestamp', 0), reverse=True)
