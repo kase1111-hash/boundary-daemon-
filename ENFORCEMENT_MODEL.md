@@ -271,6 +271,128 @@ sudo python daemon/boundary_daemon.py
 
 ---
 
+## External Watchdog System
+
+The daemon includes a hardened external watchdog that monitors the daemon and triggers emergency lockdown if it fails. This addresses the critical vulnerability: "Daemon Can Be Killed."
+
+### Architecture
+
+```
+                    ┌─────────────────────────────────────┐
+                    │              systemd                 │
+                    │  (restarts services, WatchdogSec)   │
+                    └─────────────────────────────────────┘
+                                     │
+                                     ▼
+                    ┌─────────────────────────────────────┐
+                    │        boundary-daemon.service       │
+                    │  (policy decisions, enforcement)     │
+                    └─────────────────────────────────────┘
+                                     │
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+          ┌─────────────────┐             ┌─────────────────────┐
+          │ Primary Watchdog │◄───────────►│ Secondary Watchdog  │
+          │  (monitors daemon)│             │  (monitors primary) │
+          └─────────────────┘             └─────────────────────┘
+                    │                                 │
+                    └────────────────┬────────────────┘
+                                     ▼
+                            ┌─────────────────┐
+                            │    LOCKDOWN     │
+                            │  (iptables)     │
+                            └─────────────────┘
+```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Cryptographic Heartbeats** | HMAC-SHA256 challenge-response authentication |
+| **Process Hardening** | prctl protections, signal handlers |
+| **Systemd Integration** | Uses sd_notify for kernel-level monitoring |
+| **Hardware Watchdog** | Optional /dev/watchdog integration |
+| **Multi-Watchdog** | Primary + secondary for redundancy |
+| **Fail-Closed** | Triggers iptables lockdown on failure |
+
+### Quick Setup
+
+```bash
+# Install with setup script
+sudo ./scripts/setup-watchdog.sh --install
+
+# Or with redundant secondary watchdog
+sudo ./scripts/setup-watchdog.sh --install --secondary
+
+# Check status
+sudo ./scripts/setup-watchdog.sh --status
+```
+
+### Manual Setup
+
+```bash
+# 1. Copy service files
+sudo cp systemd/boundary-daemon.service /etc/systemd/system/
+sudo cp systemd/boundary-watchdog.service /etc/systemd/system/
+
+# 2. Create directories
+sudo mkdir -p /var/log/boundary-daemon /var/run/boundary-daemon
+sudo chmod 700 /var/log/boundary-daemon /var/run/boundary-daemon
+
+# 3. Install and enable
+sudo systemctl daemon-reload
+sudo systemctl enable boundary-daemon boundary-watchdog
+sudo systemctl start boundary-daemon boundary-watchdog
+
+# 4. Verify
+sudo systemctl status boundary-daemon boundary-watchdog
+```
+
+### What Happens on Daemon Failure
+
+When the watchdog detects the daemon is unresponsive:
+
+1. **Challenge-Response Fails**: Daemon doesn't respond to cryptographic heartbeat
+2. **Failure Counter Increments**: 3 consecutive failures trigger lockdown
+3. **Emergency Lockdown**:
+   - All iptables policies set to DROP
+   - Syslog alert sent
+   - Wall message broadcast
+   - Lockdown indicator file created
+4. **Manual Intervention Required**: System stays locked until admin recovers
+
+### Monitoring Watchdog Status
+
+```bash
+# Check service status
+sudo systemctl status boundary-watchdog
+
+# View watchdog logs
+sudo journalctl -u boundary-watchdog -f
+
+# Check for lockdown state
+cat /var/run/boundary-daemon/LOCKDOWN
+```
+
+### Redundancy with Secondary Watchdog
+
+For maximum protection, run a secondary watchdog that monitors both the daemon AND the primary watchdog:
+
+```bash
+# Enable secondary watchdog
+sudo cp systemd/boundary-watchdog-secondary.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable boundary-watchdog-secondary
+sudo systemctl start boundary-watchdog-secondary
+```
+
+The secondary watchdog:
+- Monitors the primary watchdog's heartbeat socket
+- Triggers lockdown if both daemon AND primary watchdog fail
+- Makes it much harder to silently disable monitoring
+
+---
+
 ## Security Considerations
 
 ### What IS Protected
@@ -349,7 +471,7 @@ Add enforcement layers:
 - [ ] Container isolation for workload separation
 - [ ] Hardware controls for physical security
 - [ ] Log forwarding to external SIEM
-- [ ] Watchdog to detect daemon failure
+- [x] Watchdog to detect daemon failure (see [External Watchdog System](#external-watchdog-system))
 
 ---
 
