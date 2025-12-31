@@ -8,9 +8,12 @@ import os
 import time
 import threading
 import fcntl
+import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class Coordinator(ABC):
@@ -116,7 +119,7 @@ class FileCoordinator(Coordinator):
                 with open(self.state_file, 'r') as f:
                     self._state = json.load(f)
             except Exception as e:
-                print(f"Warning: Failed to load cluster state: {e}")
+                logger.warning(f"Failed to load cluster state: {e}")
                 self._state = {}
 
     def _save_state(self):
@@ -133,7 +136,7 @@ class FileCoordinator(Coordinator):
                 finally:
                     fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         except Exception as e:
-            print(f"Error saving cluster state: {e}")
+            logger.error(f"Error saving cluster state: {e}")
 
     def put(self, key: str, value: str, ttl: Optional[int] = None) -> bool:
         """Store a key-value pair with optional TTL"""
@@ -149,7 +152,7 @@ class FileCoordinator(Coordinator):
             self._save_state()
             return True
         except Exception as e:
-            print(f"Error storing key {key}: {e}")
+            logger.error(f"Error storing key {key}: {e}")
             return False
 
     def get(self, key: str) -> Optional[str]:
@@ -184,7 +187,7 @@ class FileCoordinator(Coordinator):
                 self._save_state()
             return True
         except Exception as e:
-            print(f"Error deleting key {key}: {e}")
+            logger.error(f"Error deleting key {key}: {e}")
             return False
 
     def watch(self, key: str, callback):
@@ -217,7 +220,7 @@ class FileCoordinator(Coordinator):
                 for key in expired_keys:
                     self.delete(key)
             except Exception as e:
-                print(f"Error in TTL cleanup: {e}")
+                logger.error(f"Error in TTL cleanup: {e}")
 
 
 # Placeholder for future etcd implementation
@@ -256,7 +259,7 @@ class EtcdCoordinator(Coordinator):
                 self.client.put(key, value)
             return True
         except Exception as e:
-            print(f"Error storing key {key}: {e}")
+            logger.error(f"Error storing key {key}: {e}")
             return False
 
     def get(self, key: str) -> Optional[str]:
@@ -265,7 +268,7 @@ class EtcdCoordinator(Coordinator):
             value, _ = self.client.get(key)
             return value.decode('utf-8') if value else None
         except Exception as e:
-            print(f"Error retrieving key {key}: {e}")
+            logger.error(f"Error retrieving key {key}: {e}")
             return None
 
     def get_prefix(self, prefix: str) -> Dict[str, str]:
@@ -277,7 +280,7 @@ class EtcdCoordinator(Coordinator):
                 result[key] = value.decode('utf-8')
             return result
         except Exception as e:
-            print(f"Error retrieving prefix {prefix}: {e}")
+            logger.error(f"Error retrieving prefix {prefix}: {e}")
             return {}
 
     def delete(self, key: str) -> bool:
@@ -286,7 +289,7 @@ class EtcdCoordinator(Coordinator):
             self.client.delete(key)
             return True
         except Exception as e:
-            print(f"Error deleting key {key}: {e}")
+            logger.error(f"Error deleting key {key}: {e}")
             return False
 
     def watch(self, key: str, callback):

@@ -294,13 +294,13 @@ class TokenManager:
                     global_rate_limit_block_duration=global_rate_limit_block_duration,
                     event_logger=event_logger,
                 )
-                print("SECURITY: Persistent rate limiting enabled (survives restarts)")
+                logger.info("SECURITY: Persistent rate limiting enabled (survives restarts)")
             except Exception as e:
-                print(f"Warning: Persistent rate limiting failed to initialize: {e}")
-                print("WARNING: Rate limits will be reset on daemon restart!")
+                logger.warning(f"Persistent rate limiting failed to initialize: {e}")
+                logger.warning("Rate limits will be reset on daemon restart!")
         elif use_persistent_rate_limit:
-            print("WARNING: Persistent rate limiting not available")
-            print("WARNING: Rate limits will be reset on daemon restart!")
+            logger.warning("Persistent rate limiting not available")
+            logger.warning("Rate limits will be reset on daemon restart!")
 
         # Ensure config directory exists
         self.token_file.parent.mkdir(parents=True, exist_ok=True)

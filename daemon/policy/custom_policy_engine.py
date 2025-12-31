@@ -3,16 +3,19 @@ Custom Policy Engine - User-Defined Policy Rules
 Allows users to define custom boundary policies using YAML configuration files.
 """
 
+import glob
+import logging
 import os
 import re
-import yaml
-import glob
 import threading
 import time
+import yaml
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ..policy_engine import PolicyRequest, PolicyDecision, BoundaryMode, MemoryClass
 from ..state_monitor import EnvironmentState
@@ -70,7 +73,7 @@ class CustomPolicyEngine:
         # Load initial policies
         self.reload_policies()
 
-        print(f"CustomPolicyEngine initialized with {len(self.policies)} policies from {policy_dir}")
+        logger.info(f"CustomPolicyEngine initialized with {len(self.policies)} policies from {policy_dir}")
 
     def reload_policies(self):
         """Reload all policy files from disk"""
@@ -87,7 +90,7 @@ class CustomPolicyEngine:
                     policies = self._load_policy_file(filepath)
                     new_policies.extend(policies)
                 except Exception as e:
-                    print(f"Error loading policy file {filepath}: {e}")
+                    logger.error(f"Error loading policy file {filepath}: {e}")
 
             # Sort by priority (lower number = higher priority)
             new_policies.sort(key=lambda p: p.priority)
@@ -95,7 +98,7 @@ class CustomPolicyEngine:
             self.policies = new_policies
             self._last_reload = time.time()
 
-            print(f"Reloaded {len(self.policies)} policies from {len(policy_files)} files")
+            logger.info(f"Reloaded {len(self.policies)} policies from {len(policy_files)} files")
 
     def _load_policy_file(self, filepath: str) -> List[PolicyRule]:
         """Load policies from a single YAML file"""
@@ -118,7 +121,7 @@ class CustomPolicyEngine:
                 )
                 rules.append(rule)
             except Exception as e:
-                print(f"Error parsing policy '{policy_data.get('name', 'unknown')}': {e}")
+                logger.error(f"Error parsing policy '{policy_data.get('name', 'unknown')}': {e}")
 
         return rules
 
@@ -143,7 +146,7 @@ class CustomPolicyEngine:
                 if self._matches_condition(policy.condition, request, env, current_mode):
                     # Log which policy matched
                     decision = PolicyDecision.ALLOW if policy.action == PolicyAction.ALLOW else PolicyDecision.DENY
-                    print(f"Custom policy matched: '{policy.name}' -> {decision.name}")
+                    logger.info(f"Custom policy matched: '{policy.name}' -> {decision.name}")
                     return decision
 
         # No custom policy matched - fall through to default
@@ -199,7 +202,7 @@ class CustomPolicyEngine:
                 if current_mode == BoundaryMode[mode_name]:
                     return True
             except KeyError:
-                print(f"Warning: Invalid mode name in policy: {mode_name}")
+                logger.warning(f"Invalid mode name in policy: {mode_name}")
 
         return False
 
@@ -290,7 +293,7 @@ class CustomPolicyEngine:
                 if request.memory_class == MemoryClass[class_name]:
                     return True
             except KeyError:
-                print(f"Warning: Invalid memory class in policy: {class_name}")
+                logger.warning(f"Invalid memory class in policy: {class_name}")
 
         return False
 

@@ -9,6 +9,7 @@ Detects suspicious network traffic patterns including:
 - Covert channel detection
 """
 
+import logging
 import os
 import re
 import time
@@ -19,6 +20,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 
 class TrafficAnomalyAlert(Enum):
@@ -224,7 +227,7 @@ class TrafficAnomalyMonitor:
                 self._cleanup_old_data()
                 self._last_check = datetime.utcnow()
             except Exception as e:
-                print(f"Error in traffic monitoring: {e}")
+                logger.error(f"Error in traffic monitoring: {e}")
 
             time.sleep(self.config.check_interval_seconds)
 
@@ -694,7 +697,7 @@ class TrafficAnomalyMonitor:
                             bytes_sent = int(parts[9])
                             self.analyze_traffic_volume(iface, bytes_sent, bytes_recv)
         except Exception as e:
-            print(f"Error reading traffic stats: {e}")
+            logger.error(f"Error reading traffic stats: {e}")
 
     def _cleanup_old_data(self):
         """Remove old data outside the history window"""

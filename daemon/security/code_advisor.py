@@ -7,10 +7,13 @@ import os
 import json
 import hashlib
 import time
+import logging
 from dataclasses import dataclass, asdict
 from enum import Enum
 from typing import Optional, List, Dict, Set
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Optional Ollama import with graceful fallback
 try:
@@ -158,13 +161,13 @@ class CodeVulnerabilityAdvisor:
                 # Test connection
                 self.client.list()
             except Exception as e:
-                print(f"Warning: Ollama client error: {e}")
+                logger.warning(f"Ollama client error: {e}")
                 self.ollama_available = False
 
-        print(f"CodeVulnerabilityAdvisor initialized:")
-        print(f"  Model: {self.model}")
-        print(f"  Ollama available: {self.ollama_available}")
-        print(f"  Storage: {self.storage_dir}")
+        logger.info(f"CodeVulnerabilityAdvisor initialized:")
+        logger.info(f"  Model: {self.model}")
+        logger.info(f"  Ollama available: {self.ollama_available}")
+        logger.info(f"  Storage: {self.storage_dir}")
 
     def is_available(self) -> bool:
         """Check if advisor is available (Ollama running)"""
@@ -224,7 +227,7 @@ class CodeVulnerabilityAdvisor:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 return f.read()
         except Exception as e:
-            print(f"Warning: Failed to read {file_path}: {e}")
+            logger.warning(f"Failed to read {file_path}: {e}")
             return None
 
     def _build_security_prompt(self, code: str, file_path: str, language: str) -> str:
@@ -330,10 +333,10 @@ If no issues found, respond with: []
                 advisories.append(advisory)
 
         except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse LLM response as JSON: {e}")
-            print(f"Response: {response[:200]}...")
+            logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            logger.warning(f"Response: {response[:200]}...")
         except Exception as e:
-            print(f"Warning: Error parsing advisories: {e}")
+            logger.warning(f"Error parsing advisories: {e}")
 
         return advisories
 
@@ -371,12 +374,12 @@ If no issues found, respond with: []
             List of SecurityAdvisory objects
         """
         if not self.ollama_available:
-            print("Error: Ollama not available. Install ollama and start the service.")
+            logger.error("Ollama not available. Install ollama and start the service.")
             return []
 
         file = Path(file_path)
         if not file.exists() or not self._is_scannable_file(file):
-            print(f"File not scannable: {file_path}")
+            logger.info(f"File not scannable: {file_path}")
             return []
 
         # Read file
@@ -392,7 +395,7 @@ If no issues found, respond with: []
 
         try:
             # Call LLM
-            print(f"Scanning {file_path} with {self.model}...")
+            logger.info(f"Scanning {file_path} with {self.model}...")
             response = self.client.generate(
                 model=self.model,
                 prompt=prompt,
@@ -405,12 +408,12 @@ If no issues found, respond with: []
             # Parse response
             advisories = self._parse_llm_response(response['response'], str(file))
 
-            print(f"  Found {len(advisories)} potential issue(s)")
+            logger.info(f"  Found {len(advisories)} potential issue(s)")
 
             return advisories
 
         except Exception as e:
-            print(f"Error scanning {file_path}: {e}")
+            logger.error(f"Error scanning {file_path}: {e}")
             return []
 
     def scan_repository(self, repo_path: str, commit_hash: Optional[str] = None) -> ScanResult:
@@ -427,23 +430,22 @@ If no issues found, respond with: []
         start_time = time.time()
         scan_id = self._generate_scan_id(repo_path)
 
-        print(f"\n{'='*70}")
-        print(f"SECURITY SCAN: {repo_path}")
-        print(f"{'='*70}\n")
-        print(f"Scan ID: {scan_id}")
-        print(f"Model: {self.model}")
+        logger.info("=" * 70)
+        logger.info(f"SECURITY SCAN: {repo_path}")
+        logger.info("=" * 70)
+        logger.info(f"Scan ID: {scan_id}")
+        logger.info(f"Model: {self.model}")
         if commit_hash:
-            print(f"Commit: {commit_hash}")
-        print()
+            logger.info(f"Commit: {commit_hash}")
 
         # Get scannable files
         files = self._get_scannable_files(repo_path)
-        print(f"Found {len(files)} scannable file(s)")
+        logger.info(f"Found {len(files)} scannable file(s)")
 
         # Scan each file
         all_advisories = []
         for i, file_path in enumerate(files, 1):
-            print(f"\n[{i}/{len(files)}] Scanning: {file_path.relative_to(repo_path)}")
+            logger.info(f"[{i}/{len(files)}] Scanning: {file_path.relative_to(repo_path)}")
             advisories = self.scan_file(str(file_path))
             all_advisories.extend(advisories)
 
@@ -467,13 +469,13 @@ If no issues found, respond with: []
         for advisory in all_advisories:
             self._save_advisory(advisory)
 
-        print(f"\n{'='*70}")
-        print(f"SCAN COMPLETE")
-        print(f"{'='*70}")
-        print(f"Files scanned: {result.files_scanned}")
-        print(f"Advisories: {len(result.advisories)}")
-        print(f"Duration: {duration:.1f}s")
-        print(f"{'='*70}\n")
+        logger.info("=" * 70)
+        logger.info("SCAN COMPLETE")
+        logger.info("=" * 70)
+        logger.info(f"Files scanned: {result.files_scanned}")
+        logger.info(f"Advisories: {len(result.advisories)}")
+        logger.info(f"Duration: {duration:.1f}s")
+        logger.info("=" * 70)
 
         return result
 
@@ -509,7 +511,7 @@ If no issues found, respond with: []
                     if status_filter is None or advisory.status == status_filter:
                         advisories.append(advisory)
             except Exception as e:
-                print(f"Warning: Failed to load {advisory_file}: {e}")
+                logger.warning(f"Failed to load {advisory_file}: {e}")
 
         # Sort by severity (critical first) then timestamp
         severity_order = {
@@ -554,7 +556,7 @@ If no issues found, respond with: []
 
             return True
         except Exception as e:
-            print(f"Error updating advisory: {e}")
+            logger.error(f"Error updating advisory: {e}")
             return False
 
     def get_summary_stats(self) -> Dict:

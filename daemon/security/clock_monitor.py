@@ -20,10 +20,13 @@ import re
 import subprocess
 import threading
 import time
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class ClockStatus(Enum):
@@ -159,7 +162,7 @@ class ClockMonitor:
         )
         self._monitor_thread.start()
 
-        print("[CLOCK] Clock monitor started")
+        logger.info("[CLOCK] Clock monitor started")
 
     def stop(self):
         """Stop clock monitoring."""
@@ -170,7 +173,7 @@ class ClockMonitor:
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5.0)
 
-        print("[CLOCK] Clock monitor stopped")
+        logger.info("[CLOCK] Clock monitor stopped")
 
     def _monitor_loop(self):
         """Main monitoring loop."""

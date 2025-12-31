@@ -26,6 +26,7 @@ Provides multiple layers of protection for the event log:
 
 import hashlib
 import json
+import logging
 import os
 import socket
 import ssl
@@ -37,6 +38,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class AppendOnlyMode(Enum):
@@ -234,7 +237,7 @@ class AppendOnlyStorage:
             self._load_last_checkpoint()
 
         except Exception as e:
-            print(f"Warning: Error loading log state: {e}")
+            logger.warning(f"Error loading log state: {e}")
 
     def _load_last_checkpoint(self):
         """Load the most recent checkpoint."""
@@ -256,14 +259,14 @@ class AppendOnlyStorage:
                     signature=data.get('signature'),
                 )
             except Exception as e:
-                print(f"Warning: Error loading checkpoint: {e}")
+                logger.warning(f"Error loading checkpoint: {e}")
 
     def _init_wal(self):
         """Initialize write-ahead log."""
         try:
             self._wal_fd = open(self.config.wal_path, 'a')
         except Exception as e:
-            print(f"Warning: Could not open WAL: {e}")
+            logger.warning(f"Could not open WAL: {e}")
 
     def _apply_chattr_protection(self) -> bool:
         """Apply chattr +a protection to log file."""
@@ -346,7 +349,7 @@ class AppendOnlyStorage:
             return True
 
         except Exception as e:
-            print(f"Warning: Failed to connect to remote syslog: {e}")
+            logger.warning(f"Failed to connect to remote syslog: {e}")
             self._remote_socket = None
             return False
 
@@ -368,7 +371,7 @@ class AppendOnlyStorage:
         except ImportError:
             pass  # cryptography not available
         except Exception as e:
-            print(f"Warning: Could not load signing key: {e}")
+            logger.warning(f"Could not load signing key: {e}")
 
     # === Writing ===
 
@@ -522,7 +525,7 @@ class AppendOnlyStorage:
                 return checkpoint
 
             except Exception as e:
-                print(f"Error creating checkpoint: {e}")
+                logger.error(f"Error creating checkpoint: {e}")
                 return None
 
     def _cleanup_old_checkpoints(self):

@@ -14,11 +14,14 @@ import re
 import time
 import threading
 import subprocess
+import logging
 from enum import Enum
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessSecurityAlert(Enum):
@@ -236,7 +239,7 @@ class ProcessSecurityMonitor:
                 self._cleanup_old_data()
                 self._last_check = datetime.utcnow()
             except Exception as e:
-                print(f"Error in process monitoring: {e}")
+                logger.error(f"Error in process monitoring: {e}")
 
             time.sleep(self.config.check_interval_seconds)
 
@@ -280,7 +283,7 @@ class ProcessSecurityMonitor:
                     self._alert_strings.append(alert.to_alert_string())
 
             except Exception as e:
-                print(f"Error scanning processes: {e}")
+                logger.error(f"Error scanning processes: {e}")
 
         return alerts
 
@@ -498,7 +501,7 @@ class ProcessSecurityMonitor:
                         if proc_info:
                             processes[pid] = proc_info
         except Exception as e:
-            print(f"Error reading processes: {e}")
+            logger.error(f"Error reading processes: {e}")
 
         return processes
 
@@ -853,7 +856,7 @@ class ProcessSecurityMonitor:
                         break  # Only one gap alert
 
         except Exception as e:
-            print(f"Error checking for hidden processes: {e}")
+            logger.error(f"Error checking for hidden processes: {e}")
 
         return alerts
 
