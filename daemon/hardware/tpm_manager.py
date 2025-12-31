@@ -213,6 +213,51 @@ class ModeAttestation:
             'signature': self.signature.hex() if self.signature else None
         }
 
+    def get_signable_data(self) -> bytes:
+        """Get the data that should be signed for integrity verification.
+
+        SECURITY: Returns a canonical representation of attestation data
+        for signature verification. Excludes the signature field itself.
+        """
+        canonical = (
+            f"{self.mode_name}|{self.mode_hash}|{self.pcr_index}|"
+            f"{self.pcr_value}|{self.timestamp}"
+        )
+        if self.quote:
+            canonical += f"|{self.quote.hex()}"
+        return canonical.encode('utf-8')
+
+    def compute_signature(self, signing_key: bytes) -> bytes:
+        """Compute HMAC signature for this attestation.
+
+        Args:
+            signing_key: 32-byte signing key
+
+        Returns:
+            HMAC-SHA256 signature bytes
+        """
+        import hmac
+        return hmac.new(signing_key, self.get_signable_data(), 'sha256').digest()
+
+    def verify_signature(self, signing_key: bytes) -> bool:
+        """Verify the attestation signature.
+
+        SECURITY: Addresses CWE-347 by verifying attestation integrity
+        before trusting loaded attestation records.
+
+        Args:
+            signing_key: 32-byte signing key used for signing
+
+        Returns:
+            True if signature is valid, False otherwise
+        """
+        if self.signature is None:
+            return False
+
+        import hmac
+        expected = self.compute_signature(signing_key)
+        return hmac.compare_digest(self.signature, expected)
+
 
 class TPMManager:
     """
@@ -261,6 +306,9 @@ class TPMManager:
         self._pcr_cache: Dict[int, str] = {}
         self._cache_time: float = 0
         self._cache_ttl: float = 5.0  # seconds
+
+        # Attestation signing key (for integrity verification)
+        self._attestation_signing_key: Optional[bytes] = None
 
         # Initialize storage directories
         if self.is_available:
@@ -313,7 +361,7 @@ class TPMManager:
             return False
 
     def _init_storage(self):
-        """Initialize storage directories"""
+        """Initialize storage directories and attestation signing key"""
         try:
             os.makedirs(self.SEALED_SECRETS_DIR, mode=0o700, exist_ok=True)
             os.makedirs(self.ATTESTATION_DIR, mode=0o700, exist_ok=True)
@@ -324,6 +372,57 @@ class TPMManager:
             self.ATTESTATION_DIR = os.path.join(home, ".boundary-daemon/tpm/attestations")
             os.makedirs(self.SEALED_SECRETS_DIR, mode=0o700, exist_ok=True)
             os.makedirs(self.ATTESTATION_DIR, mode=0o700, exist_ok=True)
+
+        # Initialize attestation signing key
+        self._init_attestation_signing_key()
+
+    def _init_attestation_signing_key(self):
+        """Initialize or load the attestation signing key.
+
+        SECURITY: The signing key is used to sign attestation records to prevent
+        forgery. Without this, an attacker with write access to the attestation
+        directory could forge attestation records.
+        """
+        import stat
+
+        # Determine key path based on attestation directory
+        key_path = os.path.join(os.path.dirname(self.ATTESTATION_DIR), 'attestation_signing.key')
+
+        if os.path.exists(key_path):
+            # Load existing key
+            try:
+                with open(key_path, 'rb') as f:
+                    self._attestation_signing_key = f.read()
+                if len(self._attestation_signing_key) >= 32:
+                    logger.debug(f"Loaded attestation signing key from {key_path}")
+                    return
+                else:
+                    logger.warning("Attestation signing key too short, regenerating")
+            except Exception as e:
+                logger.warning(f"Failed to load attestation signing key: {e}")
+
+        # Generate new key securely
+        try:
+            self._attestation_signing_key = os.urandom(32)
+
+            # Create key file with secure permissions atomically
+            fd = os.open(
+                key_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                stat.S_IRUSR | stat.S_IWUSR  # 0o600
+            )
+            try:
+                os.write(fd, self._attestation_signing_key)
+            finally:
+                os.close(fd)
+
+            logger.info(f"Generated new attestation signing key at {key_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to create attestation signing key: {e}")
+            # Generate ephemeral key as fallback (not persisted)
+            self._attestation_signing_key = os.urandom(32)
+            logger.warning("Using ephemeral attestation signing key (not persisted)")
 
     def _init_mode_hashes(self):
         """Pre-compute mode hashes for all boundary modes"""
@@ -649,16 +748,35 @@ class TPMManager:
         return self._load_attestations()
 
     def _save_attestation(self, attestation: ModeAttestation):
-        """Save attestation record to disk"""
+        """Save attestation record to disk with signature.
+
+        SECURITY: Signs attestation before saving to prevent forgery.
+        """
+        # Sign the attestation before saving
+        if self._attestation_signing_key:
+            attestation.signature = attestation.compute_signature(self._attestation_signing_key)
+
         filename = f"attestation_{attestation.timestamp.replace(':', '-')}.json"
         filepath = os.path.join(self.ATTESTATION_DIR, filename)
 
         with open(filepath, 'w') as f:
             json.dump(attestation.to_dict(), f, indent=2)
 
-    def _load_attestations(self) -> List[ModeAttestation]:
-        """Load all attestation records"""
+    def _load_attestations(self, verify_signatures: bool = True) -> List[ModeAttestation]:
+        """Load all attestation records with signature verification.
+
+        SECURITY: Verifies attestation signatures on load to detect tampering.
+        Addresses CWE-347 (Improper Verification of Cryptographic Signature).
+
+        Args:
+            verify_signatures: If True, verify signatures and skip invalid records
+
+        Returns:
+            List of verified attestation records
+        """
         attestations = []
+        unsigned_count = 0
+        invalid_count = 0
 
         if not os.path.exists(self.ATTESTATION_DIR):
             return attestations
@@ -669,17 +787,45 @@ class TPMManager:
                 try:
                     with open(filepath, 'r') as f:
                         data = json.load(f)
-                        attestations.append(ModeAttestation(
-                            mode_name=data['mode_name'],
-                            mode_hash=data['mode_hash'],
-                            pcr_index=data['pcr_index'],
-                            pcr_value=data['pcr_value'],
-                            timestamp=data['timestamp'],
-                            quote=bytes.fromhex(data['quote']) if data.get('quote') else None,
-                            signature=bytes.fromhex(data['signature']) if data.get('signature') else None
-                        ))
-                except (json.JSONDecodeError, KeyError):
+
+                    attestation = ModeAttestation(
+                        mode_name=data['mode_name'],
+                        mode_hash=data['mode_hash'],
+                        pcr_index=data['pcr_index'],
+                        pcr_value=data['pcr_value'],
+                        timestamp=data['timestamp'],
+                        quote=bytes.fromhex(data['quote']) if data.get('quote') else None,
+                        signature=bytes.fromhex(data['signature']) if data.get('signature') else None
+                    )
+
+                    # Verify signature if enabled and key is available
+                    if verify_signatures and self._attestation_signing_key:
+                        if attestation.signature is None:
+                            unsigned_count += 1
+                            logger.warning(
+                                f"SECURITY: Skipping unsigned attestation: {filename}"
+                            )
+                            continue
+
+                        if not attestation.verify_signature(self._attestation_signing_key):
+                            invalid_count += 1
+                            logger.error(
+                                f"SECURITY: Invalid signature on attestation {filename} - "
+                                "possible tampering detected!"
+                            )
+                            continue
+
+                    attestations.append(attestation)
+
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.warning(f"Failed to load attestation {filename}: {e}")
                     continue
+
+        if unsigned_count > 0 or invalid_count > 0:
+            logger.warning(
+                f"Attestation loading: {len(attestations)} valid, "
+                f"{unsigned_count} unsigned, {invalid_count} invalid signatures"
+            )
 
         return attestations
 
@@ -1196,9 +1342,14 @@ class TPMManager:
         if self._tpm_ctx is not None:
             try:
                 self._tpm_ctx.close()
-            except:
-                pass
-            self._tpm_ctx = None
+            except (OSError, AttributeError, RuntimeError) as e:
+                # Log but don't propagate cleanup errors
+                logger.debug(f"TPM context cleanup error (non-critical): {e}")
+            except Exception as e:
+                # Catch any other exceptions but log them for debugging
+                logger.warning(f"Unexpected error during TPM cleanup: {type(e).__name__}: {e}")
+            finally:
+                self._tpm_ctx = None
 
         self._pcr_cache.clear()
 
