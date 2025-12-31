@@ -350,6 +350,25 @@ class BoundaryDaemon:
 
         if not skip_integrity_check and DAEMON_INTEGRITY_AVAILABLE:
             logger.info("Verifying daemon integrity...")
+            # Determine config paths - use local config for development
+            # Check local config first, then fall back to system paths
+            local_config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            local_signing_key = os.path.join(local_config_dir, 'signing.key')
+            local_manifest = os.path.join(local_config_dir, 'manifest.json')
+            system_signing_key = '/etc/boundary-daemon/signing.key'
+            system_manifest = '/etc/boundary-daemon/manifest.json'
+
+            if os.path.exists(local_signing_key):
+                signing_key_path = local_signing_key
+                manifest_path = local_manifest
+                logger.info(f"Using local signing key: {local_signing_key}")
+            elif os.path.exists(system_signing_key):
+                signing_key_path = system_signing_key
+                manifest_path = system_manifest
+                logger.info(f"Using system signing key: {system_signing_key}")
+            else:
+                signing_key_path = local_signing_key
+                manifest_path = local_manifest
             self._integrity_protector = DaemonIntegrityProtector(
                 config=IntegrityConfig(
                     # In production, use restrictive settings:
@@ -358,6 +377,8 @@ class BoundaryDaemon:
                     # For development, allow missing manifest:
                     failure_action=IntegrityAction.WARN_ONLY,
                     allow_missing_manifest=True,
+                    signing_key_path=signing_key_path,
+                    manifest_path=manifest_path,
                 ),
             )
             should_continue, message = self._integrity_protector.verify_startup()

@@ -36,6 +36,7 @@ config/.token_salt
 config/api_tokens.json
 config/bootstrap_token.enc
 config/*.enc
+config/signing.key
 
 # Coverage
 .coverage
