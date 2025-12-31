@@ -4,11 +4,10 @@ Tests for daemon/storage/log_hardening.py - Tamper-Proof Log Protection
 Tests cover:
 - LogHardener initialization and configuration
 - Permission management
+- Log sealing and unsealing
+- Integrity verification
 - HardeningStatus reporting
-- Basic hardening operations
-
-Note: Some tests are limited to avoid triggering a deadlock in the production code
-where seal() calls get_status() while holding a non-reentrant lock.
+- Edge cases
 """
 
 import json
@@ -245,11 +244,24 @@ class TestHardening:
 
 
 # ===========================================================================
-# Sealing Tests (limited due to production code deadlock)
+# Sealing Tests
 # ===========================================================================
 
 class TestSealing:
     """Tests for log sealing."""
+
+    @pytest.mark.unit
+    def test_seal_nonexistent_file_returns_errors(self, temp_log_file):
+        """Test sealing a non-existent file returns errors."""
+        hardener = LogHardener(
+            str(temp_log_file),
+            mode=HardeningMode.BASIC,
+            fail_on_degraded=False
+        )
+
+        status = hardener.seal()
+        assert len(status.errors) > 0
+        assert any("does not exist" in err for err in status.errors)
 
     @pytest.mark.unit
     def test_seal_nonexistent_file_raises(self, temp_log_file):

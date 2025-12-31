@@ -153,7 +153,8 @@ class LogHardener:
         self.mode = mode
         self.fail_on_degraded = fail_on_degraded
         self._on_protection_change = on_protection_change
-        self._lock = threading.Lock()
+        # Use RLock (reentrant lock) because seal() calls get_status() while holding the lock
+        self._lock = threading.RLock()
         self._status: Optional[HardeningStatus] = None
         self._is_root = os.geteuid() == 0
 
@@ -395,7 +396,22 @@ class LogHardener:
                 errors.append("Log file does not exist")
                 if self.fail_on_degraded:
                     raise LogHardeningError("Cannot seal: log file does not exist")
-                return self.get_status()
+                # Return status with the error included
+                self._status = HardeningStatus(
+                    path=str(self.log_path),
+                    status=ProtectionStatus.FAILED,
+                    permissions="???",
+                    owner="?",
+                    group="?",
+                    is_append_only=False,
+                    is_immutable=False,
+                    has_remote_backup=False,
+                    signature_separated=False,
+                    last_verified=datetime.utcnow().isoformat() + "Z",
+                    errors=errors,
+                    warnings=warnings,
+                )
+                return self._status
 
             # First, remove append-only to allow permission change
             ok, err = self._run_chattr('-a', self.log_path)
