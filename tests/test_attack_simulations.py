@@ -54,8 +54,8 @@ from daemon.security.process_security import (
 )
 
 
-class TestResultCollector:
-    """Collects and summarizes test results"""
+class AttackResultCollector:
+    """Collects and summarizes attack simulation test results."""
     def __init__(self):
         self.passed = []
         self.failed = []
@@ -99,7 +99,7 @@ class TestResultCollector:
 
 
 # Global result collector
-results = TestResultCollector()
+results = AttackResultCollector()
 
 
 class CellularAttackSimulator:
