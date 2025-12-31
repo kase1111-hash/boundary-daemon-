@@ -1,0 +1,20 @@
+# Boundary Daemon Development Dependencies
+
+# Include main requirements
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-timeout>=2.0.0
+pytest-asyncio>=0.21.0
+
+# Coverage
+coverage>=7.0.0
+
+# Code quality
+mypy>=1.0.0
+ruff>=0.1.0
+
+# Security testing
+hypothesis>=6.0.0
