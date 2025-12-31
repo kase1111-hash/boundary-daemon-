@@ -20,9 +20,13 @@ Usage:
 """
 
 import os
+import sys
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Dict, FrozenSet, Set, Tuple
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 # =============================================================================
@@ -184,14 +188,14 @@ class Paths:
     EVENT_LOG: str = f"{VAR_LOG_BASE}/boundary_chain.log"
     SIGNATURE_LOG: str = f"{VAR_LOG_BASE}/boundary_chain.log.sig"
 
-    # System paths
+    # System paths (Linux-specific - use helper methods for cross-platform)
     MACHINE_ID: str = "/etc/machine-id"
     BOOT_ID: str = "/proc/sys/kernel/random/boot_id"
     PROC_MODULES: str = "/proc/modules"
     PROC_NET_ARP: str = "/proc/net/arp"
     PROC_NET_ROUTE: str = "/proc/net/route"
 
-    # Device paths
+    # Device paths (Linux-specific)
     TPM_DEVICE: str = "/dev/tpm0"
     WATCHDOG_DEVICE: str = "/dev/watchdog"
     USB_DEVICES: str = "/sys/bus/usb/devices"
@@ -201,6 +205,43 @@ class Paths:
         """Get path with environment variable override."""
         env_var = f"BOUNDARY_{name.upper()}"
         return os.environ.get(env_var, default)
+
+    @classmethod
+    def get_machine_id(cls) -> str:
+        """Get machine ID path (cross-platform)."""
+        if IS_WINDOWS:
+            # Windows uses registry, return empty - use get_machine_id_value() instead
+            return ""
+        return cls.MACHINE_ID
+
+    @classmethod
+    def get_machine_id_value(cls) -> str:
+        """Get machine ID value (cross-platform)."""
+        if IS_WINDOWS:
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Cryptography"
+                )
+                machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                winreg.CloseKey(key)
+                return machine_guid
+            except Exception:
+                return os.environ.get('COMPUTERNAME', 'unknown')
+        else:
+            try:
+                with open(cls.MACHINE_ID, 'r') as f:
+                    return f.read().strip()
+            except Exception:
+                return 'unknown'
+
+    @classmethod
+    def is_proc_available(cls) -> bool:
+        """Check if /proc filesystem is available (Linux only)."""
+        if IS_WINDOWS:
+            return False
+        return os.path.exists('/proc')
 
 
 # =============================================================================

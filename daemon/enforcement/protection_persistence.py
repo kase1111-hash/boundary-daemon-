@@ -19,6 +19,7 @@ Solution:
 
 import json
 import os
+import sys
 import time
 import hashlib
 import hmac
@@ -32,6 +33,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class ProtectionType(Enum):
@@ -204,10 +208,21 @@ class ProtectionPersistenceManager:
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
             # Restrictive permissions: root only
-            if os.geteuid() == 0:
+            if self._has_admin_privileges():
                 os.chmod(self.state_dir, 0o700)
         except Exception as e:
             logger.warning(f"Could not create state directory: {e}")
+
+    def _has_admin_privileges(self) -> bool:
+        """Check if running with admin/root privileges (cross-platform)."""
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            return os.geteuid() == 0
 
     def _init_hmac_key(self):
         """Initialize or load HMAC key for state integrity."""
@@ -221,7 +236,7 @@ class ProtectionPersistenceManager:
                 self._hmac_key = secrets.token_bytes(32)
                 with open(self.hmac_key_file, 'wb') as f:
                     f.write(self._hmac_key)
-                if os.geteuid() == 0:
+                if self._has_admin_privileges():
                     os.chmod(self.hmac_key_file, 0o600)
         except Exception as e:
             logger.warning(f"HMAC key initialization failed: {e}")
@@ -314,7 +329,7 @@ class ProtectionPersistenceManager:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
                 # Set permissions before rename
-                if os.geteuid() == 0:
+                if self._has_admin_privileges():
                     os.chmod(temp_file, 0o600)
 
                 # Atomic rename

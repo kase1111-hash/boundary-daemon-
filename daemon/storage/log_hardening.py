@@ -41,6 +41,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import shutil
 import subprocess
 import stat
@@ -52,6 +53,9 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class HardeningMode(Enum):
@@ -156,7 +160,15 @@ class LogHardener:
         # Use RLock (reentrant lock) because seal() calls get_status() while holding the lock
         self._lock = threading.RLock()
         self._status: Optional[HardeningStatus] = None
-        self._is_root = os.geteuid() == 0
+        # Cross-platform root/admin check
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                self._is_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                self._is_root = False
+        else:
+            self._is_root = os.geteuid() == 0
 
         # Signature storage
         if sig_dir:

@@ -19,6 +19,7 @@ THREAT MODEL:
 """
 
 import os
+import sys
 import json
 import hmac
 import hashlib
@@ -33,6 +34,9 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 @dataclass
@@ -105,31 +109,51 @@ class SecureProfileManager:
         """Derive a machine-specific secret key for HMAC"""
         components = []
 
-        # Machine ID
-        try:
-            with open('/etc/machine-id', 'r') as f:
-                components.append(f.read().strip())
-        except Exception:
-            pass
+        if IS_WINDOWS:
+            # Windows: Use machine GUID from registry
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Cryptography"
+                )
+                machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                winreg.CloseKey(key)
+                components.append(machine_guid)
+            except Exception:
+                pass
 
-        # Daemon installation time (if available)
-        try:
-            stat = os.stat('/etc/boundary-daemon')
-            components.append(str(stat.st_ctime))
-        except Exception:
-            pass
+            # Computer name as fallback
+            try:
+                components.append(os.environ.get('COMPUTERNAME', ''))
+            except Exception:
+                pass
+        else:
+            # Linux: Machine ID
+            try:
+                with open('/etc/machine-id', 'r') as f:
+                    components.append(f.read().strip())
+            except Exception:
+                pass
 
-        # Root filesystem UUID
-        try:
-            result = subprocess.run(
-                ['findmnt', '-no', 'UUID', '/'],
-                capture_output=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                components.append(result.stdout.decode().strip())
-        except Exception:
-            pass
+            # Daemon installation time (if available)
+            try:
+                stat = os.stat('/etc/boundary-daemon')
+                components.append(str(stat.st_ctime))
+            except Exception:
+                pass
+
+            # Root filesystem UUID
+            try:
+                result = subprocess.run(
+                    ['findmnt', '-no', 'UUID', '/'],
+                    capture_output=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    components.append(result.stdout.decode().strip())
+            except Exception:
+                pass
 
         # Combine and hash
         if components:
@@ -140,10 +164,21 @@ class SecureProfileManager:
             logger.warning("Could not derive stable secret key, using random")
             return os.urandom(32)
 
+    def _has_admin_privileges(self) -> bool:
+        """Check if running with admin/root privileges"""
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            return os.geteuid() == 0
+
     def _ensure_secure_directory(self):
         """Create profile directory with secure permissions"""
-        if os.geteuid() != 0:
-            logger.warning("Not running as root, cannot create secure directory")
+        if not self._has_admin_privileges():
+            logger.warning("Not running as root/admin, cannot create secure directory")
             return
 
         try:
@@ -153,8 +188,9 @@ class SecureProfileManager:
             # Set directory permissions to 0o700 (owner only)
             os.chmod(self.profile_dir, 0o700)
 
-            # Set ownership to root:root
-            os.chown(self.profile_dir, 0, 0)
+            # Set ownership to root:root (Linux only)
+            if not IS_WINDOWS:
+                os.chown(self.profile_dir, 0, 0)
 
             logger.debug(f"Secured profile directory: {self.profile_dir}")
 
@@ -175,55 +211,84 @@ class SecureProfileManager:
         return hmac.compare_digest(expected, signature)
 
     def _set_immutable(self, path: Path) -> bool:
-        """Set immutable flag on file (chattr +i)"""
+        """Set immutable flag on file (chattr +i on Linux, read-only on Windows)"""
         if not self.use_immutable:
             return True
 
-        if os.geteuid() != 0:
+        if not self._has_admin_privileges():
             return False
 
-        try:
-            result = subprocess.run(
-                ['chattr', '+i', str(path)],
-                capture_output=True,
-                timeout=5
-            )
-            return result.returncode == 0
-        except Exception as e:
-            logger.debug(f"Could not set immutable flag: {e}")
-            return False
+        if IS_WINDOWS:
+            # Windows: Set read-only attribute (not as strong as Linux immutable)
+            try:
+                import stat
+                os.chmod(path, stat.S_IREAD)
+                return True
+            except Exception as e:
+                logger.debug(f"Could not set read-only flag: {e}")
+                return False
+        else:
+            try:
+                result = subprocess.run(
+                    ['chattr', '+i', str(path)],
+                    capture_output=True,
+                    timeout=5
+                )
+                return result.returncode == 0
+            except Exception as e:
+                logger.debug(f"Could not set immutable flag: {e}")
+                return False
 
     def _remove_immutable(self, path: Path) -> bool:
-        """Remove immutable flag from file (chattr -i)"""
-        if os.geteuid() != 0:
+        """Remove immutable flag from file (chattr -i on Linux, writable on Windows)"""
+        if not self._has_admin_privileges():
             return False
 
-        try:
-            result = subprocess.run(
-                ['chattr', '-i', str(path)],
-                capture_output=True,
-                timeout=5
-            )
-            return result.returncode == 0
-        except Exception as e:
-            logger.debug(f"Could not remove immutable flag: {e}")
-            return False
+        if IS_WINDOWS:
+            # Windows: Remove read-only attribute
+            try:
+                import stat
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+                return True
+            except Exception as e:
+                logger.debug(f"Could not remove read-only flag: {e}")
+                return False
+        else:
+            try:
+                result = subprocess.run(
+                    ['chattr', '-i', str(path)],
+                    capture_output=True,
+                    timeout=5
+                )
+                return result.returncode == 0
+            except Exception as e:
+                logger.debug(f"Could not remove immutable flag: {e}")
+                return False
 
     def _is_immutable(self, path: Path) -> bool:
         """Check if file has immutable flag"""
-        try:
-            result = subprocess.run(
-                ['lsattr', str(path)],
-                capture_output=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                output = result.stdout.decode()
-                # lsattr output: "----i-------- /path/to/file"
-                return 'i' in output.split()[0] if output else False
-            return False
-        except Exception:
-            return False
+        if IS_WINDOWS:
+            # Windows: Check read-only attribute
+            try:
+                import stat
+                mode = os.stat(path).st_mode
+                return not (mode & stat.S_IWRITE)
+            except Exception:
+                return False
+        else:
+            try:
+                result = subprocess.run(
+                    ['lsattr', str(path)],
+                    capture_output=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode()
+                    # lsattr output: "----i-------- /path/to/file"
+                    return 'i' in output.split()[0] if output else False
+                return False
+            except Exception:
+                return False
 
     def _load_manifest(self):
         """Load the integrity manifest"""
@@ -265,7 +330,7 @@ class SecureProfileManager:
 
     def _save_manifest(self):
         """Save the integrity manifest"""
-        if os.geteuid() != 0:
+        if not self._has_admin_privileges():
             return
 
         manifest_path = self.profile_dir / self.MANIFEST_FILE
@@ -320,8 +385,8 @@ class SecureProfileManager:
         Returns:
             (success, message)
         """
-        if os.geteuid() != 0:
-            return (False, "Root privileges required to install profiles")
+        if not self._has_admin_privileges():
+            return (False, "Root/admin privileges required to install profiles")
 
         profile_name = name or profile.get('name', 'default')
         profile_path = self.profile_dir / f"{profile_name}.json"
@@ -350,7 +415,8 @@ class SecureProfileManager:
 
                 # Set restrictive permissions (0o600 = owner read/write only)
                 os.chmod(temp_path, 0o600)
-                os.chown(temp_path, 0, 0)
+                if not IS_WINDOWS:
+                    os.chown(temp_path, 0, 0)
 
                 # Atomic rename
                 os.rename(temp_path, profile_path)
@@ -495,8 +561,8 @@ class SecureProfileManager:
         Returns:
             (success, message)
         """
-        if os.geteuid() != 0:
-            return (False, "Root privileges required")
+        if not self._has_admin_privileges():
+            return (False, "Root/admin privileges required")
 
         profile_path = self.profile_dir / f"{name}.json"
 
@@ -574,7 +640,7 @@ class SecureProfileManager:
 
     def cleanup(self):
         """Remove all boundary daemon seccomp profiles"""
-        if os.geteuid() != 0:
+        if not self._has_admin_privileges():
             return
 
         for name in list(self._manifest.keys()):
@@ -631,12 +697,20 @@ SECURE_PROFILE_TEMPLATES = {
 
 
 if __name__ == '__main__':
-    import sys
-
     logging.basicConfig(level=logging.DEBUG)
 
-    if os.geteuid() != 0:
-        print("This test requires root privileges")
+    # Check for admin/root privileges
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+    else:
+        is_admin = os.geteuid() == 0
+
+    if not is_admin:
+        print("This test requires root/admin privileges")
         sys.exit(1)
 
     print("Testing Secure Profile Manager...")

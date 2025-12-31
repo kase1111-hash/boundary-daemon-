@@ -10,6 +10,7 @@ Detects suspicious process activity including:
 """
 
 import os
+import sys
 import re
 import time
 import threading
@@ -22,6 +23,9 @@ from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class ProcessSecurityAlert(Enum):
@@ -491,22 +495,62 @@ class ProcessSecurityMonitor:
         """Get information about all running processes"""
         processes = {}
 
-        try:
-            # Read from /proc filesystem
-            if os.path.exists('/proc'):
-                for entry in os.listdir('/proc'):
-                    if entry.isdigit():
-                        pid = int(entry)
+        if IS_WINDOWS:
+            # Windows: Use psutil for process enumeration
+            try:
+                import psutil
+                for proc in psutil.process_iter(['pid', 'name', 'username', 'cmdline', 'ppid', 'exe', 'create_time']):
+                    try:
+                        pid = proc.info['pid']
                         proc_info = self._get_process_info(pid)
                         if proc_info:
                             processes[pid] = proc_info
-        except Exception as e:
-            logger.error(f"Error reading processes: {e}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            except ImportError:
+                logger.warning("psutil not available for Windows process enumeration")
+            except Exception as e:
+                logger.error(f"Error reading processes: {e}")
+        else:
+            # Linux: Read from /proc filesystem
+            try:
+                if os.path.exists('/proc'):
+                    for entry in os.listdir('/proc'):
+                        if entry.isdigit():
+                            pid = int(entry)
+                            proc_info = self._get_process_info(pid)
+                            if proc_info:
+                                processes[pid] = proc_info
+            except Exception as e:
+                logger.error(f"Error reading processes: {e}")
 
         return processes
 
     def _get_process_info(self, pid: int) -> Optional[ProcessInfo]:
         """Get detailed information about a specific process"""
+        if IS_WINDOWS:
+            # Windows: Use psutil for process info
+            try:
+                import psutil
+                proc = psutil.Process(pid)
+                return ProcessInfo(
+                    pid=pid,
+                    ppid=proc.ppid(),
+                    name=proc.name(),
+                    exe=proc.exe() if proc.exe() else "",
+                    cmdline=' '.join(proc.cmdline()) if proc.cmdline() else "",
+                    uid=0,  # Windows doesn't have UID in the same way
+                    gid=0,
+                    username=proc.username() if proc.username() else "",
+                    start_time=proc.create_time(),
+                    environ={}
+                )
+            except ImportError:
+                return None
+            except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                return None
+
+        # Linux: Read from /proc filesystem
         proc_dir = f'/proc/{pid}'
 
         try:

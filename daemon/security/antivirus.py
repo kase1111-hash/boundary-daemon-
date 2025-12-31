@@ -2581,6 +2581,11 @@ class AntivirusScanner:
         Returns:
             (success, message)
         """
+        # Check for root/admin privileges (cross-platform)
+        if IS_WINDOWS:
+            # Windows doesn't use iptables
+            return (False, "iptables not available on Windows")
+
         if os.geteuid() != 0:
             return (False, "Need root for iptables rules")
 
@@ -2927,8 +2932,19 @@ class AntivirusScanner:
             # Enforcement status
             'quarantine_dir': self.QUARANTINE_DIR,
             'quarantined_files': quarantine_count,
-            'enforcement_available': os.geteuid() == 0,
+            'enforcement_available': self._has_admin_privileges(),
         }
+
+    def _has_admin_privileges(self) -> bool:
+        """Check if running with admin/root privileges (cross-platform)."""
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            return os.geteuid() == 0
 
 
 class RealTimeMonitor:

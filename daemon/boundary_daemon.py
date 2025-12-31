@@ -2417,9 +2417,20 @@ class BoundaryDaemon:
             except Exception as e:
                 status['privilege'] = {'error': str(e)}
         else:
+            if IS_WINDOWS:
+                try:
+                    import ctypes
+                    has_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                    effective_uid = 0 if has_root else 1000
+                except Exception:
+                    has_root = False
+                    effective_uid = 1000
+            else:
+                has_root = os.geteuid() == 0
+                effective_uid = os.geteuid()
             status['privilege'] = {
-                'has_root': os.geteuid() == 0,
-                'effective_uid': os.geteuid(),
+                'has_root': has_root,
+                'effective_uid': effective_uid,
                 'manager_available': False,
             }
 

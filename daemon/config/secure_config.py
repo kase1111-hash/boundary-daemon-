@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import re
 import secrets
 import stat
@@ -32,6 +33,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 # Import secure memory utilities for key cleanup
 try:
@@ -219,28 +223,48 @@ class SecureConfigStorage:
         """Derive encryption key from machine-specific characteristics."""
         machine_data = []
 
-        # Machine ID (Linux)
-        machine_id_path = Path("/etc/machine-id")
-        if machine_id_path.exists():
+        if IS_WINDOWS:
+            # Windows: Use machine GUID from registry
             try:
-                machine_data.append(machine_id_path.read_text().strip())
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Cryptography"
+                )
+                machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                winreg.CloseKey(key)
+                machine_data.append(machine_guid)
             except Exception:
                 pass
 
-        # Boot ID (changes on reboot - provides some forward secrecy)
-        # SECURITY WARNING: Including boot_id means configs are unreadable after reboot!
-        if self.options.use_boot_id:
-            boot_id_path = Path("/proc/sys/kernel/random/boot_id")
-            if boot_id_path.exists():
+            # Computer name as fallback
+            try:
+                machine_data.append(os.environ.get('COMPUTERNAME', ''))
+            except Exception:
+                pass
+        else:
+            # Machine ID (Linux)
+            machine_id_path = Path("/etc/machine-id")
+            if machine_id_path.exists():
                 try:
-                    machine_data.append(boot_id_path.read_text().strip())
-                    logger.warning(
-                        "SECURITY: Boot ID is included in key derivation. "
-                        "Encrypted configs will be UNREADABLE after system reboot. "
-                        "Set use_boot_id=False if you need persistent encryption."
-                    )
+                    machine_data.append(machine_id_path.read_text().strip())
                 except Exception:
                     pass
+
+            # Boot ID (changes on reboot - provides some forward secrecy)
+            # SECURITY WARNING: Including boot_id means configs are unreadable after reboot!
+            if self.options.use_boot_id:
+                boot_id_path = Path("/proc/sys/kernel/random/boot_id")
+                if boot_id_path.exists():
+                    try:
+                        machine_data.append(boot_id_path.read_text().strip())
+                        logger.warning(
+                            "SECURITY: Boot ID is included in key derivation. "
+                            "Encrypted configs will be UNREADABLE after system reboot. "
+                            "Set use_boot_id=False if you need persistent encryption."
+                        )
+                    except Exception:
+                        pass
 
         # Installation-specific salt
         salt_path = Path("/etc/boundary-daemon/.config_salt")

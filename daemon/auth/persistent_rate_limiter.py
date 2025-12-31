@@ -26,8 +26,12 @@ STORAGE FORMAT:
 
 import json
 import os
+import sys
 import time
 import fcntl
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 import hashlib
 import logging
 from datetime import datetime, timedelta
@@ -181,10 +185,21 @@ class PersistentRateLimiter:
         state_dir = self.state_file.parent
         try:
             state_dir.mkdir(parents=True, exist_ok=True)
-            if os.geteuid() == 0:
+            if self._has_admin_privileges():
                 os.chmod(state_dir, 0o700)
         except Exception as e:
             logger.warning(f"Could not create state directory: {e}")
+
+    def _has_admin_privileges(self) -> bool:
+        """Check if running with admin/root privileges (cross-platform)."""
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            return os.geteuid() == 0
 
     def _load_state(self):
         """Load rate limit state from disk."""

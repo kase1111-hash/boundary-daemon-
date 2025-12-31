@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import platform
 import secrets
 import stat
@@ -28,6 +29,9 @@ from typing import Optional, Tuple, Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 # Import secure memory utilities for key cleanup
 try:
@@ -173,15 +177,29 @@ class SecureTokenStorage:
         # Collect machine-specific data
         machine_data = []
 
-        # Machine ID (Linux)
-        machine_id_path = Path("/etc/machine-id")
-        if machine_id_path.exists():
+        if IS_WINDOWS:
+            # Windows: Use machine GUID from registry
             try:
-                machine_data.append(machine_id_path.read_text().strip())
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Cryptography"
+                )
+                machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                winreg.CloseKey(key)
+                machine_data.append(machine_guid)
             except Exception:
                 pass
+        else:
+            # Machine ID (Linux)
+            machine_id_path = Path("/etc/machine-id")
+            if machine_id_path.exists():
+                try:
+                    machine_data.append(machine_id_path.read_text().strip())
+                except Exception:
+                    pass
 
-        # Hostname
+        # Hostname (cross-platform)
         try:
             machine_data.append(platform.node())
         except Exception:
