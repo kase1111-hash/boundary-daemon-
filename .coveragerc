@@ -1,0 +1,72 @@
+# Coverage.py configuration for Boundary Daemon
+
+[run]
+# Source directories to measure
+source = daemon, api
+
+# Omit test files and __pycache__
+omit =
+    */tests/*
+    */__pycache__/*
+    */test_*.py
+    *_test.py
+
+# Branch coverage
+branch = True
+
+# Parallel mode for subprocess coverage
+parallel = True
+
+# Data file location
+data_file = .coverage
+
+[report]
+# Minimum coverage percentage
+fail_under = 50
+
+# Exclude lines from coverage
+exclude_lines =
+    # Standard exclusions
+    pragma: no cover
+
+    # Debug-only code
+    def __repr__
+    def __str__
+
+    # Defensive assertions
+    raise AssertionError
+    raise NotImplementedError
+
+    # Abstract methods
+    @abstractmethod
+
+    # Type checking blocks
+    if TYPE_CHECKING:
+    if typing.TYPE_CHECKING:
+
+    # Main entry points
+    if __name__ == .__main__.:
+
+    # Platform-specific code
+    if sys.platform
+    if platform.system
+
+# Show missing lines
+show_missing = True
+
+# Precision for percentages
+precision = 1
+
+# Sort by coverage percentage
+sort = Cover
+
+[html]
+# HTML report directory
+directory = htmlcov
+
+# Title for HTML report
+title = Boundary Daemon Coverage Report
+
+[xml]
+# XML report output
+output = coverage.xml

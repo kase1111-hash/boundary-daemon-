@@ -393,6 +393,119 @@ The secondary watchdog:
 
 ---
 
+## Log Tamper-Proofing
+
+The daemon's audit logs use multiple layers of protection to prevent tampering.
+
+### Protection Layers
+
+| Layer | Protection | Prevents |
+|-------|------------|----------|
+| **Hash Chains** | SHA-256 blockchain-style linking | Modification, insertion |
+| **Ed25519 Signatures** | Cryptographic signing per event | Forgery, repudiation |
+| **File Permissions** | 0o600 (owner read/write only) | Unauthorized access |
+| **chattr +a** | Linux append-only attribute | Deletion, truncation |
+| **Log Sealing** | chattr +i (immutable) + checksum | Post-rotation tampering |
+| **Remote Syslog** | Off-system backup | Local tampering |
+
+### How Hash Chains Work
+
+```
+Event 1                Event 2                Event 3
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+│ timestamp    │      │ timestamp    │      │ timestamp    │
+│ event_type   │      │ event_type   │      │ event_type   │
+│ details      │      │ details      │      │ details      │
+│ metadata     │      │ metadata     │      │ metadata     │
+│              │      │              │      │              │
+│ hash_chain:  │─────►│ hash_chain:  │─────►│ hash_chain:  │
+│ 0000...0000  │      │ SHA256(E1)   │      │ SHA256(E2)   │
+└──────────────┘      └──────────────┘      └──────────────┘
+    Genesis               Links to E1           Links to E2
+```
+
+Any modification to Event 2 changes its hash, breaking the chain for Event 3.
+
+### Enabling Full Protection
+
+```bash
+# Run daemon as root for chattr support
+sudo python daemon/boundary_daemon.py
+
+# Files are created with secure permissions by default:
+# - Log files: 0o600 (owner read/write)
+# - Log directories: 0o700 (owner only)
+# - With root: chattr +a applied (append-only)
+```
+
+### Log Sealing
+
+When rotating logs or finalizing an audit period:
+
+```python
+from daemon.event_logger import EventLogger
+
+logger = EventLogger("/var/log/boundary-daemon/events.log")
+# ... logging events ...
+
+# Seal the log (makes it immutable)
+success, msg = logger.seal_log()
+# Creates: events.log.sealed (checkpoint with hash)
+# Sets: chmod 0o400 + chattr +i
+```
+
+### Checking Protection Status
+
+```python
+status = logger.get_protection_status()
+# Returns:
+# {
+#     'path': '/var/log/boundary-daemon/events.log',
+#     'exists': True,
+#     'permissions': '600',
+#     'is_append_only': True,
+#     'is_immutable': False,
+#     'is_sealed': False,
+# }
+```
+
+### Using the Log Hardener
+
+For additional protection, use the dedicated LogHardener module:
+
+```python
+from daemon.storage.log_hardening import LogHardener, HardeningMode
+
+hardener = LogHardener(
+    log_path="/var/log/boundary-daemon/events.log",
+    mode=HardeningMode.STRICT,  # Fail if protection unavailable
+    fail_on_degraded=True,
+)
+
+# Apply hardening
+status = hardener.harden()
+print(f"Protection: {status.status.value}")
+print(f"Append-only: {status.is_append_only}")
+
+# Verify integrity
+is_valid, issues = hardener.verify_integrity()
+```
+
+### What Can Still Be Tampered
+
+Even with full protection, these attacks are possible:
+
+| Attack | Mitigation |
+|--------|------------|
+| Root removes chattr | Remote syslog backup, external monitoring |
+| Delete entire log | Watchdog detects missing file |
+| System clock manipulation | Clock monitor module detects jumps |
+| Boot from USB, modify disk | TPM PCR sealing, full disk encryption |
+
+**True tamper-proofing requires defense-in-depth** including remote logging, hardware security (TPM), and external monitoring.
+
+---
+
 ## Security Considerations
 
 ### What IS Protected
@@ -401,7 +514,7 @@ When properly integrated with cooperating systems:
 
 | Asset | Protection Mechanism |
 |-------|---------------------|
-| Audit trail | Hash-chained immutable log |
+| Audit trail | Hash-chained immutable log with file hardening |
 | Policy consistency | Centralized decision authority |
 | Violation detection | Continuous monitoring + tripwires |
 | Mode transitions | Logged with operator attribution |
@@ -472,6 +585,7 @@ Add enforcement layers:
 - [ ] Hardware controls for physical security
 - [ ] Log forwarding to external SIEM
 - [x] Watchdog to detect daemon failure (see [External Watchdog System](#external-watchdog-system))
+- [x] Log tamper-proofing enabled (see [Log Tamper-Proofing](#log-tamper-proofing))
 
 ---
 

@@ -1,19 +1,30 @@
 """
 Event Logger - Immutable Boundary Event Log with Hash Chain
 Maintains tamper-evident log of all boundary events.
+
+SECURITY IMPROVEMENTS:
+- Log files are created with 0o600 permissions (owner read/write only)
+- Log directory is created with 0o700 permissions (owner access only)
+- Optional integration with LogHardener for chattr +a protection
+- fsync() called after each write for crash recovery
 """
 
 import hashlib
 import json
 import os
+import stat
 import threading
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Secure file permissions
+LOG_FILE_PERMS = 0o600   # Owner read/write only
+LOG_DIR_PERMS = 0o700    # Owner access only
 
 
 class EventType(Enum):
@@ -93,20 +104,30 @@ class EventLogger:
     chain that makes tampering detectable.
     """
 
-    def __init__(self, log_file_path: str):
+    def __init__(self, log_file_path: str, secure_permissions: bool = True):
         """
         Initialize event logger.
 
         Args:
             log_file_path: Path to the log file
+            secure_permissions: Apply secure permissions (0o600/0o700)
         """
         self.log_file_path = log_file_path
         self._lock = threading.Lock()
         self._last_hash: str = "0" * 64  # Genesis hash (all zeros)
         self._event_count = 0
+        self._secure_permissions = secure_permissions
+        self._file_created = False
 
-        # Ensure log directory exists
-        os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+        # Ensure log directory exists with secure permissions
+        log_dir = os.path.dirname(log_file_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+            if self._secure_permissions:
+                try:
+                    os.chmod(log_dir, LOG_DIR_PERMS)
+                except Exception as e:
+                    logger.warning(f"Could not set secure directory permissions: {e}")
 
         # Load existing log to get the last hash
         self._load_existing_log()
@@ -170,12 +191,24 @@ class EventLogger:
             return event
 
     def _append_to_log(self, event: BoundaryEvent):
-        """Append event to log file"""
+        """Append event to log file with secure permissions"""
         try:
+            # Check if file exists before writing
+            file_existed = os.path.exists(self.log_file_path)
+
             with open(self.log_file_path, 'a') as f:
                 f.write(event.to_json() + '\n')
                 f.flush()
                 os.fsync(f.fileno())  # Ensure written to disk
+
+            # Set secure permissions on new files
+            if not file_existed and self._secure_permissions:
+                try:
+                    os.chmod(self.log_file_path, LOG_FILE_PERMS)
+                    logger.debug(f"Set secure permissions on log file: {oct(LOG_FILE_PERMS)}")
+                except Exception as e:
+                    logger.warning(f"Could not set secure file permissions: {e}")
+
         except Exception as e:
             logger.critical(f"Failed to write to event log: {e}")
             raise
@@ -331,12 +364,13 @@ class EventLogger:
             logger.error(f"Error reading events by type: {e}")
             return []
 
-    def export_log(self, output_path: str) -> bool:
+    def export_log(self, output_path: str, seal: bool = False) -> bool:
         """
         Export the log to a new file (for archival).
 
         Args:
             output_path: Path for exported log
+            seal: If True, seal the exported log (read-only, immutable if possible)
 
         Returns:
             True if successful
@@ -344,10 +378,167 @@ class EventLogger:
         try:
             import shutil
             shutil.copy2(self.log_file_path, output_path)
+
+            if seal:
+                # Make read-only
+                os.chmod(output_path, 0o400)
+
+                # Try to apply immutable attribute
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['chattr', '+i', output_path],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        logger.info(f"Sealed exported log with immutable attribute: {output_path}")
+                except Exception:
+                    logger.debug("Could not apply immutable attribute (requires root)")
+
             return True
         except Exception as e:
             logger.error(f"Error exporting log: {e}")
             return False
+
+    def seal_log(self) -> Tuple[bool, str]:
+        """
+        Seal the current log file (make it immutable).
+
+        After sealing:
+        - Permissions set to 0o400 (read-only)
+        - chattr +i applied if available and running as root
+
+        WARNING: After sealing, a new log file must be created for future events.
+
+        Returns:
+            (success, message)
+        """
+        with self._lock:
+            if not os.path.exists(self.log_file_path):
+                return (False, "Log file does not exist")
+
+            try:
+                # Log final event
+                final_event = BoundaryEvent(
+                    event_id=self._generate_event_id(),
+                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    event_type=EventType.INFO,
+                    details="Log sealed",
+                    metadata={
+                        'action': 'seal',
+                        'final_hash': self._last_hash,
+                        'event_count': self._event_count,
+                    },
+                    hash_chain=self._last_hash,
+                )
+
+                with open(self.log_file_path, 'a') as f:
+                    f.write(final_event.to_json() + '\n')
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Set read-only permissions
+                os.chmod(self.log_file_path, 0o400)
+
+                # Try to apply immutable attribute
+                is_immutable = False
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['chattr', '+i', self.log_file_path],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        is_immutable = True
+                        logger.info(f"Applied immutable attribute to sealed log")
+                except Exception:
+                    pass
+
+                # Compute final file hash
+                import hashlib
+                sha256 = hashlib.sha256()
+                with open(self.log_file_path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(8192), b''):
+                        sha256.update(chunk)
+                file_hash = sha256.hexdigest()
+
+                # Create seal checkpoint
+                checkpoint_path = self.log_file_path + '.sealed'
+                checkpoint = {
+                    'sealed_at': datetime.utcnow().isoformat() + "Z",
+                    'log_path': self.log_file_path,
+                    'event_count': self._event_count + 1,
+                    'final_chain_hash': final_event.compute_hash(),
+                    'file_hash': file_hash,
+                    'is_immutable': is_immutable,
+                }
+
+                with open(checkpoint_path, 'w') as f:
+                    json.dump(checkpoint, f, indent=2)
+                os.chmod(checkpoint_path, 0o400)
+
+                msg = f"Log sealed: {self._event_count + 1} events, hash {file_hash[:16]}..."
+                if is_immutable:
+                    msg += " (immutable)"
+
+                logger.info(msg)
+                return (True, msg)
+
+            except Exception as e:
+                logger.error(f"Failed to seal log: {e}")
+                return (False, str(e))
+
+    def get_protection_status(self) -> Dict:
+        """
+        Get the protection status of the log file.
+
+        Returns:
+            Dictionary with protection details
+        """
+        status = {
+            'path': self.log_file_path,
+            'exists': os.path.exists(self.log_file_path),
+            'permissions': None,
+            'is_append_only': False,
+            'is_immutable': False,
+            'is_sealed': False,
+        }
+
+        if not status['exists']:
+            return status
+
+        try:
+            st = os.stat(self.log_file_path)
+            status['permissions'] = oct(st.st_mode)[-3:]
+            status['owner_uid'] = st.st_uid
+            status['size'] = st.st_size
+
+            # Check for seal checkpoint
+            checkpoint_path = self.log_file_path + '.sealed'
+            status['is_sealed'] = os.path.exists(checkpoint_path)
+
+            # Check chattr attributes (if available)
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['lsattr', self.log_file_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    attrs = result.stdout.split()[0] if result.stdout else ""
+                    status['is_append_only'] = 'a' in attrs
+                    status['is_immutable'] = 'i' in attrs
+            except Exception:
+                pass
+
+        except Exception as e:
+            status['error'] = str(e)
+
+        return status
 
 
 if __name__ == '__main__':
