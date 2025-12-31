@@ -37,6 +37,12 @@ config/api_tokens.json
 config/bootstrap_token.enc
 config/*.enc
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # IDE
 .vscode/
 .idea/
