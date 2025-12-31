@@ -1,18 +1,47 @@
 # Boundary Daemon - Agent Smith
 
-**The Trust Enforcement Layer for Agent OS**
+**The Trust Policy & Audit Layer for Agent OS**
 
 > *"If the Memory Vault is the safe, the Boundary Daemon is the armed guard + walls + air-gap switches."*
 
+---
+
+> ## ⚠️ Important: Understanding the Enforcement Model
+>
+> **This daemon provides policy decisions and audit logging, NOT runtime enforcement.**
+>
+> The Boundary Daemon is a **detection and audit system** that:
+> - ✅ Monitors environment state (network, USB, processes, hardware)
+> - ✅ Evaluates policies and returns allow/deny decisions
+> - ✅ Logs all security events with tamper-evident hash chains
+> - ✅ Detects violations and triggers alerts
+>
+> It does **NOT**:
+> - ❌ Block network connections at the OS level
+> - ❌ Prevent memory access or file operations
+> - ❌ Terminate processes or enforce lockdowns
+> - ❌ Act as a sandbox or isolation mechanism
+>
+> **External systems must voluntarily respect daemon decisions.** This is a policy coordination
+> layer, not a security enforcement mechanism. For actual enforcement, integrate with:
+> - Kernel-level controls (SELinux, AppArmor, seccomp-bpf)
+> - Container isolation (namespaces, cgroups)
+> - Network firewalls (iptables/nftables)
+> - Hardware controls
+>
+> See [ENFORCEMENT_MODEL.md](ENFORCEMENT_MODEL.md) for the complete security architecture.
+
+---
+
 ## Overview
 
-The Boundary Daemon, codenamed **Agent Smith**, is the mandatory hard enforcement layer that defines and maintains trust boundaries for learning co-worker systems. It determines where cognition is allowed to flow and where it must stop.
+The Boundary Daemon, codenamed **Agent Smith**, is the policy decision and audit layer that defines and maintains trust boundaries for learning co-worker systems. It determines where cognition is allowed to flow and where it must stop, **but relies on cooperating systems to respect those decisions**.
 
 ### Role in Agent OS
 
-Agent Smith serves as the **security enforcer** - the guardian that ensures the system operates within its trust boundaries. Like its namesake from The Matrix, it is:
+Agent Smith serves as the **policy authority and audit system** - the decision-maker that determines what operations should be permitted within trust boundaries. It is:
 
-- **Authoritative**: Other subsystems must not override it
+- **Authoritative**: Provides canonical policy decisions that cooperating subsystems should respect
 - **Omnipresent**: Monitors all environment changes continuously
 - **Uncompromising**: Fails closed, never open
 - **Persistent**: Maintains immutable audit trail
@@ -226,30 +255,47 @@ boundaryctl set-mode restricted --reason "Code review"
 
 ## Threat Model
 
-### Protected Against
+### What This System Provides
 
-- Remote attackers (network-based)
-- Local malware (process monitoring)
-- Rogue agents (mandatory gating)
-- Accidental misuse (fail-closed design)
-- Gradual erosion (immutable logs)
-- Supply chain attacks (offline verification)
+| Capability | Description |
+|------------|-------------|
+| **Policy Decisions** | Canonical allow/deny verdicts for operations |
+| **Audit Trail** | Immutable hash-chained log of all security events |
+| **Violation Detection** | Identifies policy violations as they occur |
+| **Environment Monitoring** | Continuous sensing of network, USB, processes |
+| **Coordination Point** | Central authority for distributed policy queries |
 
-### Adversaries
+### What This System Does NOT Provide
 
-- Remote attackers
-- Local malware
-- Rogue agents
-- Accidental owner misuse
+| Not Provided | Why |
+|--------------|-----|
+| **Runtime Enforcement** | Returns decisions but cannot block operations |
+| **Process Isolation** | No sandboxing - requires external container/VM |
+| **Network Blocking** | Detects but doesn't control network access |
+| **Memory Protection** | Cannot prevent unauthorized memory reads |
+
+### Security Architecture (Defense in Depth)
+
+For actual security, deploy this daemon as **one layer** in a defense-in-depth strategy:
+
+```
+Layer 1: Kernel enforcement (SELinux, seccomp-bpf)     ← BLOCKS operations
+Layer 2: Container isolation (namespaces, cgroups)     ← ISOLATES processes
+Layer 3: This daemon (policy + logging)                ← DECIDES + LOGS
+Layer 4: Application cooperation (Memory Vault, etc.)  ← RESPECTS decisions
+Layer 5: Hardware controls (disabled USB, air-gap)     ← PHYSICAL security
+```
+
+**This daemon operates at Layer 3.** Without Layers 1-2, decisions are advisory only.
 
 ### Mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| Boundary bypass | Mandatory hooks |
-| Gradual erosion | Immutable logs |
-| Owner impatience | Ceremony + cooldown |
-| Supply-chain attack | Offline verification |
+| Risk | Mitigation | Enforcement Level |
+|------|------------|-------------------|
+| Boundary bypass | Mandatory hooks in cooperating systems | Application (voluntary) |
+| Gradual erosion | Immutable audit logs | Detection only |
+| Owner impatience | Ceremony + cooldown | Application (voluntary) |
+| Supply-chain attack | Offline verification | Detection only |
 
 ## Non-Goals
 

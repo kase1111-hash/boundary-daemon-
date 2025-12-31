@@ -25,25 +25,46 @@
 
 ### Purpose
 
-The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement layer for Agent OS. It defines and maintains trust boundaries for learning co-worker systems, determining where cognition is allowed to flow and where it must stop.
+The Boundary Daemon (codenamed "Agent Smith") is the policy decision and audit layer for Agent OS. It defines and maintains trust boundaries for learning co-worker systems, determining where cognition is allowed to flow and where it must stop.
+
+> **⚠️ Enforcement Model Clarification**
+>
+> This daemon provides **policy decisions and audit logging**, not runtime enforcement.
+> It returns allow/deny verdicts that cooperating systems should respect, but it cannot
+> prevent operations at the OS level. See [ENFORCEMENT_MODEL.md](ENFORCEMENT_MODEL.md)
+> for the complete security architecture.
 
 ### Core Responsibilities
 
 1. **Environment Sensing** - Detect current trust conditions
-2. **Mode Enforcement** - Enforce boundary modes based on environment
-3. **Recall Gating** - Permit or deny memory recall operations
-4. **Execution Gating** - Restrict tools, IO, and model access
-5. **Tripwire Response** - Detect violations and trigger lockdown
+2. **Policy Evaluation** - Evaluate boundary modes and return decisions
+3. **Recall Gating** - Return permit/deny decisions for memory recall operations
+4. **Execution Gating** - Return permit/deny decisions for tools, IO, and model access
+5. **Tripwire Response** - Detect violations and signal lockdown state
 6. **Audit Signaling** - Emit immutable boundary events
 
 ### Design Principles
 
-- **Authoritative**: Daemon decisions cannot be overridden programmatically
+- **Authoritative**: Daemon provides canonical policy decisions that cooperating systems should respect
 - **Fail-Closed**: Uncertainty defaults to DENY
 - **Deterministic**: Same inputs always produce same decision
 - **Immutable Logging**: All events logged with tamper-evident chain
 - **Human Oversight**: Overrides require ceremony, never silent
 - **Minimal Dependencies**: Small attack surface by design
+
+### Enforcement Model
+
+This daemon operates as **Layer 3** in a defense-in-depth architecture:
+
+| Layer | Component | Function | Enforcement Type |
+|-------|-----------|----------|------------------|
+| 1 | Kernel (SELinux, seccomp) | Block syscalls | **Hard enforcement** |
+| 2 | Containers (namespaces) | Isolate processes | **Hard enforcement** |
+| 3 | **This Daemon** | Policy decisions + audit | **Advisory + logging** |
+| 4 | Applications (Memory Vault) | Respect decisions | **Voluntary cooperation** |
+| 5 | Hardware (USB disable, air-gap) | Physical controls | **Hard enforcement** |
+
+**Without Layers 1-2, this daemon's decisions are advisory only.**
 
 ---
 
@@ -104,7 +125,16 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 
 ## Current Implementation Status
 
-### ✅ Fully Implemented
+> **Note on Implementation Categories**
+>
+> Features are categorized by their enforcement capability:
+> - **Detection & Decision**: Code exists and works, but provides advisory decisions only
+> - **Soft Enforcement**: Code exists but requires voluntary cooperation from other systems
+> - **Hard Enforcement**: Code exists AND can block operations at the OS level (requires privileges)
+>
+> Most features below are **Detection & Decision** unless explicitly noted as enforcement.
+
+### ✅ Fully Implemented (Detection & Decision)
 
 #### 1. State Monitor (`state_monitor.py`)
 - **Network Detection**: Active interfaces, internet connectivity, VPN detection, DNS availability
@@ -168,6 +198,15 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Signal Handling**: Graceful shutdown (SIGINT/SIGTERM)
 - **Public API**: check_recall_permission, check_tool_permission, get_status
 
+### ✅ Enforcement Modules (Require Privileges)
+
+> **⚠️ These modules can provide hard enforcement but require:**
+> - Root/sudo privileges to install firewall rules, udev rules, or seccomp filters
+> - Proper system configuration (iptables, udev, container runtime)
+> - Explicit enablement via environment variables (disabled by default)
+>
+> **Without these prerequisites, these modules provide detection/logging only.**
+
 #### 9. Network Enforcer (`daemon/enforcement/network_enforcer.py`) ✅
 - **Network Enforcement**: iptables/nftables firewall rule management
 - **Mode-Based Rules**: Automatic rule application on mode transitions
@@ -176,6 +215,7 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **LOCKDOWN Mode**: Blocks all traffic including loopback
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes rules on daemon shutdown
+- **Requirements**: Root privileges, iptables/nftables installed, `BOUNDARY_NETWORK_ENFORCE=1`
 
 #### 10. USB Enforcer (`daemon/enforcement/usb_enforcer.py`) ✅
 - **USB Enforcement**: udev rules and sysfs device authorization
@@ -187,6 +227,7 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Baseline Tracking**: Tracks devices present at daemon start
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes udev rules on daemon shutdown
+- **Requirements**: Root privileges, udev installed, `BOUNDARY_USB_ENFORCE=1`
 
 #### 11. Process Enforcer (`daemon/enforcement/process_enforcer.py`) ✅
 - **Process Isolation**: seccomp-bpf syscall filtering and container isolation
@@ -200,6 +241,9 @@ The Boundary Daemon (codenamed "Agent Smith") is the mandatory trust enforcement
 - **Container Management**: Tracks and terminates managed containers on cleanup
 - **Fail-Closed**: Triggers lockdown on enforcement failure
 - **Cleanup**: Removes seccomp profiles and stops containers on daemon shutdown
+- **Requirements**: Root privileges, seccomp support, container runtime, `BOUNDARY_PROCESS_ENFORCE=1`
+
+### ✅ Hardware & Cryptographic Modules
 
 #### 12. TPM Manager (`daemon/hardware/tpm_manager.py`) ✅
 - **Hardware Integration**: TPM 2.0 support via tpm2-tools or tpm2-pytss
