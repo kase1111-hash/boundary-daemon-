@@ -21,12 +21,143 @@ Usage:
 
 import os
 import sys
+import logging
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Dict, FrozenSet, Set, Tuple
+from typing import Dict, FrozenSet, Set, Tuple, Optional, TypeVar, Callable
+
+logger = logging.getLogger(__name__)
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
+
+
+# =============================================================================
+# ENVIRONMENT VARIABLE OVERRIDE UTILITIES
+# =============================================================================
+
+T = TypeVar('T')
+
+
+def _env_override(
+    env_var: str,
+    default: T,
+    converter: Callable[[str], T] = str,
+    validator: Optional[Callable[[T], bool]] = None,
+    min_value: Optional[T] = None,
+    max_value: Optional[T] = None,
+) -> T:
+    """Get a configuration value with environment variable override.
+
+    SECURITY: Allows runtime configuration of security-critical values while
+    maintaining safe defaults. Validates values to prevent misconfiguration.
+
+    Args:
+        env_var: Environment variable name (will be prefixed with BOUNDARY_)
+        default: Default value if env var not set
+        converter: Function to convert string to target type
+        validator: Optional validation function
+        min_value: Optional minimum allowed value
+        max_value: Optional maximum allowed value
+
+    Returns:
+        Configured value (from env var if valid, otherwise default)
+    """
+    full_env_var = f"BOUNDARY_{env_var}"
+    env_value = os.environ.get(full_env_var)
+
+    if env_value is None:
+        return default
+
+    try:
+        converted = converter(env_value)
+
+        # Apply bounds checking for numeric types
+        if min_value is not None and converted < min_value:
+            logger.warning(
+                f"SECURITY: {full_env_var}={env_value} below minimum {min_value}, using default"
+            )
+            return default
+        if max_value is not None and converted > max_value:
+            logger.warning(
+                f"SECURITY: {full_env_var}={env_value} above maximum {max_value}, using default"
+            )
+            return default
+
+        # Apply custom validation
+        if validator is not None and not validator(converted):
+            logger.warning(
+                f"SECURITY: {full_env_var}={env_value} failed validation, using default"
+            )
+            return default
+
+        logger.info(f"Using {full_env_var}={converted} (override)")
+        return converted
+
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Invalid value for {full_env_var}: {e}, using default")
+        return default
+
+
+def _env_override_list(
+    env_var: str,
+    default: Tuple[str, ...],
+    separator: str = ",",
+    validator: Optional[Callable[[str], bool]] = None,
+) -> Tuple[str, ...]:
+    """Get a list configuration value with environment variable override.
+
+    Args:
+        env_var: Environment variable name (will be prefixed with BOUNDARY_)
+        default: Default tuple of values
+        separator: Separator for parsing list values
+        validator: Optional validation function for each item
+
+    Returns:
+        Configured tuple (from env var if valid, otherwise default)
+    """
+    full_env_var = f"BOUNDARY_{env_var}"
+    env_value = os.environ.get(full_env_var)
+
+    if env_value is None:
+        return default
+
+    try:
+        items = tuple(item.strip() for item in env_value.split(separator) if item.strip())
+
+        if not items:
+            logger.warning(f"Empty list for {full_env_var}, using default")
+            return default
+
+        # Validate each item if validator provided
+        if validator is not None:
+            invalid_items = [item for item in items if not validator(item)]
+            if invalid_items:
+                logger.warning(
+                    f"SECURITY: Invalid items in {full_env_var}: {invalid_items}, using default"
+                )
+                return default
+
+        logger.info(f"Using {full_env_var}={items} (override)")
+        return items
+
+    except Exception as e:
+        logger.warning(f"Invalid value for {full_env_var}: {e}, using default")
+        return default
+
+
+def _is_valid_ip(ip: str) -> bool:
+    """Validate an IP address string."""
+    import re
+    # Simple IPv4 validation
+    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    if re.match(ipv4_pattern, ip):
+        parts = ip.split('.')
+        return all(0 <= int(part) <= 255 for part in parts)
+    # Simple IPv6 check (contains colons)
+    if ':' in ip:
+        return True
+    return False
 
 
 # =============================================================================
@@ -277,9 +408,12 @@ class Crypto:
     HASH_ALGORITHM_FAST: str = "blake2b"
 
     # TPM PCR indices (16-23 are user-defined)
+    # Override with: BOUNDARY_TPM_PCR_INDEX=17
     TPM_PCR_USER_START: int = 16
     TPM_PCR_USER_END: int = 23
-    TPM_PCR_DEFAULT: int = 16
+    TPM_PCR_DEFAULT: int = _env_override(
+        "TPM_PCR_INDEX", 16, int, min_value=16, max_value=23
+    )
 
     # Token/nonce sizes
     TOKEN_SIZE: int = 32                # 256-bit tokens
@@ -433,15 +567,19 @@ class NetworkConstants:
         5986,   # WinRM HTTPS
     })
 
-    # DNS configuration
+    # DNS configuration (with environment overrides)
     DNS_PORT: int = 53
-    DNS_TIMEOUT: float = 5.0
+    DNS_TIMEOUT: float = _env_override(
+        "DNS_TIMEOUT", 5.0, float, min_value=1.0, max_value=30.0
+    )
 
     # Default trusted DNS servers
-    TRUSTED_DNS_SERVERS: Tuple[str, ...] = (
-        "1.1.1.1",      # Cloudflare
-        "8.8.8.8",      # Google
-        "9.9.9.9",      # Quad9
+    # Override with: BOUNDARY_TRUSTED_DNS_SERVERS="1.1.1.1,8.8.8.8,custom.dns"
+    TRUSTED_DNS_SERVERS: Tuple[str, ...] = _env_override_list(
+        "TRUSTED_DNS_SERVERS",
+        ("1.1.1.1", "8.8.8.8", "9.9.9.9"),  # Cloudflare, Google, Quad9
+        separator=",",
+        validator=_is_valid_ip,
     )
 
 
@@ -489,26 +627,42 @@ class Limits:
     Various limit constants.
 
     SECURITY: Limits prevent resource exhaustion and abuse.
+    Many values support environment variable overrides for operational flexibility.
     """
-    # Failure limits
-    MAX_FAILURES_BEFORE_LOCKOUT: int = 3    # Lock after N failures
-    MAX_AUTH_ATTEMPTS: int = 5              # Authentication attempts
+    # Failure limits (with environment overrides for security tuning)
+    # Override with: BOUNDARY_MAX_AUTH_ATTEMPTS=10
+    MAX_FAILURES_BEFORE_LOCKOUT: int = _env_override(
+        "MAX_FAILURES_BEFORE_LOCKOUT", 3, int, min_value=1, max_value=10
+    )
+    MAX_AUTH_ATTEMPTS: int = _env_override(
+        "MAX_AUTH_ATTEMPTS", 5, int, min_value=1, max_value=20
+    )
     MAX_DISABLE_ATTEMPTS: int = 3           # Tripwire disable attempts
 
-    # Resource limits
+    # Resource limits (with environment overrides)
+    # Override with: BOUNDARY_MAX_LOG_FILES=20
     MAX_OPEN_FILES: int = 100               # Maximum files to scan
     MAX_PROCESSES: int = 1000               # Maximum processes to list
-    MAX_LOG_FILES: int = 10                 # Log rotation limit
-    MAX_BACKUPS: int = 3                    # Configuration backups
+    MAX_LOG_FILES: int = _env_override(
+        "MAX_LOG_FILES", 10, int, min_value=1, max_value=100
+    )
+    MAX_BACKUPS: int = _env_override(
+        "MAX_BACKUPS", 3, int, min_value=1, max_value=20
+    )
 
     # Size limits
     MAX_PATH_LENGTH: int = 4096             # Maximum path length
     MAX_HOSTNAME_LENGTH: int = 255          # Maximum hostname length
     MAX_USERNAME_LENGTH: int = 256          # Maximum username length
 
-    # ARP/Network limits
-    ARP_BLOCK_DURATION_MINUTES: int = 60    # Default block duration
-    MAX_BLOCKED_IPS: int = 1000             # Maximum IPs to block
+    # ARP/Network limits (with environment overrides)
+    # Override with: BOUNDARY_ARP_BLOCK_DURATION_MINUTES=120
+    ARP_BLOCK_DURATION_MINUTES: int = _env_override(
+        "ARP_BLOCK_DURATION_MINUTES", 60, int, min_value=1, max_value=1440
+    )
+    MAX_BLOCKED_IPS: int = _env_override(
+        "MAX_BLOCKED_IPS", 1000, int, min_value=100, max_value=100000
+    )
 
     # Logging limits
     MIN_HEALTHY_BACKENDS: int = 1           # Minimum loggers required

@@ -257,34 +257,85 @@ class DaemonIntegrityProtector:
         }
 
     def _load_signing_key(self) -> Optional[bytes]:
-        """Load the signing key for manifest verification."""
+        """Load the signing key for manifest verification.
+
+        SECURITY: Keys must be loaded from file only - no environment variables
+        (visible in /proc/[pid]/environ) and no ephemeral keys (breaks verification).
+        """
         if self._signing_key:
             return self._signing_key
 
         key_path = self.config.signing_key_path
 
-        # Try to load from file
+        # Try to load from file (only secure method)
         if os.path.exists(key_path):
             try:
                 with open(key_path, 'rb') as f:
                     self._signing_key = f.read()
+                if len(self._signing_key) < 32:
+                    logger.error(f"Signing key too short: {len(self._signing_key)} bytes (minimum 32)")
+                    self._signing_key = None
+                    return None
+                logger.info(f"Loaded signing key from {key_path}")
                 return self._signing_key
             except Exception as e:
-                logger.error(f"Failed to load signing key: {e}")
+                logger.error(f"Failed to load signing key from {key_path}: {e}")
+                return None
 
-        # Try environment variable as fallback
-        env_key = os.environ.get('BOUNDARY_DAEMON_SIGNING_KEY')
-        if env_key:
-            self._signing_key = env_key.encode()
-            return self._signing_key
-
-        # Generate ephemeral key for development (NOT SECURE FOR PRODUCTION)
-        logger.warning(
-            "No signing key found. Using ephemeral key - "
-            "THIS IS NOT SECURE FOR PRODUCTION"
+        # SECURITY: Fail-closed - do not generate ephemeral keys or use env vars
+        # Environment variables are visible via /proc/[pid]/environ
+        # Ephemeral keys break verification across restarts
+        logger.error(
+            f"No signing key found at {key_path}. "
+            "Generate one with: python -m daemon.security.daemon_integrity generate-key --output <path>"
         )
-        self._signing_key = os.urandom(32)
-        return self._signing_key
+        return None
+
+    @staticmethod
+    def generate_signing_key(output_path: str) -> bool:
+        """Generate a secure signing key file with proper permissions.
+
+        SECURITY: Creates key file with 0o600 permissions atomically to prevent
+        TOCTOU race conditions where another process could read the key.
+
+        Args:
+            output_path: Path where the signing key will be written
+
+        Returns:
+            True if key was generated successfully, False otherwise
+        """
+        import stat
+
+        try:
+            # Generate 32 bytes of cryptographically secure random data
+            key_data = os.urandom(32)
+
+            # Create parent directory if needed
+            parent_dir = os.path.dirname(output_path)
+            if parent_dir and not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, mode=0o700, exist_ok=True)
+
+            # SECURITY: Use os.open with O_CREAT | O_EXCL to atomically create
+            # file with correct permissions, preventing TOCTOU vulnerabilities
+            fd = os.open(
+                output_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                stat.S_IRUSR | stat.S_IWUSR  # 0o600
+            )
+            try:
+                os.write(fd, key_data)
+            finally:
+                os.close(fd)
+
+            logger.info(f"Generated signing key at {output_path} with secure permissions (0600)")
+            return True
+
+        except FileExistsError:
+            logger.error(f"Signing key already exists at {output_path}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to generate signing key: {e}")
+            return False
 
     def _calculate_file_hash(self, filepath: Path) -> str:
         """Calculate hash of a single file."""
@@ -828,13 +879,26 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Daemon Integrity Management')
-    parser.add_argument('command', choices=['create', 'verify', 'show'])
+    parser.add_argument('command', choices=['create', 'verify', 'show', 'generate-key'])
     parser.add_argument('--manifest', '-m', help='Manifest file path')
     parser.add_argument('--key', '-k', help='Signing key path')
+    parser.add_argument('--output', '-o', help='Output path for generated key')
     parser.add_argument('--root', '-r', help='Daemon root directory')
     parser.add_argument('--version', '-v', help='Daemon version', default='unknown')
 
     args = parser.parse_args()
+
+    # Handle generate-key command separately (doesn't need protector)
+    if args.command == 'generate-key':
+        output_path = args.output or args.key or './config/signing.key'
+        print(f"Generating signing key at {output_path}...")
+        if DaemonIntegrityProtector.generate_signing_key(output_path):
+            print(f"Successfully generated signing key at {output_path}")
+            print("SECURITY: Key file has 0600 permissions (owner read/write only)")
+            sys.exit(0)
+        else:
+            print("Failed to generate signing key")
+            sys.exit(1)
 
     config = IntegrityConfig()
     if args.manifest:

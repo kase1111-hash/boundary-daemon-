@@ -32,6 +32,91 @@ if TYPE_CHECKING:
     from ..event_logger import EventLogger
 
 
+class SecureTempFile:
+    """Context manager for secure temporary file handling.
+
+    SECURITY: Addresses CWE-377 (Insecure Temporary File) by:
+    - Creating files with restrictive permissions (0o600) atomically
+    - Using a private temp directory when possible
+    - Securely wiping file contents before deletion
+    - Ensuring cleanup happens even on exceptions
+    """
+
+    def __init__(self, suffix: str = '', prefix: str = 'tpm_'):
+        self.suffix = suffix
+        self.prefix = prefix
+        self.path: Optional[str] = None
+        self._fd: Optional[int] = None
+
+    def __enter__(self) -> str:
+        import stat
+
+        # Try to use /dev/shm (RAM-backed) for sensitive data, fall back to tempdir
+        secure_dirs = ['/dev/shm', tempfile.gettempdir()]
+        temp_dir = None
+        for d in secure_dirs:
+            if os.path.isdir(d) and os.access(d, os.W_OK):
+                temp_dir = d
+                break
+
+        if temp_dir is None:
+            raise TPMError("No writable temporary directory available")
+
+        # Create unique filename
+        import secrets
+        random_suffix = secrets.token_hex(8)
+        filename = f"{self.prefix}{random_suffix}{self.suffix}"
+        self.path = os.path.join(temp_dir, filename)
+
+        # SECURITY: Create file atomically with restrictive permissions
+        # O_EXCL ensures file doesn't exist (prevents symlink attacks)
+        # Mode 0o600 = owner read/write only
+        self._fd = os.open(
+            self.path,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL,
+            stat.S_IRUSR | stat.S_IWUSR
+        )
+
+        return self.path
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._secure_cleanup()
+        return False
+
+    def _secure_cleanup(self):
+        """Securely wipe and delete the temporary file."""
+        if self.path and os.path.exists(self.path):
+            try:
+                # Overwrite with random data before deletion
+                file_size = os.path.getsize(self.path)
+                if file_size > 0:
+                    with open(self.path, 'r+b') as f:
+                        f.write(os.urandom(file_size))
+                        f.flush()
+                        os.fsync(f.fileno())
+            except Exception:
+                pass  # Best effort secure wipe
+
+            try:
+                os.unlink(self.path)
+            except Exception:
+                pass  # Will be cleaned up by OS eventually
+
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except Exception:
+                pass
+            self._fd = None
+
+    def write(self, data: bytes) -> None:
+        """Write data to the secure temp file."""
+        if self._fd is None:
+            raise TPMError("SecureTempFile not initialized")
+        os.write(self._fd, data)
+        os.lseek(self._fd, 0, os.SEEK_SET)  # Reset position for reading
+
+
 class TPMError(Exception):
     """Base exception for TPM operations"""
     pass
@@ -128,6 +213,51 @@ class ModeAttestation:
             'signature': self.signature.hex() if self.signature else None
         }
 
+    def get_signable_data(self) -> bytes:
+        """Get the data that should be signed for integrity verification.
+
+        SECURITY: Returns a canonical representation of attestation data
+        for signature verification. Excludes the signature field itself.
+        """
+        canonical = (
+            f"{self.mode_name}|{self.mode_hash}|{self.pcr_index}|"
+            f"{self.pcr_value}|{self.timestamp}"
+        )
+        if self.quote:
+            canonical += f"|{self.quote.hex()}"
+        return canonical.encode('utf-8')
+
+    def compute_signature(self, signing_key: bytes) -> bytes:
+        """Compute HMAC signature for this attestation.
+
+        Args:
+            signing_key: 32-byte signing key
+
+        Returns:
+            HMAC-SHA256 signature bytes
+        """
+        import hmac
+        return hmac.new(signing_key, self.get_signable_data(), 'sha256').digest()
+
+    def verify_signature(self, signing_key: bytes) -> bool:
+        """Verify the attestation signature.
+
+        SECURITY: Addresses CWE-347 by verifying attestation integrity
+        before trusting loaded attestation records.
+
+        Args:
+            signing_key: 32-byte signing key used for signing
+
+        Returns:
+            True if signature is valid, False otherwise
+        """
+        if self.signature is None:
+            return False
+
+        import hmac
+        expected = self.compute_signature(signing_key)
+        return hmac.compare_digest(self.signature, expected)
+
 
 class TPMManager:
     """
@@ -176,6 +306,9 @@ class TPMManager:
         self._pcr_cache: Dict[int, str] = {}
         self._cache_time: float = 0
         self._cache_ttl: float = 5.0  # seconds
+
+        # Attestation signing key (for integrity verification)
+        self._attestation_signing_key: Optional[bytes] = None
 
         # Initialize storage directories
         if self.is_available:
@@ -228,7 +361,7 @@ class TPMManager:
             return False
 
     def _init_storage(self):
-        """Initialize storage directories"""
+        """Initialize storage directories and attestation signing key"""
         try:
             os.makedirs(self.SEALED_SECRETS_DIR, mode=0o700, exist_ok=True)
             os.makedirs(self.ATTESTATION_DIR, mode=0o700, exist_ok=True)
@@ -239,6 +372,57 @@ class TPMManager:
             self.ATTESTATION_DIR = os.path.join(home, ".boundary-daemon/tpm/attestations")
             os.makedirs(self.SEALED_SECRETS_DIR, mode=0o700, exist_ok=True)
             os.makedirs(self.ATTESTATION_DIR, mode=0o700, exist_ok=True)
+
+        # Initialize attestation signing key
+        self._init_attestation_signing_key()
+
+    def _init_attestation_signing_key(self):
+        """Initialize or load the attestation signing key.
+
+        SECURITY: The signing key is used to sign attestation records to prevent
+        forgery. Without this, an attacker with write access to the attestation
+        directory could forge attestation records.
+        """
+        import stat
+
+        # Determine key path based on attestation directory
+        key_path = os.path.join(os.path.dirname(self.ATTESTATION_DIR), 'attestation_signing.key')
+
+        if os.path.exists(key_path):
+            # Load existing key
+            try:
+                with open(key_path, 'rb') as f:
+                    self._attestation_signing_key = f.read()
+                if len(self._attestation_signing_key) >= 32:
+                    logger.debug(f"Loaded attestation signing key from {key_path}")
+                    return
+                else:
+                    logger.warning("Attestation signing key too short, regenerating")
+            except Exception as e:
+                logger.warning(f"Failed to load attestation signing key: {e}")
+
+        # Generate new key securely
+        try:
+            self._attestation_signing_key = os.urandom(32)
+
+            # Create key file with secure permissions atomically
+            fd = os.open(
+                key_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                stat.S_IRUSR | stat.S_IWUSR  # 0o600
+            )
+            try:
+                os.write(fd, self._attestation_signing_key)
+            finally:
+                os.close(fd)
+
+            logger.info(f"Generated new attestation signing key at {key_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to create attestation signing key: {e}")
+            # Generate ephemeral key as fallback (not persisted)
+            self._attestation_signing_key = os.urandom(32)
+            logger.warning("Using ephemeral attestation signing key (not persisted)")
 
     def _init_mode_hashes(self):
         """Pre-compute mode hashes for all boundary modes"""
@@ -564,16 +748,35 @@ class TPMManager:
         return self._load_attestations()
 
     def _save_attestation(self, attestation: ModeAttestation):
-        """Save attestation record to disk"""
+        """Save attestation record to disk with signature.
+
+        SECURITY: Signs attestation before saving to prevent forgery.
+        """
+        # Sign the attestation before saving
+        if self._attestation_signing_key:
+            attestation.signature = attestation.compute_signature(self._attestation_signing_key)
+
         filename = f"attestation_{attestation.timestamp.replace(':', '-')}.json"
         filepath = os.path.join(self.ATTESTATION_DIR, filename)
 
         with open(filepath, 'w') as f:
             json.dump(attestation.to_dict(), f, indent=2)
 
-    def _load_attestations(self) -> List[ModeAttestation]:
-        """Load all attestation records"""
+    def _load_attestations(self, verify_signatures: bool = True) -> List[ModeAttestation]:
+        """Load all attestation records with signature verification.
+
+        SECURITY: Verifies attestation signatures on load to detect tampering.
+        Addresses CWE-347 (Improper Verification of Cryptographic Signature).
+
+        Args:
+            verify_signatures: If True, verify signatures and skip invalid records
+
+        Returns:
+            List of verified attestation records
+        """
         attestations = []
+        unsigned_count = 0
+        invalid_count = 0
 
         if not os.path.exists(self.ATTESTATION_DIR):
             return attestations
@@ -584,17 +787,45 @@ class TPMManager:
                 try:
                     with open(filepath, 'r') as f:
                         data = json.load(f)
-                        attestations.append(ModeAttestation(
-                            mode_name=data['mode_name'],
-                            mode_hash=data['mode_hash'],
-                            pcr_index=data['pcr_index'],
-                            pcr_value=data['pcr_value'],
-                            timestamp=data['timestamp'],
-                            quote=bytes.fromhex(data['quote']) if data.get('quote') else None,
-                            signature=bytes.fromhex(data['signature']) if data.get('signature') else None
-                        ))
-                except (json.JSONDecodeError, KeyError):
+
+                    attestation = ModeAttestation(
+                        mode_name=data['mode_name'],
+                        mode_hash=data['mode_hash'],
+                        pcr_index=data['pcr_index'],
+                        pcr_value=data['pcr_value'],
+                        timestamp=data['timestamp'],
+                        quote=bytes.fromhex(data['quote']) if data.get('quote') else None,
+                        signature=bytes.fromhex(data['signature']) if data.get('signature') else None
+                    )
+
+                    # Verify signature if enabled and key is available
+                    if verify_signatures and self._attestation_signing_key:
+                        if attestation.signature is None:
+                            unsigned_count += 1
+                            logger.warning(
+                                f"SECURITY: Skipping unsigned attestation: {filename}"
+                            )
+                            continue
+
+                        if not attestation.verify_signature(self._attestation_signing_key):
+                            invalid_count += 1
+                            logger.error(
+                                f"SECURITY: Invalid signature on attestation {filename} - "
+                                "possible tampering detected!"
+                            )
+                            continue
+
+                    attestations.append(attestation)
+
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.warning(f"Failed to load attestation {filename}: {e}")
                     continue
+
+        if unsigned_count > 0 or invalid_count > 0:
+            logger.warning(
+                f"Attestation loading: {len(attestations)} valid, "
+                f"{unsigned_count} unsigned, {invalid_count} invalid signatures"
+            )
 
         return attestations
 
@@ -737,18 +968,42 @@ class TPMManager:
             raise TPMUnsealingError(f"Unsealing failed: {e}")
 
     def _seal_tpm2tools(self, secret: bytes, mode_hash: str) -> bytes:
-        """Seal using tpm2-tools"""
+        """Seal using tpm2-tools with secure temporary file handling.
+
+        SECURITY: Uses SecureTempFile for all temp files to ensure:
+        - Files created with 0600 permissions atomically
+        - Preferentially uses /dev/shm (RAM-backed) for secrets
+        - Files are securely wiped before deletion
+        """
+        # Track all temp files for cleanup
+        temp_files: List[SecureTempFile] = []
+
         try:
-            with tempfile.NamedTemporaryFile(delete=False) as secret_file:
-                secret_file.write(secret)
-                secret_path = secret_file.name
+            # Create secure temp files
+            secret_tf = SecureTempFile(suffix='.secret')
+            temp_files.append(secret_tf)
+            secret_path = secret_tf.__enter__()
+            secret_tf.write(secret)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.sealed') as sealed_file:
-                sealed_path = sealed_file.name
+            sealed_tf = SecureTempFile(suffix='.sealed')
+            temp_files.append(sealed_tf)
+            sealed_path = sealed_tf.__enter__()
 
-            # Create sealing policy based on PCR
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.policy') as policy_file:
-                policy_path = policy_file.name
+            policy_tf = SecureTempFile(suffix='.policy')
+            temp_files.append(policy_tf)
+            policy_path = policy_tf.__enter__()
+
+            ctx_tf = SecureTempFile(suffix='.ctx')
+            temp_files.append(ctx_tf)
+            ctx_path = ctx_tf.__enter__()
+
+            pub_tf = SecureTempFile(suffix='.pub')
+            temp_files.append(pub_tf)
+            pub_path = pub_tf.__enter__()
+
+            priv_tf = SecureTempFile(suffix='.priv')
+            temp_files.append(priv_tf)
+            priv_path = priv_tf.__enter__()
 
             # Create policy
             result = subprocess.run(
@@ -762,9 +1017,6 @@ class TPMManager:
                 raise TPMSealingError(f"Policy creation failed: {result.stderr.decode()}")
 
             # Create primary key for sealing
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.ctx') as ctx_file:
-                ctx_path = ctx_file.name
-
             result = subprocess.run(
                 ['tpm2_createprimary', '-C', 'o', '-c', ctx_path],
                 capture_output=True,
@@ -776,8 +1028,8 @@ class TPMManager:
             # Seal the secret
             result = subprocess.run(
                 ['tpm2_create', '-C', ctx_path, '-L', policy_path,
-                 '-i', secret_path, '-u', sealed_path + '.pub',
-                 '-r', sealed_path + '.priv'],
+                 '-i', secret_path, '-u', pub_path,
+                 '-r', priv_path],
                 capture_output=True,
                 timeout=10
             )
@@ -785,9 +1037,9 @@ class TPMManager:
                 raise TPMSealingError(f"Sealing failed: {result.stderr.decode()}")
 
             # Read sealed blob (combine pub and priv)
-            with open(sealed_path + '.pub', 'rb') as f:
+            with open(pub_path, 'rb') as f:
                 pub_data = f.read()
-            with open(sealed_path + '.priv', 'rb') as f:
+            with open(priv_path, 'rb') as f:
                 priv_data = f.read()
 
             # Format: [4 bytes pub length][pub data][priv data]
@@ -796,35 +1048,52 @@ class TPMManager:
             return sealed_blob
 
         finally:
-            # Cleanup temp files
-            for path in [secret_path, sealed_path, policy_path, ctx_path,
-                        sealed_path + '.pub', sealed_path + '.priv']:
+            # Secure cleanup of all temp files (in reverse order)
+            for tf in reversed(temp_files):
                 try:
-                    os.unlink(path)
-                except:
-                    pass
+                    tf.__exit__(None, None, None)
+                except Exception:
+                    pass  # Best effort cleanup
 
     def _unseal_tpm2tools(self, sealed_blob: bytes, mode_hash: str) -> bytes:
-        """Unseal using tpm2-tools"""
+        """Unseal using tpm2-tools with secure temporary file handling.
+
+        SECURITY: Uses SecureTempFile for all temp files to ensure:
+        - Files created with 0600 permissions atomically
+        - Preferentially uses /dev/shm (RAM-backed) for secrets
+        - Files are securely wiped before deletion
+        """
+        # Track all temp files for cleanup
+        temp_files: List[SecureTempFile] = []
+
         try:
             # Parse sealed blob
             pub_len = int.from_bytes(sealed_blob[:4], 'big')
             pub_data = sealed_blob[4:4+pub_len]
             priv_data = sealed_blob[4+pub_len:]
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pub') as pub_file:
-                pub_file.write(pub_data)
-                pub_path = pub_file.name
+            # Create secure temp files
+            pub_tf = SecureTempFile(suffix='.pub')
+            temp_files.append(pub_tf)
+            pub_path = pub_tf.__enter__()
+            pub_tf.write(pub_data)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.priv') as priv_file:
-                priv_file.write(priv_data)
-                priv_path = priv_file.name
+            priv_tf = SecureTempFile(suffix='.priv')
+            temp_files.append(priv_tf)
+            priv_path = priv_tf.__enter__()
+            priv_tf.write(priv_data)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.ctx') as ctx_file:
-                ctx_path = ctx_file.name
+            ctx_tf = SecureTempFile(suffix='.ctx')
+            temp_files.append(ctx_tf)
+            ctx_path = ctx_tf.__enter__()
 
-            with tempfile.NamedTemporaryFile(delete=False) as out_file:
-                out_path = out_file.name
+            out_tf = SecureTempFile(suffix='.out')
+            temp_files.append(out_tf)
+            out_path = out_tf.__enter__()
+
+            obj_tf = SecureTempFile(suffix='.obj')
+            temp_files.append(obj_tf)
+            obj_path = obj_tf.__enter__()
 
             # Create primary key
             result = subprocess.run(
@@ -836,9 +1105,6 @@ class TPMManager:
                 raise TPMUnsealingError(f"Primary key creation failed: {result.stderr.decode()}")
 
             # Load sealed object
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.obj') as obj_file:
-                obj_path = obj_file.name
-
             result = subprocess.run(
                 ['tpm2_load', '-C', ctx_path, '-u', pub_path, '-r', priv_path, '-c', obj_path],
                 capture_output=True,
@@ -863,12 +1129,12 @@ class TPMManager:
             return secret
 
         finally:
-            # Cleanup temp files
-            for path in [pub_path, priv_path, ctx_path, out_path, obj_path]:
+            # Secure cleanup of all temp files (in reverse order)
+            for tf in reversed(temp_files):
                 try:
-                    os.unlink(path)
-                except:
-                    pass
+                    tf.__exit__(None, None, None)
+                except Exception:
+                    pass  # Best effort cleanup
 
     def _seal_pytss(self, secret: bytes, mode_hash: str) -> bytes:
         """Seal using tpm2-pytss with AES-GCM encryption"""
@@ -1076,9 +1342,14 @@ class TPMManager:
         if self._tpm_ctx is not None:
             try:
                 self._tpm_ctx.close()
-            except:
-                pass
-            self._tpm_ctx = None
+            except (OSError, AttributeError, RuntimeError) as e:
+                # Log but don't propagate cleanup errors
+                logger.debug(f"TPM context cleanup error (non-critical): {e}")
+            except Exception as e:
+                # Catch any other exceptions but log them for debugging
+                logger.warning(f"Unexpected error during TPM cleanup: {type(e).__name__}: {e}")
+            finally:
+                self._tpm_ctx = None
 
         self._pcr_cache.clear()
 
