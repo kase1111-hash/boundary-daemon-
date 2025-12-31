@@ -29,6 +29,7 @@ import subprocess
 import threading
 import time
 import logging
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -40,6 +41,25 @@ logger = logging.getLogger(__name__)
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
+
+# Import error handling utilities
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        ErrorCategory,
+        ErrorSeverity,
+        log_security_error,
+        log_network_error,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    # Fallback logging function
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        context_str = f" Context: {additional_context}" if additional_context else ""
+        logger.error(f"Error in {op}: {type(e).__name__}: {e}{context_str}\n{traceback.format_exc()}")
+        if reraise:
+            raise e
 
 # Cross-platform privilege detection
 def _is_elevated() -> bool:

@@ -26,6 +26,7 @@ import hmac
 import threading
 import logging
 import fcntl
+import traceback
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from enum import Enum, auto
@@ -36,6 +37,26 @@ logger = logging.getLogger(__name__)
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
+
+# Import error handling utilities
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        ErrorCategory,
+        ErrorSeverity,
+        with_error_handling,
+        safe_execute,
+        log_security_error,
+        log_filesystem_error,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    # Fallback logging function
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        logger.error(f"Error in {op}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        if reraise:
+            raise e
 
 
 class ProtectionType(Enum):
@@ -210,8 +231,31 @@ class ProtectionPersistenceManager:
             # Restrictive permissions: root only
             if self._has_admin_privileges():
                 os.chmod(self.state_dir, 0o700)
+            logger.debug(f"State directory initialized: {self.state_dir}")
+        except PermissionError as e:
+            handle_error(
+                e, "_init_state_directory",
+                category=ErrorCategory.FILESYSTEM if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={
+                    'state_dir': str(self.state_dir),
+                    'has_admin': self._has_admin_privileges(),
+                }
+            )
+        except OSError as e:
+            handle_error(
+                e, "_init_state_directory",
+                category=ErrorCategory.FILESYSTEM if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={
+                    'state_dir': str(self.state_dir),
+                    'error_code': getattr(e, 'errno', None),
+                }
+            )
         except Exception as e:
-            logger.warning(f"Could not create state directory: {e}")
+            handle_error(
+                e, "_init_state_directory",
+                category=ErrorCategory.SYSTEM if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={'state_dir': str(self.state_dir)}
+            )
 
     def _has_admin_privileges(self) -> bool:
         """Check if running with admin/root privileges (cross-platform)."""
@@ -228,19 +272,54 @@ class ProtectionPersistenceManager:
         """Initialize or load HMAC key for state integrity."""
         try:
             if self.hmac_key_file.exists():
+                logger.debug(f"Loading existing HMAC key from {self.hmac_key_file}")
                 with open(self.hmac_key_file, 'rb') as f:
                     self._hmac_key = f.read()
+                    if len(self._hmac_key) < 32:
+                        logger.warning(
+                            f"HMAC key too short ({len(self._hmac_key)} bytes), regenerating"
+                        )
+                        raise ValueError("HMAC key too short")
+                logger.info("HMAC key loaded successfully")
             else:
                 # Generate new key
                 import secrets
+                logger.info(f"Generating new HMAC key at {self.hmac_key_file}")
                 self._hmac_key = secrets.token_bytes(32)
                 with open(self.hmac_key_file, 'wb') as f:
                     f.write(self._hmac_key)
                 if self._has_admin_privileges():
                     os.chmod(self.hmac_key_file, 0o600)
+                logger.info("New HMAC key generated and saved")
+        except PermissionError as e:
+            handle_error(
+                e, "_init_hmac_key",
+                category=ErrorCategory.SECURITY if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={
+                    'hmac_key_file': str(self.hmac_key_file),
+                    'has_admin': self._has_admin_privileges(),
+                }
+            )
+            logger.warning("Using fallback HMAC key due to permission error (less secure)")
+            self._hmac_key = b"boundary-daemon-fallback-key-do-not-use"
+        except (IOError, OSError) as e:
+            handle_error(
+                e, "_init_hmac_key",
+                category=ErrorCategory.FILESYSTEM if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={
+                    'hmac_key_file': str(self.hmac_key_file),
+                    'error_code': getattr(e, 'errno', None),
+                }
+            )
+            logger.warning("Using fallback HMAC key due to I/O error (less secure)")
+            self._hmac_key = b"boundary-daemon-fallback-key-do-not-use"
         except Exception as e:
-            logger.warning(f"HMAC key initialization failed: {e}")
-            # Use fallback key (less secure but functional)
+            handle_error(
+                e, "_init_hmac_key",
+                category=ErrorCategory.SECURITY if ERROR_HANDLING_AVAILABLE else None,
+                additional_context={'hmac_key_file': str(self.hmac_key_file)}
+            )
+            logger.warning("Using fallback HMAC key due to unexpected error (less secure)")
             self._hmac_key = b"boundary-daemon-fallback-key-do-not-use"
 
     def _compute_hmac(self, data: Dict) -> str:

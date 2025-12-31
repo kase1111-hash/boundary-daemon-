@@ -23,6 +23,7 @@ import platform
 import secrets
 import stat
 import tempfile
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
@@ -32,6 +33,26 @@ logger = logging.getLogger(__name__)
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
+
+# Import error handling utilities
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        ErrorCategory,
+        ErrorSeverity,
+        log_auth_error,
+        log_security_error,
+        log_filesystem_error,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    # Fallback logging function
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        context_str = f" Context: {additional_context}" if additional_context else ""
+        logger.error(f"Error in {op}: {type(e).__name__}: {e}{context_str}\n{traceback.format_exc()}")
+        if reraise:
+            raise e
 
 # Import secure memory utilities for key cleanup
 try:
