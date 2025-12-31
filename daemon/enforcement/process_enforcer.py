@@ -45,6 +45,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
+
 # Import secure profile manager
 try:
     from .secure_profile_manager import SecureProfileManager
@@ -230,8 +233,14 @@ class ProcessEnforcer:
         self._watchdog_thread: Optional[threading.Thread] = None
         self._watchdog_running = False
 
-        # Verify capabilities
-        self._has_root = os.geteuid() == 0
+        # Verify capabilities (cross-platform)
+        if IS_WINDOWS:
+            try:
+                self._has_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                self._has_root = False
+        else:
+            self._has_root = os.geteuid() == 0
         self._has_seccomp = self._check_seccomp_support()
         self._container_runtime = self._detect_container_runtime()
 
@@ -278,7 +287,11 @@ class ProcessEnforcer:
             logger.warning("Secure process terminator not available - using legacy termination")
 
     def _check_seccomp_support(self) -> bool:
-        """Check if seccomp is available"""
+        """Check if seccomp is available (Linux only)"""
+        # seccomp is a Linux-only kernel feature
+        if IS_WINDOWS:
+            return False
+
         try:
             # Check /proc/sys/kernel/seccomp/actions_avail
             if os.path.exists('/proc/sys/kernel/seccomp/actions_avail'):
@@ -832,49 +845,82 @@ class ProcessEnforcer:
         """
         logger.critical("Watchdog triggering emergency lockdown!")
 
-        # Block all network at iptables level
-        try:
-            subprocess.run(['iptables', '-P', 'INPUT', 'DROP'], timeout=5)
-            subprocess.run(['iptables', '-P', 'OUTPUT', 'DROP'], timeout=5)
-            subprocess.run(['iptables', '-P', 'FORWARD', 'DROP'], timeout=5)
-        except Exception as e:
-            logger.error(f"Failed to set iptables policy: {e}")
+        # Block all network at iptables level (Linux only)
+        if not IS_WINDOWS:
+            try:
+                subprocess.run(['iptables', '-P', 'INPUT', 'DROP'], timeout=5)
+                subprocess.run(['iptables', '-P', 'OUTPUT', 'DROP'], timeout=5)
+                subprocess.run(['iptables', '-P', 'FORWARD', 'DROP'], timeout=5)
+            except Exception as e:
+                logger.error(f"Failed to set iptables policy: {e}")
+        else:
+            logger.warning("Network blocking via iptables not available on Windows")
 
         # SECURITY: Terminate user processes using secure terminator
         terminated_count = 0
 
         if self._secure_terminator:
-            # Find all non-essential user processes (UID >= 1000)
+            # Find all non-essential user processes (UID >= 1000 on Linux)
             try:
-                for entry in os.listdir('/proc'):
-                    if not entry.isdigit():
-                        continue
+                if IS_WINDOWS:
+                    # Windows: Use psutil for process iteration
+                    import psutil
+                    for proc in psutil.process_iter(['pid']):
+                        try:
+                            pid = proc.info['pid']
+                            proc_info = ProcessInfo.from_pid(pid)
+                            if not proc_info:
+                                continue
 
-                    pid = int(entry)
-                    proc_info = ProcessInfo.from_pid(pid)
-                    if not proc_info:
-                        continue
+                            # Skip if essential
+                            is_essential, _ = self._secure_terminator.is_essential_process(proc_info)
+                            if is_essential:
+                                continue
 
-                    # Skip root/system processes (UID < 1000)
-                    if proc_info.uid is None or proc_info.uid < 1000:
-                        continue
+                            # Terminate with verification
+                            result, msg = self._secure_terminator.terminate_process(
+                                pid=pid,
+                                reason=TerminationReason.EMERGENCY_LOCKDOWN,
+                                requested_by="process_enforcer_watchdog",
+                                force=False,
+                            )
 
-                    # Skip if essential
-                    is_essential, _ = self._secure_terminator.is_essential_process(proc_info)
-                    if is_essential:
-                        continue
+                            if result == TerminationResult.SUCCESS:
+                                terminated_count += 1
+                                logger.info(f"Emergency lockdown: terminated PID {pid} ({proc_info.name})")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                else:
+                    # Linux: Use /proc filesystem
+                    for entry in os.listdir('/proc'):
+                        if not entry.isdigit():
+                            continue
 
-                    # Terminate with verification
-                    result, msg = self._secure_terminator.terminate_process(
-                        pid=pid,
-                        reason=TerminationReason.EMERGENCY_LOCKDOWN,
-                        requested_by="process_enforcer_watchdog",
-                        force=False,  # Never force-kill essential processes
-                    )
+                        pid = int(entry)
+                        proc_info = ProcessInfo.from_pid(pid)
+                        if not proc_info:
+                            continue
 
-                    if result == TerminationResult.SUCCESS:
-                        terminated_count += 1
-                        logger.info(f"Emergency lockdown: terminated PID {pid} ({proc_info.name})")
+                        # Skip root/system processes (UID < 1000)
+                        if proc_info.uid is None or proc_info.uid < 1000:
+                            continue
+
+                        # Skip if essential
+                        is_essential, _ = self._secure_terminator.is_essential_process(proc_info)
+                        if is_essential:
+                            continue
+
+                        # Terminate with verification
+                        result, msg = self._secure_terminator.terminate_process(
+                            pid=pid,
+                            reason=TerminationReason.EMERGENCY_LOCKDOWN,
+                            requested_by="process_enforcer_watchdog",
+                            force=False,  # Never force-kill essential processes
+                        )
+
+                        if result == TerminationResult.SUCCESS:
+                            terminated_count += 1
+                            logger.info(f"Emergency lockdown: terminated PID {pid} ({proc_info.name})")
 
             except Exception as e:
                 logger.error(f"Error during emergency process termination: {e}")

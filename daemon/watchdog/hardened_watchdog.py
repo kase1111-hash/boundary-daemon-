@@ -282,6 +282,10 @@ class ProcessHardening:
     @staticmethod
     def is_process_protected(pid: int) -> bool:
         """Check if a process has protection against ptrace"""
+        # ptrace protection check is Linux-only
+        if IS_WINDOWS:
+            return True  # Assume protected on Windows (no ptrace)
+
         try:
             with open(f'/proc/{pid}/status', 'r') as f:
                 for line in f:
@@ -998,19 +1002,39 @@ def generate_shared_secret() -> bytes:
     # Use machine-specific data for the secret
     components = []
 
-    # Machine ID
-    try:
-        with open('/etc/machine-id', 'r') as f:
-            components.append(f.read().strip())
-    except Exception:
-        pass
+    if IS_WINDOWS:
+        # Windows: Use machine GUID from registry
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Cryptography"
+            )
+            machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            winreg.CloseKey(key)
+            components.append(machine_guid)
+        except Exception:
+            pass
 
-    # Boot ID (changes each boot - adds freshness)
-    try:
-        with open('/proc/sys/kernel/random/boot_id', 'r') as f:
-            components.append(f.read().strip())
-    except Exception:
-        pass
+        # Windows: Add computer name for additional uniqueness
+        try:
+            components.append(os.environ.get('COMPUTERNAME', ''))
+        except Exception:
+            pass
+    else:
+        # Linux: Machine ID
+        try:
+            with open('/etc/machine-id', 'r') as f:
+                components.append(f.read().strip())
+        except Exception:
+            pass
+
+        # Linux: Boot ID (changes each boot - adds freshness)
+        try:
+            with open('/proc/sys/kernel/random/boot_id', 'r') as f:
+                components.append(f.read().strip())
+        except Exception:
+            pass
 
     # If nothing else, use a random secret (not persistent across restarts)
     if not components:

@@ -34,6 +34,7 @@ Usage:
 """
 
 import os
+import sys
 import re
 import hashlib
 import hmac
@@ -55,6 +56,9 @@ from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class ThreatLevel(Enum):
@@ -1018,8 +1022,29 @@ class AntivirusScanner:
         """Get list of running processes with details"""
         processes = []
 
+        if IS_WINDOWS:
+            # Windows: Use psutil for process enumeration
+            try:
+                import psutil
+                for proc in psutil.process_iter(['pid', 'name', 'username', 'cmdline', 'exe']):
+                    try:
+                        info = proc.info
+                        cmdline = ' '.join(info.get('cmdline') or [])
+                        processes.append({
+                            'user': info.get('username', ''),
+                            'pid': str(info.get('pid', '')),
+                            'name': info.get('name', ''),
+                            'cmdline': cmdline,
+                            'exe': info.get('exe', '')
+                        })
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            except ImportError:
+                logger.debug("psutil not available for process enumeration")
+            return processes
+
+        # Linux: Use /proc filesystem for detailed info
         try:
-            # Use /proc filesystem for detailed info
             for pid_dir in os.listdir('/proc'):
                 if not pid_dir.isdigit():
                     continue
@@ -1056,6 +1081,24 @@ class AntivirusScanner:
 
     def _get_process_info(self, pid: str) -> Optional[Dict]:
         """Get detailed information about a specific process"""
+        # Windows: Use psutil for process info
+        if IS_WINDOWS:
+            try:
+                import psutil
+                proc = psutil.Process(int(pid))
+                cmdline = ' '.join(proc.cmdline())
+                return {
+                    'pid': pid,
+                    'name': proc.name(),
+                    'cmdline': cmdline,
+                    'exe': proc.exe() if proc.exe() else '',
+                    'fds': [],  # Not available on Windows
+                    'maps': []  # Not available on Windows
+                }
+            except Exception:
+                return None
+
+        # Linux: Use /proc filesystem
         proc_path = f'/proc/{pid}'
 
         try:
@@ -2350,36 +2393,54 @@ class AntivirusScanner:
             (success, message)
         """
         try:
-            # Verify process exists
-            if not os.path.exists(f"/proc/{pid}"):
-                return (False, f"Process {pid} does not exist")
+            if IS_WINDOWS:
+                # Windows: Use psutil for process management
+                try:
+                    import psutil
+                    proc = psutil.Process(pid)
+                    proc_info = f"{proc.name()}: {' '.join(proc.cmdline())[:200]}"
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                except psutil.NoSuchProcess:
+                    return (False, f"Process {pid} does not exist")
+                except psutil.AccessDenied:
+                    return (False, f"Access denied to kill process {pid}")
+                except Exception as e:
+                    return (False, f"Failed to kill process {pid}: {e}")
+            else:
+                # Linux: Verify process exists
+                if not os.path.exists(f"/proc/{pid}"):
+                    return (False, f"Process {pid} does not exist")
 
-            # Get process info before killing
-            proc_info = ""
-            try:
-                with open(f"/proc/{pid}/comm", 'r') as f:
-                    proc_name = f.read().strip()
-                with open(f"/proc/{pid}/cmdline", 'r') as f:
-                    proc_cmdline = f.read().replace('\x00', ' ').strip()[:200]
-                proc_info = f"{proc_name}: {proc_cmdline}"
-            except Exception:
-                proc_info = f"PID {pid}"
+                # Get process info before killing
+                proc_info = ""
+                try:
+                    with open(f"/proc/{pid}/comm", 'r') as f:
+                        proc_name = f.read().strip()
+                    with open(f"/proc/{pid}/cmdline", 'r') as f:
+                        proc_cmdline = f.read().replace('\x00', ' ').strip()[:200]
+                    proc_info = f"{proc_name}: {proc_cmdline}"
+                except Exception:
+                    proc_info = f"PID {pid}"
 
-            # First try SIGTERM
-            os.kill(pid, signal.SIGTERM)
+                # First try SIGTERM
+                os.kill(pid, signal.SIGTERM)
 
-            # Wait a moment for graceful shutdown
-            time.sleep(0.5)
+                # Wait a moment for graceful shutdown
+                time.sleep(0.5)
 
-            # Check if still running
-            if os.path.exists(f"/proc/{pid}"):
-                # Force kill with SIGKILL
-                os.kill(pid, signal.SIGKILL)
-                time.sleep(0.2)
+                # Check if still running
+                if os.path.exists(f"/proc/{pid}"):
+                    # Force kill with SIGKILL
+                    os.kill(pid, signal.SIGKILL)
+                    time.sleep(0.2)
 
-            # Verify killed
-            if os.path.exists(f"/proc/{pid}"):
-                return (False, f"Failed to kill process {pid}")
+                # Verify killed
+                if os.path.exists(f"/proc/{pid}"):
+                    return (False, f"Failed to kill process {pid}")
 
             # Log the kill
             self._log_enforcement_action("process_killed", {
