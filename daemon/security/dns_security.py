@@ -40,6 +40,9 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
+
 # Cross-platform privilege detection
 def _is_elevated() -> bool:
     """Check if running with elevated privileges (cross-platform)."""
@@ -998,7 +1001,26 @@ class DNSSecurityMonitor:
         Returns:
             (is_using_doh, resolver_info)
         """
-        # Check for common DoH configurations
+        # Windows: DoH/DoT detection is limited
+        if IS_WINDOWS:
+            # Check for running DoH clients via tasklist
+            doh_clients = ['cloudflared', 'dnscrypt-proxy', 'stubby', 'doh-client']
+            try:
+                result = subprocess.run(
+                    ['tasklist'],
+                    capture_output=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode().lower()
+                    for client in doh_clients:
+                        if client in output:
+                            return True, f"DoH client running: {client}"
+            except Exception:
+                pass
+            return False, "DoH detection limited on Windows"
+
+        # Linux: Check for common DoH configurations
         doh_indicators = []
 
         # Check systemd-resolved for DoH
@@ -1047,7 +1069,24 @@ class DNSSecurityMonitor:
         Returns:
             (is_using_dot, resolver_info)
         """
-        # Check systemd-resolved for DoT
+        # Windows: DoT detection is limited
+        if IS_WINDOWS:
+            # Check for stubby via tasklist
+            try:
+                result = subprocess.run(
+                    ['tasklist'],
+                    capture_output=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode().lower()
+                    if 'stubby' in output:
+                        return True, "Stubby DoT client running"
+            except Exception:
+                pass
+            return False, "DoT detection limited on Windows"
+
+        # Linux: Check systemd-resolved for DoT
         try:
             result = subprocess.run(
                 ['resolvectl', 'status'],
@@ -1225,14 +1264,35 @@ class DNSSecurityMonitor:
         resolver = "unknown"
         is_secure = False
 
-        try:
-            with open('/etc/resolv.conf', 'r') as f:
-                for line in f:
-                    if line.startswith('nameserver'):
-                        resolver = line.split()[1]
-                        break
-        except Exception:
-            pass
+        if IS_WINDOWS:
+            # Windows: Get DNS server via ipconfig
+            try:
+                result = subprocess.run(
+                    ['ipconfig', '/all'],
+                    capture_output=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0:
+                    output = result.stdout.decode()
+                    # Look for DNS Servers line
+                    for line in output.split('\n'):
+                        if 'DNS Servers' in line or 'DNS-Server' in line:
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                resolver = parts[1].strip().split()[0]
+                                break
+            except Exception:
+                pass
+        else:
+            # Linux: Read /etc/resolv.conf
+            try:
+                with open('/etc/resolv.conf', 'r') as f:
+                    for line in f:
+                        if line.startswith('nameserver'):
+                            resolver = line.split()[1]
+                            break
+            except Exception:
+                pass
 
         # Check DoH/DoT
         doh_ok, doh_info = self.check_dns_over_https()

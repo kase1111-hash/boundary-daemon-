@@ -22,6 +22,7 @@ Solution:
 """
 
 import os
+import sys
 import re
 import signal
 import time
@@ -35,6 +36,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Callable
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class ProcessVerificationMethod(Enum):
@@ -86,7 +90,47 @@ class ProcessInfo:
 
     @classmethod
     def from_pid(cls, pid: int) -> Optional['ProcessInfo']:
-        """Get process info from /proc filesystem."""
+        """Get process info from /proc filesystem or psutil on Windows."""
+        if IS_WINDOWS:
+            # Windows: Use psutil for cross-platform process info
+            try:
+                import psutil
+                proc = psutil.Process(pid)
+                info = cls(pid=pid, name=proc.name())
+                try:
+                    info.exe_path = proc.exe()
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+                try:
+                    info.cmdline = ' '.join(proc.cmdline())
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+                try:
+                    info.ppid = proc.ppid()
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+                try:
+                    info.start_time = proc.create_time()
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+                try:
+                    info.state = proc.status()
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+                # Hash exe if available
+                if info.exe_path and os.path.exists(info.exe_path):
+                    try:
+                        with open(info.exe_path, 'rb') as f:
+                            data = f.read(1024 * 1024)
+                            info.exe_hash = hashlib.sha256(data).hexdigest()[:16]
+                    except (OSError, PermissionError):
+                        pass
+                return info
+            except Exception as e:
+                logger.debug(f"Error getting process info for PID {pid} on Windows: {e}")
+                return None
+
+        # Linux: Use /proc filesystem
         proc_path = Path(f"/proc/{pid}")
         if not proc_path.exists():
             return None
@@ -558,37 +602,73 @@ class SecureProcessTerminator:
         matches = []
 
         try:
-            for entry in os.listdir('/proc'):
-                if not entry.isdigit():
-                    continue
+            if IS_WINDOWS:
+                # Windows: Use psutil for process iteration
+                import psutil
+                for proc in psutil.process_iter(['pid']):
+                    try:
+                        pid = proc.info['pid']
+                        process_info = ProcessInfo.from_pid(pid)
+                        if not process_info:
+                            continue
 
-                pid = int(entry)
-                process_info = ProcessInfo.from_pid(pid)
-                if not process_info:
-                    continue
+                        # Check criteria
+                        if name_pattern:
+                            if not re.match(name_pattern, process_info.name):
+                                continue
 
-                # Check criteria
-                if name_pattern:
-                    if not re.match(name_pattern, process_info.name):
+                        if exe_path_prefix:
+                            if not process_info.exe_path:
+                                continue
+                            if not process_info.exe_path.startswith(exe_path_prefix):
+                                continue
+
+                        if uid is not None:
+                            if process_info.uid != uid:
+                                continue
+
+                        # Check essential
+                        if exclude_essential:
+                            is_essential, _ = self.is_essential_process(process_info)
+                            if is_essential:
+                                continue
+
+                        matches.append(process_info)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            else:
+                # Linux: Use /proc filesystem
+                for entry in os.listdir('/proc'):
+                    if not entry.isdigit():
                         continue
 
-                if exe_path_prefix:
-                    if not process_info.exe_path:
-                        continue
-                    if not process_info.exe_path.startswith(exe_path_prefix):
-                        continue
-
-                if uid is not None:
-                    if process_info.uid != uid:
+                    pid = int(entry)
+                    process_info = ProcessInfo.from_pid(pid)
+                    if not process_info:
                         continue
 
-                # Check essential
-                if exclude_essential:
-                    is_essential, _ = self.is_essential_process(process_info)
-                    if is_essential:
-                        continue
+                    # Check criteria
+                    if name_pattern:
+                        if not re.match(name_pattern, process_info.name):
+                            continue
 
-                matches.append(process_info)
+                    if exe_path_prefix:
+                        if not process_info.exe_path:
+                            continue
+                        if not process_info.exe_path.startswith(exe_path_prefix):
+                            continue
+
+                    if uid is not None:
+                        if process_info.uid != uid:
+                            continue
+
+                    # Check essential
+                    if exclude_essential:
+                        is_essential, _ = self.is_essential_process(process_info)
+                        if is_essential:
+                            continue
+
+                    matches.append(process_info)
 
         except Exception as e:
             logger.error(f"Error finding processes: {e}")
@@ -661,18 +741,35 @@ class SecureProcessTerminator:
         suspicious = []
 
         try:
-            for entry in os.listdir('/proc'):
-                if not entry.isdigit():
-                    continue
+            if IS_WINDOWS:
+                # Windows: Use psutil for process iteration
+                import psutil
+                for proc in psutil.process_iter(['pid']):
+                    try:
+                        pid = proc.info['pid']
+                        process_info = ProcessInfo.from_pid(pid)
+                        if not process_info:
+                            continue
 
-                pid = int(entry)
-                process_info = ProcessInfo.from_pid(pid)
-                if not process_info:
-                    continue
+                        is_suspicious, reason = self.is_suspicious_process(process_info)
+                        if is_suspicious:
+                            suspicious.append((process_info, reason))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            else:
+                # Linux: Use /proc filesystem
+                for entry in os.listdir('/proc'):
+                    if not entry.isdigit():
+                        continue
 
-                is_suspicious, reason = self.is_suspicious_process(process_info)
-                if is_suspicious:
-                    suspicious.append((process_info, reason))
+                    pid = int(entry)
+                    process_info = ProcessInfo.from_pid(pid)
+                    if not process_info:
+                        continue
+
+                    is_suspicious, reason = self.is_suspicious_process(process_info)
+                    if is_suspicious:
+                        suspicious.append((process_info, reason))
 
         except Exception as e:
             logger.error(f"Error finding suspicious processes: {e}")

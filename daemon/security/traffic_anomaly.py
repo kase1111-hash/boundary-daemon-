@@ -11,6 +11,7 @@ Detects suspicious network traffic patterns including:
 
 import logging
 import os
+import sys
 import re
 import time
 import threading
@@ -22,6 +23,9 @@ from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class TrafficAnomalyAlert(Enum):
@@ -683,19 +687,30 @@ class TrafficAnomalyMonitor:
     def _check_traffic_stats(self):
         """Check system traffic statistics"""
         try:
-            # Read /proc/net/dev for interface statistics
-            if os.path.exists('/proc/net/dev'):
-                with open('/proc/net/dev', 'r') as f:
-                    lines = f.readlines()[2:]  # Skip headers
+            if IS_WINDOWS:
+                # Windows: Use psutil for network I/O stats (cross-platform)
+                try:
+                    import psutil
+                    net_io = psutil.net_io_counters(pernic=True)
+                    for iface, stats in net_io.items():
+                        if 'loopback' not in iface.lower():
+                            self.analyze_traffic_volume(iface, stats.bytes_sent, stats.bytes_recv)
+                except ImportError:
+                    logger.debug("psutil not available for network stats")
+            else:
+                # Linux: Read /proc/net/dev for interface statistics
+                if os.path.exists('/proc/net/dev'):
+                    with open('/proc/net/dev', 'r') as f:
+                        lines = f.readlines()[2:]  # Skip headers
 
-                for line in lines:
-                    parts = line.split()
-                    if len(parts) >= 10:
-                        iface = parts[0].rstrip(':')
-                        if iface not in ['lo']:  # Skip loopback
-                            bytes_recv = int(parts[1])
-                            bytes_sent = int(parts[9])
-                            self.analyze_traffic_volume(iface, bytes_sent, bytes_recv)
+                    for line in lines:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            iface = parts[0].rstrip(':')
+                            if iface not in ['lo']:  # Skip loopback
+                                bytes_recv = int(parts[1])
+                                bytes_sent = int(parts[9])
+                                self.analyze_traffic_volume(iface, bytes_sent, bytes_recv)
         except Exception as e:
             logger.error(f"Error reading traffic stats: {e}")
 

@@ -4,6 +4,7 @@ Continuously monitors network, hardware, software, and human presence signals.
 """
 
 import os
+import sys
 import psutil
 import socket
 import subprocess
@@ -16,6 +17,9 @@ from enum import Enum
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class NetworkState(Enum):
@@ -564,7 +568,11 @@ class StateMonitor:
         Returns:
             True if 5G capable, False otherwise
         """
-        # Check modem capabilities via sysfs/dbus if available
+        # Skip sysfs checks on Windows - no equivalent
+        if IS_WINDOWS:
+            return False
+
+        # Check modem capabilities via sysfs/dbus if available (Linux only)
         try:
             # Check for 5G modem indicators in sysfs
             modem_paths = [
@@ -601,8 +609,21 @@ class StateMonitor:
         Returns:
             NetworkType if detected, None otherwise
         """
+        # Skip sysfs checks on Windows - use interface name heuristics instead
+        if IS_WINDOWS:
+            iface_lower = iface.lower()
+            if 'wi-fi' in iface_lower or 'wireless' in iface_lower or 'wlan' in iface_lower:
+                return NetworkType.WIFI
+            if 'ethernet' in iface_lower or 'local area' in iface_lower:
+                return NetworkType.ETHERNET
+            if 'vpn' in iface_lower or 'tunnel' in iface_lower:
+                return NetworkType.VPN
+            if 'bluetooth' in iface_lower:
+                return NetworkType.BLUETOOTH
+            return None
+
         try:
-            # Check the interface type from sysfs
+            # Check the interface type from sysfs (Linux only)
             type_path = f'/sys/class/net/{iface}/type'
             if os.path.exists(type_path):
                 with open(type_path, 'r') as f:
@@ -869,6 +890,10 @@ class StateMonitor:
         - SPI devices (/dev/spidev*)
         - Network interfaces for LoRaWAN gateways
         """
+        # LoRa device detection requires Linux sysfs
+        if IS_WINDOWS:
+            return []
+
         devices = []
 
         try:
@@ -921,6 +946,10 @@ class StateMonitor:
         - USB Thread border routers
         - OpenThread daemon connections
         """
+        # Thread device detection requires Linux sysfs
+        if IS_WINDOWS:
+            return []
+
         devices = []
 
         try:
@@ -952,8 +981,7 @@ class StateMonitor:
                 if os.path.exists(sock):
                     devices.append(f"OpenThread: {sock}")
 
-            # Check for Matter controller processes
-            import subprocess
+            # Check for Matter controller processes (Linux only - uses pgrep)
             try:
                 result = subprocess.run(
                     ['pgrep', '-l', '-f', 'matter|chip-tool|otbr'],
@@ -979,6 +1007,10 @@ class StateMonitor:
         - wmx* or wimax* interfaces
         - USB WiMAX modems
         """
+        # WiMAX detection requires Linux sysfs
+        if IS_WINDOWS:
+            return []
+
         interfaces = []
 
         try:
@@ -1016,6 +1048,10 @@ class StateMonitor:
         - /dev/ircomm* devices
         - USB IrDA dongles
         """
+        # IrDA detection requires Linux sysfs/proc
+        if IS_WINDOWS:
+            return []
+
         devices = []
 
         try:
@@ -1067,6 +1103,10 @@ class StateMonitor:
         - USB ANT+ sticks (Garmin, Dynastream)
         - ANT+ network adapters
         """
+        # ANT+ detection requires Linux sysfs
+        if IS_WINDOWS:
+            return []
+
         devices = []
 
         try:
@@ -1110,8 +1150,7 @@ class StateMonitor:
                     except Exception:
                         pass
 
-            # Check for ANT-related processes
-            # Note: Use specific patterns to avoid false positives (ant+ as regex matches 'ant' followed by anything)
+            # Check for ANT-related processes (Linux only - uses pgrep)
             try:
                 result = subprocess.run(
                     ['pgrep', '-l', '-f', 'antfs|garmin-ant|openant|python-ant'],
@@ -1210,10 +1249,14 @@ class StateMonitor:
         2. sysfs entries for WWAN devices
         3. QMI/MBIM interfaces
         """
+        # Cellular info detection requires Linux sysfs/ModemManager
+        if IS_WINDOWS:
+            return None
+
         info = {}
 
         try:
-            # Try sysfs for WWAN devices
+            # Try sysfs for WWAN devices (Linux only)
             if os.path.exists('/sys/class/net'):
                 for iface in os.listdir('/sys/class/net'):
                     if any(p in iface.lower() for p in ['wwan', 'wwp', 'rmnet']):
@@ -1309,7 +1352,30 @@ class StateMonitor:
         mic = False
         tpm = False
 
-        # Check USB devices via /sys/bus/usb/devices
+        if IS_WINDOWS:
+            # Windows: Use cross-platform methods only
+            # Block devices via psutil (cross-platform)
+            try:
+                for partition in psutil.disk_partitions(all=True):
+                    block_devices.add(partition.device)
+            except Exception as e:
+                logger.error(f"Error checking block devices: {e}")
+
+            # Store baseline on first check
+            if self._baseline_usb is None:
+                self._baseline_usb = usb_devices.copy()
+            if self._baseline_block_devices is None:
+                self._baseline_block_devices = block_devices.copy()
+
+            return {
+                'usb_devices': usb_devices,
+                'block_devices': block_devices,
+                'camera': camera,
+                'mic': mic,
+                'tpm': tpm
+            }
+
+        # Linux: Check USB devices via /sys/bus/usb/devices
         try:
             if os.path.exists('/sys/bus/usb/devices'):
                 for device in os.listdir('/sys/bus/usb/devices'):
@@ -1319,14 +1385,14 @@ class StateMonitor:
         except Exception as e:
             logger.error(f"Error checking USB devices: {e}")
 
-        # Check block devices
+        # Check block devices (cross-platform via psutil)
         try:
             for partition in psutil.disk_partitions(all=True):
                 block_devices.add(partition.device)
         except Exception as e:
             logger.error(f"Error checking block devices: {e}")
 
-        # Check for camera devices
+        # Check for camera devices (Linux)
         try:
             if os.path.exists('/dev'):
                 video_devs = [d for d in os.listdir('/dev') if d.startswith('video')]
@@ -1334,7 +1400,7 @@ class StateMonitor:
         except Exception:
             pass
 
-        # Check for audio input devices
+        # Check for audio input devices (Linux)
         try:
             if os.path.exists('/proc/asound'):
                 cards = os.listdir('/proc/asound')
@@ -1342,7 +1408,7 @@ class StateMonitor:
         except Exception:
             pass
 
-        # Check for TPM
+        # Check for TPM (Linux)
         try:
             tpm = os.path.exists('/dev/tpm0') or os.path.exists('/sys/class/tpm')
         except Exception:
