@@ -68,7 +68,9 @@ except ImportError:
     secure_zero_memory = None
     secure_key_context = None
 
-# Try to import cryptography library, fall back to a simpler approach if not available
+# Import cryptography library - required for secure token storage
+# SECURITY: The cryptography library is now required. Fallback XOR encryption
+# was weaker than Fernet (AES-128-CBC with HMAC-SHA256).
 try:
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
@@ -76,7 +78,11 @@ try:
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
-    logger.warning("cryptography library not available - using fallback encryption")
+    Fernet = None
+    logger.error(
+        "SECURITY: cryptography library not available - secure token storage disabled. "
+        "Install with: pip install cryptography"
+    )
 
 
 class SecureTokenStorage:
@@ -314,13 +320,17 @@ class SecureTokenStorage:
 
         payload_json = json.dumps(payload).encode()
 
-        if CRYPTO_AVAILABLE:
-            # Use Fernet encryption
-            f = Fernet(self._encryption_key)
-            encrypted = f.encrypt(payload_json)
-        else:
-            # Fallback: XOR with key stream (less secure but better than plaintext)
-            encrypted = self._fallback_encrypt(payload_json)
+        # SECURITY: Require cryptography library for encryption
+        # Fallback XOR encryption was weaker than Fernet (CWE-327)
+        if not CRYPTO_AVAILABLE:
+            raise RuntimeError(
+                "SECURITY: cryptography library required for token encryption. "
+                "Install with: pip install cryptography"
+            )
+
+        # Use Fernet encryption (AES-128-CBC with HMAC-SHA256)
+        f = Fernet(self._encryption_key)
+        encrypted = f.encrypt(payload_json)
 
         return encrypted
 
@@ -333,21 +343,42 @@ class SecureTokenStorage:
 
         Returns:
             (token, metadata) tuple
+
+        Note:
+            Supports fallback decryption for backward compatibility with
+            data encrypted before cryptography was required.
         """
         if not self._encryption_key:
             raise RuntimeError("Encryption key not initialized")
 
         if CRYPTO_AVAILABLE:
-            f = Fernet(self._encryption_key)
-            decrypted = f.decrypt(encrypted_data)
+            try:
+                f = Fernet(self._encryption_key)
+                decrypted = f.decrypt(encrypted_data)
+            except Exception:
+                # Try fallback decryption for legacy data
+                logger.warning(
+                    "SECURITY: Decrypting legacy token with fallback method. "
+                    "Re-encrypt with cryptography library for better security."
+                )
+                decrypted = self._fallback_decrypt(encrypted_data)
         else:
+            # Fallback decryption only (no new encryption without cryptography)
+            logger.warning(
+                "SECURITY: Using fallback decryption. Install cryptography "
+                "library for secure token storage."
+            )
             decrypted = self._fallback_decrypt(encrypted_data)
 
         payload = json.loads(decrypted.decode())
         return payload['token'], payload.get('metadata', {})
 
     def _fallback_encrypt(self, data: bytes) -> bytes:
-        """Fallback encryption when cryptography is not available."""
+        """DEPRECATED: Fallback encryption - no longer used for new data.
+
+        This method is kept for reference only. New encryption requires
+        the cryptography library (Fernet/AES-128-CBC).
+        """
         # Generate a random IV
         iv = secrets.token_bytes(16)
 

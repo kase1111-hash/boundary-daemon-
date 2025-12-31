@@ -38,6 +38,15 @@ config/bootstrap_token.enc
 config/*.enc
 config/signing.key
 
+# Private keys and certificates (never commit)
+*.pem
+*.pkcs8
+*.pkcs12
+*.p12
+*.pfx
+*.key
+!requirements*.txt
+
 # Coverage
 .coverage
 .coverage.*
