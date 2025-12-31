@@ -14,11 +14,15 @@ import time
 import subprocess
 import re
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
 from collections import defaultdict
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class WiFiSecurityAlert(Enum):
@@ -404,25 +408,57 @@ class WiFiSecurityMonitor:
 
     def _is_process_running(self, process_name: str) -> bool:
         """Check if a process is running"""
-        try:
-            # Check using pgrep
-            result = subprocess.run(
-                ['pgrep', '-x', process_name],
-                capture_output=True,
-                timeout=2
-            )
-            if result.returncode == 0:
-                return True
+        if IS_WINDOWS:
+            # Windows: Use psutil for cross-platform process detection
+            try:
+                import psutil
+                process_name_lower = process_name.lower()
+                for proc in psutil.process_iter(['name', 'cmdline']):
+                    try:
+                        # Check process name
+                        if proc.info['name'] and process_name_lower in proc.info['name'].lower():
+                            return True
+                        # Check command line for scripts
+                        cmdline = proc.info.get('cmdline')
+                        if cmdline:
+                            cmdline_str = ' '.join(cmdline).lower()
+                            if process_name_lower in cmdline_str:
+                                return True
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                return False
+            except ImportError:
+                # Fallback: use tasklist command on Windows
+                try:
+                    result = subprocess.run(
+                        ['tasklist', '/FI', f'IMAGENAME eq {process_name}*'],
+                        capture_output=True,
+                        timeout=5
+                    )
+                    return process_name.lower() in result.stdout.decode().lower()
+                except Exception:
+                    return False
+        else:
+            # Linux: Use pgrep
+            try:
+                # Check using pgrep
+                result = subprocess.run(
+                    ['pgrep', '-x', process_name],
+                    capture_output=True,
+                    timeout=2
+                )
+                if result.returncode == 0:
+                    return True
 
-            # Also check with partial match for scripts
-            result = subprocess.run(
-                ['pgrep', '-f', process_name],
-                capture_output=True,
-                timeout=2
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-            return False
+                # Also check with partial match for scripts
+                result = subprocess.run(
+                    ['pgrep', '-f', process_name],
+                    capture_output=True,
+                    timeout=2
+                )
+                return result.returncode == 0
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                return False
 
     def scan_wireless_networks(self, interface: str = "wlan0") -> List[Dict]:
         """

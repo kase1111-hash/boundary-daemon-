@@ -20,6 +20,7 @@ This addresses: "Cleanup on Shutdown Removes All Protection"
 """
 
 import os
+import sys
 import subprocess
 import glob
 import shutil
@@ -31,6 +32,9 @@ from typing import Optional, List, Tuple, Dict, Set
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class USBEnforcementError(Exception):
@@ -117,16 +121,24 @@ class USBEnforcer:
         # SECURITY: Protection persistence (survives daemon restarts)
         self._persistence_manager = persistence_manager
 
-        # Verify we have root privileges
-        self._has_root = os.geteuid() == 0
-
-        # Check if udev is available
-        self._has_udev = shutil.which('udevadm') is not None
-
-        if not self._has_root:
-            logger.warning("Not running as root. USB enforcement requires root privileges.")
-        if not self._has_udev:
-            logger.warning("udevadm not found. USB enforcement requires udev.")
+        # Verify we have root/admin privileges (cross-platform)
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                self._has_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                self._has_root = False
+            self._has_udev = False  # udev is Linux-only
+            if not self._has_root:
+                logger.warning("Not running as administrator. USB enforcement requires admin privileges.")
+            logger.info("USB enforcement via udev not available on Windows")
+        else:
+            self._has_root = os.geteuid() == 0
+            self._has_udev = shutil.which('udevadm') is not None
+            if not self._has_root:
+                logger.warning("Not running as root. USB enforcement requires root privileges.")
+            if not self._has_udev:
+                logger.warning("udevadm not found. USB enforcement requires udev.")
 
         # Capture baseline USB devices at startup
         self._capture_baseline()

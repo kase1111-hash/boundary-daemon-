@@ -20,6 +20,7 @@ This addresses: "Cleanup on Shutdown Removes All Protection"
 """
 
 import os
+import sys
 import subprocess
 import shutil
 import threading
@@ -30,6 +31,9 @@ from typing import Optional, List, Tuple, Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class FirewallBackend(Enum):
@@ -103,13 +107,26 @@ class NetworkEnforcer:
         # SECURITY: Protection persistence (survives daemon restarts)
         self._persistence_manager = persistence_manager
 
-        # Verify we have root privileges
-        self._has_root = os.geteuid() == 0
+        # Verify we have root/admin privileges (cross-platform)
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                self._has_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                self._has_root = False
+        else:
+            self._has_root = os.geteuid() == 0
 
         if self._backend == FirewallBackend.NONE:
-            logger.warning("No firewall backend available. Network enforcement disabled.")
+            if IS_WINDOWS:
+                logger.info("Network enforcement via iptables/nftables not available on Windows")
+            else:
+                logger.warning("No firewall backend available. Network enforcement disabled.")
         elif not self._has_root:
-            logger.warning("Not running as root. Network enforcement requires CAP_NET_ADMIN.")
+            if IS_WINDOWS:
+                logger.warning("Not running as administrator. Network enforcement requires admin privileges.")
+            else:
+                logger.warning("Not running as root. Network enforcement requires CAP_NET_ADMIN.")
 
     def set_persistence_manager(self, manager):
         """Set the protection persistence manager."""
@@ -151,6 +168,10 @@ class NetworkEnforcer:
 
     def _detect_backend(self) -> FirewallBackend:
         """Detect available firewall backend (prefer nftables over iptables)"""
+        # Windows doesn't have iptables/nftables
+        if IS_WINDOWS:
+            return FirewallBackend.NONE
+
         # Check for nftables first (modern)
         if shutil.which('nft'):
             try:
