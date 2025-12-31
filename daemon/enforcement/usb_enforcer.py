@@ -603,10 +603,20 @@ class USBEnforcer:
             pass
         return default
 
-    def _write_sysfs(self, device_path: str, attr: str, value: str) -> bool:
-        """Write a sysfs attribute with path validation.
+    def _write_sysfs(self, device_path: str, attr: str, value: str, verify: bool = True) -> bool:
+        """Write a sysfs attribute with path validation and verification.
 
         SECURITY: Validates path before access to prevent traversal attacks.
+        Also verifies write succeeded by reading back the value (CWE-367).
+
+        Args:
+            device_path: The device path in sysfs
+            attr: The attribute name to write
+            value: The value to write
+            verify: If True, read back value to verify write succeeded
+
+        Returns:
+            True if write succeeded (and verification passed if enabled)
         """
         validated_path = self._validate_sysfs_path(device_path, attr)
         if validated_path is None:
@@ -614,13 +624,45 @@ class USBEnforcer:
             return False
 
         try:
-            if os.path.exists(validated_path):
-                with open(validated_path, 'w') as f:
-                    f.write(value)
-                return True
+            if not os.path.exists(validated_path):
+                logger.debug(f"Sysfs path does not exist: {validated_path}")
+                return False
+
+            with open(validated_path, 'w') as f:
+                f.write(value)
+                f.flush()
+
+            # SECURITY: Verify write succeeded by reading back the value
+            # This addresses CWE-367 (silent failure) - sysfs writes can fail
+            # silently if the kernel rejects the value
+            if verify:
+                try:
+                    with open(validated_path, 'r') as f:
+                        actual_value = f.read().strip()
+                    expected_value = value.strip()
+
+                    if actual_value != expected_value:
+                        logger.error(
+                            f"SECURITY: Sysfs write verification failed for {validated_path}: "
+                            f"expected '{expected_value}', got '{actual_value}'"
+                        )
+                        return False
+                except Exception as e:
+                    logger.warning(f"Could not verify sysfs write to {validated_path}: {e}")
+                    # Still return True since write didn't raise - verification is best-effort
+
+            logger.debug(f"Successfully wrote '{value}' to {validated_path}")
+            return True
+
+        except PermissionError as e:
+            logger.error(f"SECURITY: Permission denied writing to {validated_path}: {e}")
+            return False
+        except OSError as e:
+            logger.error(f"Failed to write {validated_path}: {e}")
+            return False
         except Exception as e:
-            logger.debug(f"Failed to write {validated_path}: {e}")
-        return False
+            logger.debug(f"Unexpected error writing {validated_path}: {e}")
+            return False
 
     def _authorize_device(self, device_path: str) -> bool:
         """Authorize a USB device"""

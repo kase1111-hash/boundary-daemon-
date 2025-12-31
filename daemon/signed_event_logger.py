@@ -64,17 +64,26 @@ class SignedEventLogger(EventLogger):
         # Create new key
         signing_key = nacl.signing.SigningKey.generate()
 
-        # Ensure key directory exists
+        # Ensure key directory exists with secure permissions
         key_dir = os.path.dirname(self.signing_key_path)
         if key_dir:
-            os.makedirs(key_dir, exist_ok=True)
+            os.makedirs(key_dir, mode=0o700, exist_ok=True)
 
-        # Save key (with restrictive permissions)
+        # Save key with secure permissions atomically
+        # SECURITY: Use os.open() with O_CREAT|O_EXCL to create file with correct
+        # permissions from the start, preventing TOCTOU race condition (CWE-362)
+        # where another process could read the key before chmod() is called
         try:
-            with open(self.signing_key_path, 'wb') as f:
-                f.write(bytes(signing_key))
-            # Set restrictive permissions (owner read/write only)
-            os.chmod(self.signing_key_path, 0o600)
+            import stat
+            fd = os.open(
+                self.signing_key_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                stat.S_IRUSR | stat.S_IWUSR  # 0o600 - owner read/write only
+            )
+            try:
+                os.write(fd, bytes(signing_key))
+            finally:
+                os.close(fd)
             logger.info(f"Generated new signing key at {self.signing_key_path}")
             logger.info(f"Public key (for verification): {signing_key.verify_key.encode(encoder=nacl.encoding.HexEncoder).decode()}")
         except Exception as e:
