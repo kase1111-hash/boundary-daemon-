@@ -13,7 +13,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="boundary-daemon",
-    version="1.0.0",
+    version="0.1.0a1",
     author="Agent OS Team",
     description="Agent Smith - Trust Boundary Enforcement for Agent OS",
     long_description=long_description,
@@ -21,7 +21,7 @@ setup(
     url="https://github.com/kase1111-hash/boundary-daemon-",
     packages=find_packages(),
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Security",
         "Topic :: System :: Monitoring",
