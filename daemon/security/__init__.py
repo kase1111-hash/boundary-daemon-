@@ -85,6 +85,32 @@ except ImportError:
     IntegrityCheckResult = None
     verify_daemon_integrity = None
 
+# Prompt injection detection (SECURITY: AI/Agent jailbreak prevention)
+try:
+    from .prompt_injection import (
+        PromptInjectionDetector,
+        InjectionType,
+        InjectionPattern,
+        InjectionDetection,
+        DetectionSeverity,
+        DetectionAction,
+        DetectionResult,
+        get_prompt_injection_detector,
+        configure_prompt_injection_detector,
+    )
+    PROMPT_INJECTION_AVAILABLE = True
+except ImportError:
+    PROMPT_INJECTION_AVAILABLE = False
+    PromptInjectionDetector = None
+    InjectionType = None
+    InjectionPattern = None
+    InjectionDetection = None
+    DetectionSeverity = None
+    DetectionAction = None
+    DetectionResult = None
+    get_prompt_injection_detector = None
+    configure_prompt_injection_detector = None
+
 __all__ = [
     # Code advisor
     'CodeVulnerabilityAdvisor',
@@ -125,4 +151,15 @@ __all__ = [
     'secure_compare',
     'generate_secure_random',
     'SECURE_MEMORY_AVAILABLE',
+    # Prompt injection detection (SECURITY: AI/Agent jailbreak prevention)
+    'PromptInjectionDetector',
+    'InjectionType',
+    'InjectionPattern',
+    'InjectionDetection',
+    'DetectionSeverity',
+    'DetectionAction',
+    'DetectionResult',
+    'get_prompt_injection_detector',
+    'configure_prompt_injection_detector',
+    'PROMPT_INJECTION_AVAILABLE',
 ]

@@ -208,7 +208,8 @@ boundary-daemon/
 │  │  └─ persistent_rate_limiter.py   # Rate limiting
 │  │
 │  ├─ enforcement/                # Kernel-level enforcement
-│  │  ├─ network_enforcer.py          # Network isolation via iptables
+│  │  ├─ network_enforcer.py          # Network isolation via iptables (Linux)
+│  │  ├─ windows_firewall.py          # Windows Firewall enforcement (New!)
 │  │  ├─ usb_enforcer.py              # USB device control
 │  │  ├─ process_enforcer.py          # Process isolation & containers
 │  │  ├─ secure_process_termination.py
@@ -217,6 +218,7 @@ boundary-daemon/
 │  │
 │  ├─ security/                   # Multi-layer security
 │  │  ├─ antivirus.py                 # Malware scanning
+│  │  ├─ prompt_injection.py          # AI jailbreak detection (New!)
 │  │  ├─ daemon_integrity.py          # Self-verification
 │  │  ├─ dns_security.py              # DNS monitoring
 │  │  ├─ arp_security.py              # ARP spoofing detection
@@ -471,6 +473,73 @@ event = SecurityEvent(
     data={"key": "value"},
 )
 publisher.publish_event(event)
+```
+
+### Prompt Injection Detection (AI/Agent Security)
+
+Detect jailbreaks, instruction injection, and prompt manipulation:
+
+```python
+from daemon.security import (
+    get_prompt_injection_detector,
+    InjectionType,
+    DetectionAction,
+)
+
+# Get detector with medium sensitivity
+detector = get_prompt_injection_detector(sensitivity="medium")
+
+# Analyze user input
+result = detector.analyze(user_message)
+
+if not result.is_safe:
+    print(f"INJECTION DETECTED: {result.action.value}")
+    print(f"Score: {result.total_score:.2f}")
+    for detection in result.detections:
+        print(f"  - {detection.injection_type.value}: {detection.description}")
+
+# Detection categories:
+# - JAILBREAK: DAN, "ignore instructions", roleplay bypasses
+# - INSTRUCTION_INJECTION: System prompts, developer mode
+# - PROMPT_EXTRACTION: "reveal your prompt", "what were you told"
+# - DELIMITER_INJECTION: XML tags, markdown, bracket injection
+# - ENCODING_BYPASS: Base64, Unicode homographs, zero-width chars
+# - AUTHORITY_ESCALATION: "I am the admin", permission claims
+# - TOOL_ABUSE: Recursive calls, hidden tool invocations
+# - MEMORY_POISONING: "remember this", fact injection
+
+# Subscribe to detection alerts
+detector.subscribe(lambda r: log_security_event(r) if not r.is_safe else None)
+```
+
+### Windows Firewall Enforcement
+
+Network enforcement on Windows via Windows Firewall with Advanced Security:
+
+```python
+from daemon.enforcement import (
+    get_windows_firewall_enforcer,
+    WINDOWS_FIREWALL_AVAILABLE,
+)
+
+if WINDOWS_FIREWALL_AVAILABLE:
+    enforcer = get_windows_firewall_enforcer()
+
+    # Apply boundary mode
+    enforcer.apply_mode("AIRGAP")  # Block all except loopback
+
+    # Get status
+    status = enforcer.get_status()
+    print(f"Mode: {status['current_mode']}")
+    print(f"Active rules: {status['active_rules']}")
+
+    # Backup/restore
+    enforcer.backup_rules()
+    # ... later ...
+    enforcer.restore_rules()
+
+    # Cleanup on shutdown
+    enforcer.cleanup()
 ```
 
 ### Sandbox → SIEM Event Streaming
@@ -800,6 +869,24 @@ python api/boundary_api.py
 - [x] AppArmor/SELinux profile auto-generation
 - [x] Health Check API (Kubernetes liveness/readiness/startup probes)
 - [x] YAML configuration for sandbox profiles
+
+#### AI/Agent Security (New!)
+
+- [x] Prompt injection detection (jailbreak, DAN, instruction injection)
+- [x] Encoding bypass detection (Base64, Unicode homographs, zero-width)
+- [x] Authority escalation detection
+- [x] Tool abuse prevention
+- [x] Memory poisoning detection
+- [x] Configurable sensitivity levels (low, medium, high, paranoid)
+- [x] Policy engine integration for mode-aware decisions
+
+#### Windows Support (New!)
+
+- [x] Windows Firewall enforcement via netsh/PowerShell
+- [x] Mode-based firewall rules (OPEN, RESTRICTED, TRUSTED, AIRGAP, LOCKDOWN)
+- [x] VPN adapter detection and whitelisting
+- [x] Rule backup and restore
+- [x] Fail-closed enforcement (LOCKDOWN on failure)
 
 ---
 
