@@ -43,6 +43,9 @@ import os
 import struct
 import threading
 import time
+import ssl
+import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -473,15 +476,249 @@ class ThreatMesh:
         return False
 
     def _push_signatures_to_peer(self, peer: MeshPeer) -> None:
-        """Push new signatures to a peer."""
-        # In a real implementation, this would make HTTP/gRPC calls
-        # For now, this is a placeholder for the protocol
-        pass
+        """
+        Push new signatures to a peer via HTTPS.
+
+        Protocol:
+        1. Collect unpushed signatures for this peer
+        2. Sign the payload with our private key
+        3. Send via HTTPS POST to peer's endpoint
+        4. Verify acknowledgment signature
+        """
+        if not NACL_AVAILABLE or not self._signing_key:
+            logger.debug("Cannot push signatures: nacl not available or no signing key")
+            return
+
+        if peer.revoked or not peer.verified:
+            logger.debug(f"Skipping push to {peer.peer_id}: revoked={peer.revoked}, verified={peer.verified}")
+            return
+
+        try:
+            # Collect signatures to push (those created since last sync)
+            with self._lock:
+                signatures_to_push = [
+                    sig.to_dict() for sig in self._signatures.values()
+                    if sig.source_org == self.config.organization_id
+                ]
+
+            if not signatures_to_push:
+                return
+
+            # Create signed payload
+            payload = {
+                'action': 'push_signatures',
+                'source_org': self.config.organization_id,
+                'source_peer_id': self._peer_id,
+                'timestamp': datetime.now().isoformat(),
+                'signatures': signatures_to_push,
+                'signature_count': len(signatures_to_push),
+            }
+
+            # Sign the payload
+            payload_bytes = json.dumps(payload, sort_keys=True).encode()
+            signed = self._signing_key.sign(payload_bytes, encoder=HexEncoder)
+
+            request_body = {
+                'payload': payload,
+                'signature': signed.signature.decode(),
+                'public_key': self._verify_key.encode(encoder=HexEncoder).decode(),
+            }
+
+            # Send via HTTPS
+            url = f"{peer.endpoint.rstrip('/')}/mesh/v1/signatures"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(request_body).encode(),
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-Mesh-Peer-ID': self._peer_id,
+                    'X-Mesh-Org': self.config.organization_id,
+                },
+                method='POST'
+            )
+
+            # Use TLS with certificate verification
+            context = ssl.create_default_context()
+
+            with urllib.request.urlopen(req, timeout=30, context=context) as response:
+                response_data = json.loads(response.read().decode())
+
+                # Update peer stats
+                with self._lock:
+                    peer.last_seen = datetime.now()
+                    peer.signatures_contributed += len(signatures_to_push)
+
+                logger.info(f"Pushed {len(signatures_to_push)} signatures to {peer.organization_name}")
+
+        except urllib.error.URLError as e:
+            logger.warning(f"Failed to push signatures to {peer.organization_name}: {e}")
+            # Decrease reputation for unreachable peers
+            with self._lock:
+                peer.reputation_score = max(0.0, peer.reputation_score - 0.01)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Invalid response from {peer.organization_name}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error pushing to {peer.organization_name}: {e}")
 
     def _pull_signatures_from_peer(self, peer: MeshPeer) -> None:
-        """Pull new signatures from a peer."""
-        # In a real implementation, this would make HTTP/gRPC calls
-        pass
+        """
+        Pull new signatures from a peer via HTTPS.
+
+        Protocol:
+        1. Request signatures newer than our last sync
+        2. Verify signature on response payload
+        3. Validate and import each signature
+        4. Update peer reputation based on quality
+        """
+        if not NACL_AVAILABLE or not self._signing_key:
+            logger.debug("Cannot pull signatures: nacl not available or no signing key")
+            return
+
+        if peer.revoked or not peer.verified:
+            logger.debug(f"Skipping pull from {peer.peer_id}: revoked={peer.revoked}, verified={peer.verified}")
+            return
+
+        try:
+            # Build request with our last sync timestamp
+            last_sync = peer.last_seen.isoformat() if peer.last_seen else "1970-01-01T00:00:00"
+
+            # Create signed request
+            request_payload = {
+                'action': 'pull_signatures',
+                'requester_org': self.config.organization_id,
+                'requester_peer_id': self._peer_id,
+                'since': last_sync,
+                'timestamp': datetime.now().isoformat(),
+            }
+
+            payload_bytes = json.dumps(request_payload, sort_keys=True).encode()
+            signed = self._signing_key.sign(payload_bytes, encoder=HexEncoder)
+
+            request_body = {
+                'payload': request_payload,
+                'signature': signed.signature.decode(),
+                'public_key': self._verify_key.encode(encoder=HexEncoder).decode(),
+            }
+
+            # Send request
+            url = f"{peer.endpoint.rstrip('/')}/mesh/v1/signatures/pull"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(request_body).encode(),
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-Mesh-Peer-ID': self._peer_id,
+                    'X-Mesh-Org': self.config.organization_id,
+                },
+                method='POST'
+            )
+
+            context = ssl.create_default_context()
+
+            with urllib.request.urlopen(req, timeout=30, context=context) as response:
+                response_data = json.loads(response.read().decode())
+
+                # Verify response signature using peer's public key
+                if 'signature' in response_data and 'payload' in response_data:
+                    try:
+                        peer_verify_key = VerifyKey(peer.public_key)
+                        response_payload = response_data['payload']
+                        response_sig = bytes.fromhex(response_data['signature'])
+
+                        # Verify signature
+                        payload_bytes = json.dumps(response_payload, sort_keys=True).encode()
+                        peer_verify_key.verify(payload_bytes, response_sig)
+
+                        # Import verified signatures
+                        imported_count = 0
+                        for sig_data in response_payload.get('signatures', []):
+                            if self._import_signature(sig_data, peer):
+                                imported_count += 1
+
+                        # Update peer stats
+                        with self._lock:
+                            peer.last_seen = datetime.now()
+                            peer.signatures_received += imported_count
+                            # Increase reputation for good contributions
+                            if imported_count > 0:
+                                peer.reputation_score = min(1.0, peer.reputation_score + 0.001 * imported_count)
+
+                        logger.info(f"Pulled {imported_count} signatures from {peer.organization_name}")
+
+                    except BadSignatureError:
+                        logger.error(f"Invalid signature from {peer.organization_name} - possible tampering!")
+                        with self._lock:
+                            peer.reputation_score = max(0.0, peer.reputation_score - 0.1)
+                else:
+                    logger.warning(f"Missing signature in response from {peer.organization_name}")
+
+        except urllib.error.URLError as e:
+            logger.warning(f"Failed to pull signatures from {peer.organization_name}: {e}")
+            with self._lock:
+                peer.reputation_score = max(0.0, peer.reputation_score - 0.01)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Invalid response from {peer.organization_name}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error pulling from {peer.organization_name}: {e}")
+
+    def _import_signature(self, sig_data: Dict[str, Any], peer: MeshPeer) -> bool:
+        """
+        Import a signature from a peer after validation.
+
+        Returns True if signature was imported, False if rejected.
+        """
+        try:
+            sig_id = sig_data.get('signature_id')
+            if not sig_id:
+                return False
+
+            # Skip if we already have this signature
+            with self._lock:
+                if sig_id in self._signatures:
+                    return False
+
+            # Validate required fields
+            required_fields = ['pattern_hash', 'category', 'severity', 'created_at']
+            if not all(f in sig_data for f in required_fields):
+                logger.debug(f"Rejecting signature {sig_id}: missing required fields")
+                return False
+
+            # Validate category
+            try:
+                category = ThreatCategory(sig_data['category'])
+            except ValueError:
+                logger.debug(f"Rejecting signature {sig_id}: invalid category")
+                return False
+
+            # Apply trust filter - lower trust peers get more scrutiny
+            if peer.trust_level == 'untrusted':
+                # Only accept high-severity from untrusted peers
+                if sig_data.get('severity') not in ('HIGH', 'CRITICAL'):
+                    return False
+
+            # Create ThreatSignature object
+            signature = ThreatSignature(
+                signature_id=sig_id,
+                pattern_hash=sig_data['pattern_hash'],
+                bloom_filter=sig_data.get('bloom_filter', ''),
+                category=category,
+                severity=sig_data['severity'],
+                confidence=sig_data.get('confidence', 0.5),
+                source_org=sig_data.get('source_org', peer.organization_name),
+                created_at=datetime.fromisoformat(sig_data['created_at']),
+                signature_data=sig_data.get('signature_data', b''),
+                metadata=sig_data.get('metadata', {}),
+            )
+
+            # Add to our collection
+            with self._lock:
+                self._signatures[sig_id] = signature
+
+            return True
+
+        except Exception as e:
+            logger.debug(f"Error importing signature: {e}")
+            return False
 
     def create_signature(
         self,
