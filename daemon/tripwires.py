@@ -35,6 +35,8 @@ class ViolationType(Enum):
     EXTERNAL_MODEL_VIOLATION = "external_model_violation"
     SUSPICIOUS_PROCESS = "suspicious_process"
     HARDWARE_TRUST_DEGRADED = "hardware_trust_degraded"
+    CLOCK_MANIPULATION = "clock_manipulation"  # Phase 1: Time-based attack detected
+    NETWORK_TRUST_VIOLATION = "network_trust_violation"  # Phase 1: Network attestation failed
 
 
 @dataclass
@@ -416,6 +418,76 @@ class TripwireSystem:
                 logger.error(f"Error in tripwire callback: {e}")
 
         return violation
+
+    def trigger_violation(
+        self,
+        violation_type: ViolationType,
+        details: str,
+        current_mode: BoundaryMode,
+        environment_snapshot: dict,
+        auto_lockdown: bool = True,
+    ) -> Optional[TripwireViolation]:
+        """
+        Trigger a violation from an external source.
+
+        Phase 1 Enhancement: Allows components like ClockMonitor and NetworkAttestor
+        to directly trigger violations without going through check_violations().
+
+        Args:
+            violation_type: Type of violation (e.g., CLOCK_MANIPULATION)
+            details: Human-readable description
+            current_mode: Current boundary mode
+            environment_snapshot: Dict of relevant environment state
+            auto_lockdown: Whether to trigger automatic lockdown
+
+        Returns:
+            TripwireViolation if recorded, None if tripwires disabled
+        """
+        if not self._enabled:
+            logger.warning(f"Tripwire disabled - violation not recorded: {violation_type.value}")
+            return None
+
+        with self._lock:
+            violation = TripwireViolation(
+                violation_id=self._generate_violation_id(),
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                violation_type=violation_type,
+                details=details,
+                current_mode=current_mode,
+                environment_snapshot=environment_snapshot,
+                auto_lockdown=auto_lockdown,
+            )
+
+            self._violations.append(violation)
+
+            # Log to event logger
+            if self._event_logger:
+                try:
+                    from .event_logger import EventType
+                    self._event_logger.log_event(
+                        event_type=EventType.TRIPWIRE,
+                        data={
+                            'violation_id': violation.violation_id,
+                            'violation_type': violation_type.value,
+                            'details': details,
+                            'current_mode': current_mode.value if hasattr(current_mode, 'value') else str(current_mode),
+                            'auto_lockdown': auto_lockdown,
+                            'timestamp': violation.timestamp,
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to log tripwire violation: {e}")
+
+            # Notify all callbacks
+            for callback in self._callbacks:
+                try:
+                    callback(violation)
+                except Exception as e:
+                    logger.error(f"Error in tripwire callback: {e}")
+
+            logger.critical(f"TRIPWIRE VIOLATION: {violation_type.value} - {details}")
+
+            return violation
 
     def _generate_violation_id(self) -> str:
         """Generate a unique violation ID"""

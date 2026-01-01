@@ -196,6 +196,22 @@ except ImportError:
     IntegrityAction = None
     verify_daemon_integrity = None
 
+# Import network attestation (Phase 1: Network Trust Verification)
+try:
+    from .security.network_attestation import (
+        NetworkAttestor,
+        NetworkAttestationConfig,
+        NetworkTrustLevel,
+        AttestationResult,
+    )
+    NETWORK_ATTESTATION_AVAILABLE = True
+except ImportError:
+    NETWORK_ATTESTATION_AVAILABLE = False
+    NetworkAttestor = None
+    NetworkAttestationConfig = None
+    NetworkTrustLevel = None
+    AttestationResult = None
+
 # Import secure config storage (SECURITY: Configuration encryption)
 try:
     from .config import (
@@ -461,6 +477,10 @@ class BoundaryDaemon:
         self.policy_engine = PolicyEngine(initial_mode=initial_mode)
         self.tripwire_system = TripwireSystem()
         self.lockdown_manager = LockdownManager()
+
+        # Phase 1: Mode freeze state for clock manipulation protection
+        # When set, mode transitions are blocked until a ceremony clears it
+        self._mode_frozen_reason: Optional[str] = None
 
         # Initialize Event Publisher (Attack Detection Integration)
         # Connects tripwire/boundary events to YARA, Sigma, MITRE, IOC detection engines
@@ -1028,6 +1048,27 @@ class BoundaryDaemon:
         else:
             logger.info("Clock monitor module not loaded")
 
+        # Initialize Network Attestor (Phase 1: Network Trust Verification)
+        self.network_attestor = None
+        self.network_attestation_enabled = False
+        if NETWORK_ATTESTATION_AVAILABLE and NetworkAttestor:
+            try:
+                self.network_attestor = NetworkAttestor(
+                    config=NetworkAttestationConfig(
+                        require_vpn_for_trusted=True,
+                        lockdown_on_trust_loss=True,
+                    ),
+                    event_logger=self.event_logger,
+                    on_trust_change=self._on_network_trust_change,
+                    on_violation=self._on_network_trust_violation,
+                )
+                self.network_attestation_enabled = True
+                logger.info("Network attestation available")
+            except Exception as e:
+                logger.warning(f"Network attestation failed to initialize: {e}")
+        else:
+            logger.info("Network attestation module not loaded")
+
         # Initialize hardened watchdog endpoint (SECURITY: Resilient Daemon Monitoring)
         # This addresses Critical Finding #6: "External Watchdog Can Be Killed"
         self.watchdog_endpoint = None
@@ -1387,7 +1428,11 @@ class BoundaryDaemon:
         return True, "\n".join(results)
 
     def _on_time_jump(self, event: 'TimeJumpEvent'):
-        """Handle detected time jump (clock manipulation)."""
+        """Handle detected time jump (clock manipulation).
+
+        Phase 1 Enhancement: HIGH/CRITICAL severity triggers LOCKDOWN via tripwire.
+        This protects against time-based attacks like token expiration bypass.
+        """
         direction = "forward" if event.direction.name == "FORWARD" else "backward"
         self.event_logger.log_event(
             EventType.CLOCK_JUMP,
@@ -1401,13 +1446,35 @@ class BoundaryDaemon:
             }
         )
 
-        # High severity jumps may indicate attack - consider lockdown
+        # Phase 1: HIGH/CRITICAL severity triggers tripwire -> LOCKDOWN
         if event.severity in ("HIGH", "CRITICAL"):
-            logger.warning("*** TIME MANIPULATION DETECTED ***")
-            logger.warning(f"Direction: {direction}")
-            logger.warning(f"Jump: {abs(event.jump_seconds):.1f} seconds")
-            logger.warning(f"Severity: {event.severity}")
-            logger.warning("This may indicate an attempt to bypass time-based security controls.")
+            logger.critical("*** TIME MANIPULATION DETECTED - TRIGGERING LOCKDOWN ***")
+            logger.critical(f"Direction: {direction}")
+            logger.critical(f"Jump: {abs(event.jump_seconds):.1f} seconds")
+            logger.critical(f"Severity: {event.severity}")
+            logger.critical("This indicates an attempt to bypass time-based security controls.")
+
+            # Freeze mode transitions until time stabilizes
+            self._mode_frozen_reason = f"Clock manipulation: {abs(event.jump_seconds):.1f}s {direction} jump"
+
+            # Trigger tripwire violation -> automatic LOCKDOWN
+            from .tripwires import ViolationType
+            violation = self.tripwire_system.trigger_violation(
+                violation_type=ViolationType.CLOCK_MANIPULATION,
+                details=f"Time jump {direction}: {abs(event.jump_seconds):.1f}s (severity: {event.severity})",
+                current_mode=self.policy_engine.current_mode,
+                environment_snapshot={
+                    'time_before': event.timestamp_before.isoformat(),
+                    'time_after': event.timestamp_after.isoformat(),
+                    'jump_seconds': event.jump_seconds,
+                    'direction': direction,
+                },
+                auto_lockdown=True,  # Automatically enter LOCKDOWN
+            )
+
+            if violation:
+                # Enter lockdown mode
+                self._handle_violation(violation)
 
     def _on_ntp_lost(self):
         """Handle NTP synchronization loss."""
@@ -1419,17 +1486,100 @@ class BoundaryDaemon:
         logger.warning("[CLOCK] NTP synchronization lost")
 
     def _on_clock_manipulation(self, reason: str):
-        """Handle confirmed clock manipulation."""
+        """Handle confirmed clock manipulation.
+
+        Phase 1 Enhancement: Triggers immediate LOCKDOWN via tripwire.
+        """
         self.event_logger.log_event(
             EventType.CLOCK_JUMP,
             f"Clock manipulation detected: {reason}",
             metadata={
                 'reason': reason,
                 'timestamp': datetime.utcnow().isoformat(),
-                'action': 'logged',
+                'action': 'lockdown_triggered',
             }
         )
-        logger.warning(f"[CLOCK] MANIPULATION: {reason}")
+        logger.critical(f"[CLOCK] MANIPULATION CONFIRMED: {reason} - TRIGGERING LOCKDOWN")
+
+        # Freeze mode transitions
+        self._mode_frozen_reason = f"Clock manipulation confirmed: {reason}"
+
+        # Trigger tripwire violation -> automatic LOCKDOWN
+        from .tripwires import ViolationType
+        violation = self.tripwire_system.trigger_violation(
+            violation_type=ViolationType.CLOCK_MANIPULATION,
+            details=f"Confirmed clock manipulation: {reason}",
+            current_mode=self.policy_engine.current_mode,
+            environment_snapshot={
+                'reason': reason,
+                'timestamp': datetime.utcnow().isoformat(),
+            },
+            auto_lockdown=True,
+        )
+
+        if violation:
+            self._handle_violation(violation)
+
+    def _on_network_trust_change(self, result: 'AttestationResult'):
+        """Handle network trust level change.
+
+        Phase 1 Enhancement: Tracks network trust changes and validates
+        mode-network binding requirements.
+        """
+        trust_level = result.trust_level.name if hasattr(result.trust_level, 'name') else str(result.trust_level)
+        self.event_logger.log_event(
+            EventType.INFO,
+            f"Network trust level changed to {trust_level}",
+            metadata={
+                'trust_level': trust_level,
+                'vpn_connected': result.vpn_connection is not None,
+                'reason': result.reason,
+                'timestamp': result.timestamp,
+            }
+        )
+        logger.info(f"[NETWORK] Trust level: {trust_level}")
+
+        # Validate mode-network binding
+        if self.network_attestor and self.network_attestor.requires_vpn_for_mode(self.policy_engine.current_mode):
+            is_valid, reason = self.network_attestor.validate_mode_network_binding(self.policy_engine.current_mode)
+            if not is_valid:
+                logger.warning(f"[NETWORK] Mode-network binding violation: {reason}")
+                self._on_network_trust_violation(f"Mode requires VPN but {reason}")
+
+    def _on_network_trust_violation(self, reason: str):
+        """Handle network trust violation.
+
+        Phase 1 Enhancement: Triggers LOCKDOWN on network trust degradation.
+        """
+        self.event_logger.log_event(
+            EventType.VIOLATION,
+            f"Network trust violation: {reason}",
+            metadata={
+                'reason': reason,
+                'timestamp': datetime.utcnow().isoformat(),
+                'action': 'lockdown_triggered',
+            }
+        )
+        logger.critical(f"[NETWORK] TRUST VIOLATION: {reason} - TRIGGERING LOCKDOWN")
+
+        # Freeze mode transitions
+        self._mode_frozen_reason = f"Network trust violation: {reason}"
+
+        # Trigger tripwire violation -> automatic LOCKDOWN
+        from .tripwires import ViolationType
+        violation = self.tripwire_system.trigger_violation(
+            violation_type=ViolationType.NETWORK_TRUST_VIOLATION,
+            details=f"Network trust violation: {reason}",
+            current_mode=self.policy_engine.current_mode,
+            environment_snapshot={
+                'reason': reason,
+                'timestamp': datetime.utcnow().isoformat(),
+            },
+            auto_lockdown=True,
+        )
+
+        if violation:
+            self._handle_violation(violation)
 
     def _on_memory_alert(self, alert):
         """Handle memory alert from memory monitor."""
@@ -1632,6 +1782,18 @@ class BoundaryDaemon:
             except Exception as e:
                 logger.warning(f"Clock monitor failed to start: {e}")
 
+        # Start network attestor (Phase 1: Network Trust Verification)
+        if self.network_attestor and self.network_attestation_enabled:
+            try:
+                self.network_attestor.start()
+                result = self.network_attestor.get_attestation_result()
+                if result:
+                    trust_level = result.trust_level.name
+                    vpn_status = "VPN connected" if result.vpn_connection else "No VPN"
+                    logger.info(f"Network attestor started (Trust: {trust_level}, {vpn_status})")
+            except Exception as e:
+                logger.warning(f"Network attestor failed to start: {e}")
+
         # Start hardened watchdog endpoint (SECURITY: Resilient Monitoring)
         if self.watchdog_endpoint and self.hardened_watchdog_enabled:
             try:
@@ -1807,6 +1969,14 @@ class BoundaryDaemon:
                 logger.info("Clock monitor stopped")
             except Exception as e:
                 logger.warning(f"Failed to stop clock monitor: {e}")
+
+        # Stop network attestor (Phase 1: Network Trust Verification)
+        if self.network_attestor and self.network_attestation_enabled:
+            try:
+                self.network_attestor.stop()
+                logger.info("Network attestor stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop network attestor: {e}")
 
         # Wait for enforcement thread
         if self._enforcement_thread:
