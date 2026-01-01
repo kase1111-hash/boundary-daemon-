@@ -213,7 +213,9 @@ class StateMonitor:
         self._thread: Optional[threading.Thread] = None
         self._current_state: Optional[EnvironmentState] = None
         self._state_lock = threading.Lock()
-        self._callbacks: List[callable] = []
+        self._callbacks: Dict[int, callable] = {}  # Use dict for O(1) unregister
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()  # Protect callback modifications
 
         # Monitoring configuration
         self.monitoring_config = monitoring_config or MonitoringConfig()
@@ -379,14 +381,37 @@ class StateMonitor:
                 return None
         return self._process_security_monitor
 
-    def register_callback(self, callback: callable):
+    def register_callback(self, callback: callable) -> int:
         """
         Register a callback to be notified of state changes.
 
         Args:
             callback: Function accepting (old_state, new_state)
+
+        Returns:
+            Callback ID that can be used to unregister the callback
         """
-        self._callbacks.append(callback)
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_callback(self, callback_id: int) -> bool:
+        """
+        Unregister a previously registered callback.
+
+        Args:
+            callback_id: The ID returned from register_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._callbacks:
+                del self._callbacks[callback_id]
+                return True
+            return False
 
     def start(self):
         """Start continuous monitoring"""
@@ -398,10 +423,13 @@ class StateMonitor:
         self._thread.start()
 
     def stop(self):
-        """Stop monitoring"""
+        """Stop monitoring and cleanup resources"""
         self._running = False
         if self._thread:
             self._thread.join(timeout=5.0)
+        # Clear callbacks to prevent memory leaks
+        with self._callback_lock:
+            self._callbacks.clear()
 
     def get_current_state(self) -> Optional[EnvironmentState]:
         """Get the most recent environment state"""
@@ -420,7 +448,10 @@ class StateMonitor:
 
                 # Notify callbacks of state change
                 if old_state != new_state:
-                    for callback in self._callbacks:
+                    # Copy callbacks to avoid modification during iteration
+                    with self._callback_lock:
+                        callbacks = list(self._callbacks.values())
+                    for callback in callbacks:
                         try:
                             callback(old_state, new_state)
                         except Exception as e:

@@ -198,8 +198,10 @@ class EventPublisher:
 
     def __init__(self):
         self._event_queue: queue.Queue = queue.Queue()
-        self._alert_handlers: List[Callable[[SecurityAlert], None]] = []
-        self._event_handlers: List[Callable[[SecurityEvent], None]] = []
+        self._alert_handlers: Dict[int, Callable[[SecurityAlert], None]] = {}  # Use dict for O(1) unregister
+        self._event_handlers: Dict[int, Callable[[SecurityEvent], None]] = {}  # Use dict for O(1) unregister
+        self._next_handler_id = 0
+        self._handler_lock = threading.Lock()  # Protect handler modifications
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
 
@@ -265,19 +267,69 @@ class EventPublisher:
         logger.info("EventPublisher started")
 
     def stop(self) -> None:
-        """Stop the event processing worker."""
+        """Stop the event processing worker and cleanup resources."""
         self._running = False
         if self._worker_thread:
             self._worker_thread.join(timeout=5)
+        # Clear handlers to prevent memory leaks
+        with self._handler_lock:
+            self._alert_handlers.clear()
+            self._event_handlers.clear()
         logger.info("EventPublisher stopped")
 
-    def register_alert_handler(self, handler: Callable[[SecurityAlert], None]) -> None:
-        """Register a handler for security alerts."""
-        self._alert_handlers.append(handler)
+    def register_alert_handler(self, handler: Callable[[SecurityAlert], None]) -> int:
+        """Register a handler for security alerts.
 
-    def register_event_handler(self, handler: Callable[[SecurityEvent], None]) -> None:
-        """Register a handler for raw security events."""
-        self._event_handlers.append(handler)
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._alert_handlers[handler_id] = handler
+            return handler_id
+
+    def unregister_alert_handler(self, handler_id: int) -> bool:
+        """Unregister a previously registered alert handler.
+
+        Args:
+            handler_id: The ID returned from register_alert_handler
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._alert_handlers:
+                del self._alert_handlers[handler_id]
+                return True
+            return False
+
+    def register_event_handler(self, handler: Callable[[SecurityEvent], None]) -> int:
+        """Register a handler for raw security events.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._event_handlers[handler_id] = handler
+            return handler_id
+
+    def unregister_event_handler(self, handler_id: int) -> bool:
+        """Unregister a previously registered event handler.
+
+        Args:
+            handler_id: The ID returned from register_event_handler
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._event_handlers:
+                del self._event_handlers[handler_id]
+                return True
+            return False
 
     def publish_event(self, event: SecurityEvent) -> None:
         """Publish a security event for processing."""
@@ -285,8 +337,10 @@ class EventPublisher:
         with self._lock:
             self._events_published += 1
 
-        # Call raw event handlers
-        for handler in self._event_handlers:
+        # Call raw event handlers (copy to avoid modification during iteration)
+        with self._handler_lock:
+            handlers = list(self._event_handlers.values())
+        for handler in handlers:
             try:
                 handler(event)
             except Exception as e:
@@ -623,7 +677,10 @@ class EventPublisher:
             f"(techniques: {', '.join(alert.all_mitre_techniques) or 'none'})"
         )
 
-        for handler in self._alert_handlers:
+        # Copy handlers to avoid modification during iteration
+        with self._handler_lock:
+            handlers = list(self._alert_handlers.values())
+        for handler in handlers:
             try:
                 handler(alert)
             except Exception as e:

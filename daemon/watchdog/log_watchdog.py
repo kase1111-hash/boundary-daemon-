@@ -163,7 +163,9 @@ class LogWatchdog:
         self._thread: Optional[threading.Thread] = None
 
         # Callbacks
-        self._alert_callbacks: List[Callable[[WatchdogAlert], None]] = []
+        self._alert_callbacks: Dict[int, Callable[[WatchdogAlert], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
         # Pattern matchers
         self.error_patterns = [re.compile(p) for p in self.DEFAULT_ERROR_PATTERNS]
@@ -208,9 +210,32 @@ class LogWatchdog:
         if path in self.log_paths:
             self.log_paths.remove(path)
 
-    def register_alert_callback(self, callback: Callable[[WatchdogAlert], None]):
-        """Register a callback for new alerts"""
-        self._alert_callbacks.append(callback)
+    def register_alert_callback(self, callback: Callable[[WatchdogAlert], None]) -> int:
+        """Register a callback for new alerts.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._alert_callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_alert_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered alert callback.
+
+        Args:
+            callback_id: The ID returned from register_alert_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._alert_callbacks:
+                del self._alert_callbacks[callback_id]
+                return True
+            return False
 
     def _should_ignore(self, message: str) -> bool:
         """Check if message should be ignored"""
@@ -351,8 +376,10 @@ JSON Response:"""
                 }
             )
 
-        # Notify callbacks
-        for callback in self._alert_callbacks:
+        # Notify callbacks (copy to avoid modification during iteration)
+        with self._callback_lock:
+            callbacks = list(self._alert_callbacks.values())
+        for callback in callbacks:
             try:
                 callback(alert)
             except Exception as e:
@@ -425,7 +452,7 @@ JSON Response:"""
         logger.info(f"Log watchdog started, monitoring {len(self.log_paths)} file(s)")
 
     def stop(self):
-        """Stop log monitoring"""
+        """Stop log monitoring and cleanup resources"""
         if not self._running:
             return
 
@@ -438,6 +465,10 @@ JSON Response:"""
         # Wait for thread
         if self._thread:
             self._thread.join(timeout=5.0)
+
+        # Clear callbacks to prevent memory leaks
+        with self._callback_lock:
+            self._alert_callbacks.clear()
 
         logger.info("Log watchdog stopped")
 

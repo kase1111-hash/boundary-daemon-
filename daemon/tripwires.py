@@ -11,7 +11,7 @@ Addresses Critical Finding: "Bypassable Security Controls"
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Callable, Set, Tuple
+from typing import List, Optional, Callable, Set, Tuple, Dict
 from collections import deque
 import threading
 import hashlib
@@ -69,7 +69,9 @@ class TripwireSystem:
         """Initialize tripwire system"""
         self._lock = threading.Lock()
         self._violations: deque = deque(maxlen=1000)  # Bounded violation history
-        self._callbacks: List[Callable] = []
+        self._callbacks: Dict[int, Callable] = {}  # Use dict for O(1) unregister
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()  # Protect callback modifications
         self._enabled = True
         self._event_logger = event_logger
 
@@ -161,14 +163,42 @@ class TripwireSystem:
                 except Exception:
                     pass
 
-    def register_callback(self, callback: Callable):
+    def register_callback(self, callback: Callable) -> int:
         """
         Register a callback for tripwire violations.
 
         Args:
             callback: Function accepting (violation: TripwireViolation)
+
+        Returns:
+            Callback ID that can be used to unregister the callback
         """
-        self._callbacks.append(callback)
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_callback(self, callback_id: int) -> bool:
+        """
+        Unregister a previously registered callback.
+
+        Args:
+            callback_id: The ID returned from register_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._callbacks:
+                del self._callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks to prevent memory leaks."""
+        with self._callback_lock:
+            self._callbacks.clear()
 
     def enable(self):
         """Enable tripwire monitoring"""
@@ -411,8 +441,10 @@ class TripwireSystem:
 
         self._violations.append(violation)
 
-        # Notify all callbacks
-        for callback in self._callbacks:
+        # Notify all callbacks (copy to avoid modification during iteration)
+        with self._callback_lock:
+            callbacks = list(self._callbacks.values())
+        for callback in callbacks:
             try:
                 callback(violation)
             except Exception as e:
@@ -479,8 +511,10 @@ class TripwireSystem:
                 except Exception as e:
                     logger.error(f"Failed to log tripwire violation: {e}")
 
-            # Notify all callbacks
-            for callback in self._callbacks:
+            # Notify all callbacks (copy to avoid modification during iteration)
+            with self._callback_lock:
+                callbacks = list(self._callbacks.values())
+            for callback in callbacks:
                 try:
                     callback(violation)
                 except Exception as e:

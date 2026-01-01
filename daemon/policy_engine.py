@@ -101,16 +101,46 @@ class PolicyEngine:
             last_transition=datetime.utcnow().isoformat() + "Z",
             operator=Operator.SYSTEM
         )
-        self._transition_callbacks: List[callable] = []
+        self._transition_callbacks: Dict[int, callable] = {}  # Use dict for O(1) unregister
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()  # Protect callback modifications
 
-    def register_transition_callback(self, callback: callable):
+    def register_transition_callback(self, callback: callable) -> int:
         """
         Register callback for mode transitions.
 
         Args:
             callback: Function accepting (old_mode, new_mode, operator)
+
+        Returns:
+            Callback ID that can be used to unregister the callback
         """
-        self._transition_callbacks.append(callback)
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._transition_callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_transition_callback(self, callback_id: int) -> bool:
+        """
+        Unregister a previously registered transition callback.
+
+        Args:
+            callback_id: The ID returned from register_transition_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._transition_callbacks:
+                del self._transition_callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks to prevent memory leaks."""
+        with self._callback_lock:
+            self._transition_callbacks.clear()
 
     def get_current_state(self) -> BoundaryState:
         """Get current boundary state"""
@@ -147,8 +177,10 @@ class PolicyEngine:
             self._boundary_state.last_transition = datetime.utcnow().isoformat() + "Z"
             self._boundary_state.operator = operator
 
-            # Notify callbacks
-            for callback in self._transition_callbacks:
+            # Notify callbacks (copy to avoid modification during iteration)
+            with self._callback_lock:
+                callbacks = list(self._transition_callbacks.values())
+            for callback in callbacks:
                 try:
                     callback(old_mode, new_mode, operator, reason)
                 except Exception as e:

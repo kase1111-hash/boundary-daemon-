@@ -268,6 +268,85 @@ class IOCFeedManager:
         logger.info(f"Added feed {feed.name} with {feed.entry_count} entries")
         return True
 
+    def remove_feed(self, feed_name: str) -> bool:
+        """Remove an IOC feed and its entries from indices.
+
+        Args:
+            feed_name: Name of the feed to remove
+
+        Returns:
+            True if feed was found and removed, False otherwise
+        """
+        with self._lock:
+            if feed_name not in self._feeds:
+                return False
+
+            del self._feeds[feed_name]
+            # Rebuild indices to remove entries from the deleted feed
+            self._rebuild_indices()
+
+        logger.info(f"Removed feed {feed_name}")
+        return True
+
+    def _clear_indices(self) -> None:
+        """Clear all indices. Must be called with lock held."""
+        self._ip_index.clear()
+        self._domain_index.clear()
+        self._hash_index.clear()
+        self._url_index.clear()
+        self._generic_index.clear()
+        self._domain_patterns.clear()
+
+    def _rebuild_indices(self) -> None:
+        """Rebuild all indices from current feeds. Must be called with lock held."""
+        self._clear_indices()
+        for feed in self._feeds.values():
+            self._index_feed(feed)
+
+    def cleanup_expired(self) -> int:
+        """Remove expired entries from indices.
+
+        Returns:
+            Number of expired entries removed
+        """
+        with self._lock:
+            # Count entries before rebuild
+            total_before = (
+                sum(len(v) for v in self._ip_index.values()) +
+                sum(len(v) for v in self._domain_index.values()) +
+                sum(len(v) for v in self._hash_index.values()) +
+                sum(len(v) for v in self._url_index.values()) +
+                sum(len(entries) for type_idx in self._generic_index.values()
+                    for entries in type_idx.values()) +
+                len(self._domain_patterns)
+            )
+
+            # Rebuild indices (skips expired entries)
+            self._rebuild_indices()
+
+            # Count entries after rebuild
+            total_after = (
+                sum(len(v) for v in self._ip_index.values()) +
+                sum(len(v) for v in self._domain_index.values()) +
+                sum(len(v) for v in self._hash_index.values()) +
+                sum(len(v) for v in self._url_index.values()) +
+                sum(len(entries) for type_idx in self._generic_index.values()
+                    for entries in type_idx.values()) +
+                len(self._domain_patterns)
+            )
+
+            removed = total_before - total_after
+            if removed > 0:
+                logger.info(f"Cleaned up {removed} expired IOC entries")
+            return removed
+
+    def cleanup(self) -> None:
+        """Full cleanup of all feeds and indices."""
+        with self._lock:
+            self._feeds.clear()
+            self._clear_indices()
+        logger.info("IOC Feed Manager cleared all feeds and indices")
+
     def _index_feed(self, feed: IOCFeed) -> None:
         """Index feed entries for fast lookup."""
         for entry in feed.entries:
