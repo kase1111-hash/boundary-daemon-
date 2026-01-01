@@ -533,16 +533,16 @@ python api/boundary_api.py
 
 #### Deterministic Threat Detection (No ML)
 
-- [ ] YARA rule engine
-- [ ] Sigma rule support
-- [ ] Signed IOC feeds
-- [ ] MITRE ATT&CK patterns as deterministic rules
+- [x] YARA rule engine
+- [x] Sigma rule support
+- [x] Signed IOC feeds
+- [x] MITRE ATT&CK patterns as deterministic rules
 
 #### eBPF Observability (Optional Module)
 
-- [ ] Kernel visibility without kernel driver
-- [ ] Read-only observation for policy decisions
-- [ ] Graceful degradation on older kernels
+- [x] Kernel visibility without kernel driver
+- [x] Read-only observation for policy decisions
+- [x] Graceful degradation on older kernels
 
 ---
 
