@@ -36,37 +36,18 @@ set "RESET=[0m"
 
 REM Parse command line arguments
 :parse_args
-if "%~1"=="" goto :end_parse
-if /i "%~1"=="--onefile" (
-    set BUILD_MODE=onefile
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="--onedir" (
-    set BUILD_MODE=onedir
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="--debug" (
-    set DEBUG_MODE=1
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="--clean" (
-    set CLEAN_BUILD=1
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="--skip-deps" (
-    set SKIP_DEPS=1
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="--help" goto :show_help
-if /i "%~1"=="-h" goto :show_help
+if "%~1"=="" goto main_script
+if /i "%~1"=="--onefile" set BUILD_MODE=onefile
+if /i "%~1"=="--onedir" set BUILD_MODE=onedir
+if /i "%~1"=="--debug" set DEBUG_MODE=1
+if /i "%~1"=="--clean" set CLEAN_BUILD=1
+if /i "%~1"=="--skip-deps" set SKIP_DEPS=1
+if /i "%~1"=="--help" goto show_help
+if /i "%~1"=="-h" goto show_help
 shift
-goto :parse_args
-:end_parse
+if not "%~1"=="" goto parse_args
+
+:main_script
 
 REM Record start time
 set START_TIME=%TIME%
