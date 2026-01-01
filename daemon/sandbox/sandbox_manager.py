@@ -61,6 +61,11 @@ from .cgroups import (
     CgroupError,
     ResourceUsage,
 )
+from .network_policy import (
+    NetworkPolicy,
+    SandboxFirewall,
+    get_sandbox_firewall,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +120,7 @@ class SandboxProfile:
     # Network restrictions
     network_disabled: bool = False
     allowed_hosts: List[str] = field(default_factory=list)
+    network_policy: Optional[NetworkPolicy] = None  # Fine-grained firewall rules
 
     # Filesystem restrictions
     allowed_paths: List[str] = field(default_factory=list)
@@ -178,6 +184,7 @@ class SandboxProfile:
                 cgroup_limits=CgroupLimits.for_boundary_mode(5),
                 readonly_filesystem=True,
                 network_disabled=True,
+                network_policy=NetworkPolicy.for_boundary_mode(5),
                 max_processes=1,
                 max_runtime_seconds=1,
             )
@@ -190,6 +197,7 @@ class SandboxProfile:
                 cgroup_limits=CgroupLimits.for_boundary_mode(4),
                 readonly_filesystem=True,
                 network_disabled=True,
+                network_policy=NetworkPolicy.for_boundary_mode(4),
                 max_runtime_seconds=300,
             )
         elif mode >= 3:  # AIRGAP
@@ -200,6 +208,7 @@ class SandboxProfile:
                 seccomp_profile=SeccompProfiles.for_boundary_mode(3),
                 cgroup_limits=CgroupLimits.for_boundary_mode(3),
                 network_disabled=True,
+                network_policy=NetworkPolicy.for_boundary_mode(3),
             )
         elif mode >= 2:  # TRUSTED
             return cls(
@@ -208,6 +217,7 @@ class SandboxProfile:
                 namespace_flags=NamespaceFlags.STANDARD,
                 seccomp_profile=SeccompProfiles.for_boundary_mode(2),
                 cgroup_limits=CgroupLimits.for_boundary_mode(2),
+                network_policy=NetworkPolicy.for_boundary_mode(2),
             )
         elif mode >= 1:  # RESTRICTED
             return cls(
@@ -216,6 +226,7 @@ class SandboxProfile:
                 namespace_flags=NamespaceFlags.MINIMAL,
                 seccomp_profile=SeccompProfiles.for_boundary_mode(1),
                 cgroup_limits=CgroupLimits.for_boundary_mode(1),
+                network_policy=NetworkPolicy.for_boundary_mode(1),
             )
         else:  # OPEN
             return cls.minimal()
@@ -269,17 +280,20 @@ class Sandbox:
         profile: SandboxProfile,
         namespace_manager: NamespaceManager,
         cgroup_manager: CgroupManager,
+        sandbox_firewall: Optional[SandboxFirewall] = None,
         event_callback: Optional[Callable[[str, Dict], None]] = None,
     ):
         self.sandbox_id = sandbox_id
         self._profile = profile
         self._namespace_manager = namespace_manager
         self._cgroup_manager = cgroup_manager
+        self._sandbox_firewall = sandbox_firewall
         self._event_callback = event_callback
 
         self._state = SandboxState.CREATED
         self._process: Optional[IsolatedProcess] = None
         self._cgroup_path: Optional[Path] = None
+        self._firewall_applied = False
         self._created_at = datetime.utcnow()
         self._started_at: Optional[datetime] = None
         self._ended_at: Optional[datetime] = None
@@ -329,6 +343,50 @@ class Sandbox:
 
         except CgroupError as e:
             logger.warning(f"Could not setup cgroup: {e}")
+
+    def _setup_firewall(self) -> None:
+        """Set up firewall rules for the sandbox."""
+        if not self._sandbox_firewall:
+            return
+
+        if not self._profile.network_policy:
+            # If no explicit policy but network_disabled, create deny policy
+            if self._profile.network_disabled:
+                policy = NetworkPolicy.allow_none()
+            else:
+                return  # No restrictions
+
+        else:
+            policy = self._profile.network_policy
+
+        # Need cgroup path for cgroup-based firewall rules
+        if not self._cgroup_path:
+            logger.warning("No cgroup path, firewall rules may not be sandbox-specific")
+            return
+
+        success, msg = self._sandbox_firewall.setup_sandbox_rules(
+            sandbox_id=self.sandbox_id,
+            cgroup_path=self._cgroup_path,
+            policy=policy,
+        )
+
+        if success:
+            self._firewall_applied = True
+            logger.debug(f"Firewall rules applied: {msg}")
+        else:
+            logger.warning(f"Could not setup firewall: {msg}")
+
+    def _cleanup_firewall(self) -> None:
+        """Clean up firewall rules for the sandbox."""
+        if not self._sandbox_firewall or not self._firewall_applied:
+            return
+
+        success, msg = self._sandbox_firewall.cleanup_sandbox_rules(self.sandbox_id)
+        if success:
+            self._firewall_applied = False
+            logger.debug(f"Firewall rules cleaned up: {msg}")
+        else:
+            logger.warning(f"Could not cleanup firewall: {msg}")
 
     def _build_namespace_config(self) -> NamespaceConfig:
         """Build namespace configuration from profile."""
@@ -404,6 +462,9 @@ class Sandbox:
         try:
             # Set up cgroup
             self._setup_cgroup()
+
+            # Set up firewall rules (after cgroup so we have cgroup path)
+            self._setup_firewall()
 
             # Build namespace config
             ns_config = self._build_namespace_config()
@@ -560,6 +621,9 @@ class Sandbox:
         """Clean up sandbox resources."""
         self.terminate(reason="cleanup")
 
+        # Clean up firewall rules first
+        self._cleanup_firewall()
+
         if self._cgroup_path:
             try:
                 self._cgroup_manager.delete_cgroup(self._cgroup_path)
@@ -593,6 +657,7 @@ class SandboxManager:
         # Initialize managers
         self._namespace_manager = NamespaceManager()
         self._cgroup_manager = CgroupManager()
+        self._sandbox_firewall = get_sandbox_firewall()
 
         # Active sandboxes
         self._sandboxes: Dict[str, Sandbox] = {}
@@ -608,6 +673,7 @@ class SandboxManager:
         return {
             'namespaces': self._namespace_manager.get_capabilities(),
             'cgroups': self._cgroup_manager.get_capabilities(),
+            'firewall': self._sandbox_firewall.get_capabilities(),
             'can_sandbox': (
                 self._namespace_manager.can_create_namespaces() or
                 self._cgroup_manager.can_manage_cgroups()
@@ -688,6 +754,7 @@ class SandboxManager:
             profile=profile,
             namespace_manager=self._namespace_manager,
             cgroup_manager=self._cgroup_manager,
+            sandbox_firewall=self._sandbox_firewall,
             event_callback=self._event_callback,
         )
 
@@ -792,6 +859,7 @@ class SandboxManager:
             self._sandboxes.clear()
 
         self._cgroup_manager.cleanup()
+        self._sandbox_firewall.cleanup_all()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get sandbox manager statistics."""

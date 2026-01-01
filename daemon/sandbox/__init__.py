@@ -8,6 +8,7 @@ Components:
 - namespace: Linux namespace isolation (PID, network, mount, user)
 - seccomp_filter: seccomp-bpf syscall filtering
 - cgroups: cgroups v2 resource limits
+- network_policy: Per-sandbox iptables/nftables firewall rules
 - sandbox_manager: Policy-integrated sandbox orchestration
 
 Boundary Mode Integration:
@@ -58,6 +59,14 @@ from .cgroups import (
     ResourceUsage,
 )
 
+from .network_policy import (
+    NetworkPolicy,
+    SandboxFirewall,
+    NetworkAction,
+    HostRule,
+    get_sandbox_firewall,
+)
+
 from .sandbox_manager import (
     SandboxManager,
     Sandbox,
@@ -81,6 +90,12 @@ __all__ = [
     'CgroupManager',
     'CgroupLimits',
     'ResourceUsage',
+    # Network Policy
+    'NetworkPolicy',
+    'SandboxFirewall',
+    'NetworkAction',
+    'HostRule',
+    'get_sandbox_firewall',
     # Manager
     'SandboxManager',
     'Sandbox',

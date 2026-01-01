@@ -158,9 +158,11 @@ python daemon/boundary_daemon.py --mode=airgap
 - Linux namespace isolation (PID, network, mount, user, IPC)
 - Seccomp-bpf syscall filtering with boundary mode profiles
 - Cgroups v2 resource limits (CPU, memory, I/O, PIDs)
+- **Per-sandbox iptables/nftables firewall rules** (cgroup-matched)
+- Fine-grained network policy (allowed hosts, ports, CIDRs)
 - Automatic sandbox profile selection based on boundary mode
 - Ceremony integration for break-glass scenarios
-- Graceful degradation on systems without namespace support
+- Defense in depth: namespace + firewall + seccomp combined
 
 ### Advanced Security Features
 - Malware scanning (antivirus module)
@@ -241,6 +243,7 @@ boundary-daemon/
 │  │  ├─ namespace.py                 # Linux namespace isolation
 │  │  ├─ seccomp_filter.py            # Seccomp-bpf syscall filtering
 │  │  ├─ cgroups.py                   # Cgroups v2 resource limits
+│  │  ├─ network_policy.py            # Per-sandbox iptables/nftables firewall
 │  │  └─ sandbox_manager.py           # Policy-integrated sandbox orchestration
 │  │
 │  ├─ hardware/                   # Hardware integration
@@ -354,7 +357,7 @@ if not permitted:
 ### Sandbox Integration
 
 ```python
-from daemon.sandbox import SandboxManager, SandboxProfile
+from daemon.sandbox import SandboxManager, SandboxProfile, NetworkPolicy
 from daemon.policy_engine import PolicyEngine, BoundaryMode
 
 # Initialize with policy engine
@@ -370,11 +373,17 @@ result = sandbox_manager.run_sandboxed(
 print(f"Exit code: {result.exit_code}")
 print(f"Output: {result.stdout}")
 
-# Or create a persistent sandbox with custom profile
-sandbox = sandbox_manager.create_sandbox(
-    name="worker-1",
-    profile=SandboxProfile.strict(),
+# Create sandbox with fine-grained network policy
+profile = SandboxProfile(
+    name="api-worker",
+    network_policy=NetworkPolicy(
+        allowed_hosts=["api.internal:443", "db.internal:5432"],
+        allowed_cidrs=["10.0.0.0/8"],
+        allow_dns=True,
+        log_blocked=True,
+    ),
 )
+sandbox = sandbox_manager.create_sandbox(name="worker-1", profile=profile)
 sandbox.run(["./process_data.sh"])
 sandbox.terminate()
 ```
@@ -598,6 +607,8 @@ python api/boundary_api.py
 - [x] Boundary mode integration (profile auto-selection)
 - [x] Ceremony integration for break-glass scenarios
 - [x] Policy engine integration for sandbox decisions
+- [x] Per-sandbox iptables/nftables firewall (cgroup-matched)
+- [x] Fine-grained network policy (hosts, ports, CIDRs)
 
 ---
 
