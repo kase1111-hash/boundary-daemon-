@@ -452,9 +452,17 @@ echo   Created: dist\run-daemon.bat
 
 REM Get executable size
 if "%BUILD_MODE%"=="onefile" (
-    for %%A in ("dist\%APP_NAME%.exe") do set EXE_SIZE=%%~zA
-    set /a EXE_SIZE_MB=!EXE_SIZE! / 1048576
-    echo   Executable size: !EXE_SIZE_MB! MB
+    if exist "dist\%APP_NAME%.exe" (
+        for %%A in ("dist\%APP_NAME%.exe") do set EXE_SIZE=%%~zA
+        if defined EXE_SIZE (
+            set /a EXE_SIZE_MB=!EXE_SIZE! / 1048576
+            echo   Executable size: !EXE_SIZE_MB! MB
+        ) else (
+            echo   Executable size: unknown
+        )
+    ) else (
+        echo   %YELLOW%Warning: Executable not found at dist\%APP_NAME%.exe%RESET%
+    )
 )
 
 REM Calculate build duration
