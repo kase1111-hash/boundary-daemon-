@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AI/Agent Security Features**:
+  - Prompt injection detection (`daemon/security/prompt_injection.py`):
+    - 50+ detection patterns across 10 injection categories
+    - Jailbreak, DAN, instruction injection, encoding bypass detection
+    - Configurable sensitivity levels (low, medium, high, paranoid)
+  - Tool output validation (`daemon/security/tool_validator.py`):
+    - Recursive call chain detection and prevention
+    - Command injection detection in tool outputs
+    - PII and sensitive data leakage prevention
+    - Rate limiting and size limits
+  - Response guardrails (`daemon/security/response_guardrails.py`):
+    - Harmful content blocking (violence, self-harm, hate speech)
+    - Hallucination detection (overconfidence, unsupported claims)
+    - Citation and source validation
+    - Mode-specific guardrail policies
+  - RAG injection detection (`daemon/security/rag_injection.py`):
+    - Poisoned document detection
+    - Indirect injection via retrieved documents
+    - Context manipulation detection
+    - Exfiltration query detection
+    - Document trust level verification
+  - Agent attestation (`daemon/security/agent_attestation.py`):
+    - Cryptographic agent identity certificates
+    - Attestation token issuance and verification
+    - Capability-based access control (CBAC)
+    - Delegation chain verification (max depth 5)
+    - Action binding with HMAC-SHA256 signatures
+    - Token and agent revocation
+    - Trust levels (UNTRUSTED → SYSTEM)
+- **Windows Firewall Enforcement** (`daemon/enforcement/windows_firewall.py`):
+  - Windows Firewall with Advanced Security via netsh/PowerShell
+  - Mode-based firewall rules (OPEN, RESTRICTED, TRUSTED, AIRGAP, LOCKDOWN)
+  - VPN adapter detection and whitelisting
+  - Rule backup and restore
+  - Fail-closed enforcement
+- **End-to-End Security Stack Tests** (`tests/test_security_stack_e2e.py`):
+  - Comprehensive tests for all AI security components
+  - Integrated workflow testing
+  - Attack scenario validation
 - GitHub Actions CI/CD workflow for automated testing
 - Comprehensive unit test suite (478 tests)
 - Test coverage for core modules (privilege_manager, state_monitor, tripwires, etc.)
