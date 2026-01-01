@@ -93,7 +93,7 @@ class TestTripwireSystemInit:
         assert tripwire._enabled is True
         assert tripwire._locked is False
         assert tripwire._auth_required is True
-        assert tripwire._violations == []
+        assert len(tripwire._violations) == 0  # May be deque or list
         assert tripwire._callbacks == []
 
     def test_init_with_event_logger(self):
@@ -403,7 +403,7 @@ class TestTripwireEdgeCases:
     def test_empty_violations_list(self):
         """Violations list should be empty initially."""
         tripwire = TripwireSystem()
-        assert tripwire._violations == []
+        assert len(tripwire._violations) == 0  # May be deque or list
 
     def test_enable_when_already_enabled(self):
         """enable() when already enabled should not error."""

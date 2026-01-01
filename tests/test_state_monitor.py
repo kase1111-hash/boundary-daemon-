@@ -563,8 +563,8 @@ class TestStateMonitorBaseline:
         """Cellular security tracking should be initialized."""
         monitor = StateMonitor()
         assert monitor._last_cell_tower is None
-        assert monitor._cell_tower_history == []
-        assert monitor._signal_strength_history == []
+        assert len(monitor._cell_tower_history) == 0  # May be deque or list
+        assert len(monitor._signal_strength_history) == 0  # May be deque or list
 
 
 # ===========================================================================

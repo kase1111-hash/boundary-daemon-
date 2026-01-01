@@ -1208,8 +1208,11 @@ class StateMonitor:
                         })
 
                         # Too many tower changes in short time is suspicious
+                        # Get last 10 items from deque (deques don't support slicing)
+                        history_list = list(self._cell_tower_history)
+                        last_10 = history_list[-10:] if len(history_list) >= 10 else history_list
                         recent_changes = [
-                            c for c in self._cell_tower_history[-10:]
+                            c for c in last_10
                             if (datetime.utcnow() - datetime.fromisoformat(c['time'])).seconds < 300
                         ]
                         if len(recent_changes) > 5:
