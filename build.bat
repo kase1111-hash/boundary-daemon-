@@ -395,6 +395,7 @@ python -m PyInstaller ^
     --hidden-import=daemon.blockchain ^
     --hidden-import=daemon.blockchain.validator_protection ^
     --hidden-import=daemon.blockchain.rpc_protection ^
+    --hidden-import=daemon.dreaming ^
     --collect-submodules=nacl ^
     --collect-submodules=cffi ^
     --collect-submodules=cryptography ^

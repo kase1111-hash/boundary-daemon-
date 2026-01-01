@@ -64,6 +64,7 @@ python3 -m PyInstaller \
     --hidden-import=daemon.blockchain \
     --hidden-import=daemon.blockchain.validator_protection \
     --hidden-import=daemon.blockchain.rpc_protection \
+    --hidden-import=daemon.dreaming \
     --collect-submodules=daemon \
     --collect-submodules=api \
     --collect-submodules=nacl \

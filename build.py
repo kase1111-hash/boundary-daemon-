@@ -588,6 +588,8 @@ def get_hidden_imports() -> List[str]:
         "--hidden-import=daemon.blockchain",
         "--hidden-import=daemon.blockchain.validator_protection",
         "--hidden-import=daemon.blockchain.rpc_protection",
+        # Daemon core - dreaming status reporter
+        "--hidden-import=daemon.dreaming",
     ]
 
 
