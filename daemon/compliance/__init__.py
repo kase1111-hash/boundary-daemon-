@@ -5,6 +5,7 @@ Provides compliance automation capabilities:
 - NIST 800-53 / ISO 27001 control mapping export
 - Self-contained evidence bundles for auditors
 - Access review ceremonies
+- Zero-Knowledge Compliance Proofs (Phase 3)
 
 These tools help organizations demonstrate compliance
 while maintaining the daemon's security guarantees.
@@ -36,6 +37,14 @@ from .access_review import (
     AccessReviewManager,
 )
 
+from .zk_proofs import (
+    ZKComplianceProver,
+    ComplianceAssertion,
+    ComplianceProof,
+    AssertionType,
+    VerificationResult,
+)
+
 __all__ = [
     # Control mapping
     'ControlFramework',
@@ -59,4 +68,11 @@ __all__ = [
     'ReviewDecision',
     'AccessReviewRecord',
     'AccessReviewManager',
+
+    # Zero-Knowledge Proofs (Phase 3)
+    'ZKComplianceProver',
+    'ComplianceAssertion',
+    'ComplianceProof',
+    'AssertionType',
+    'VerificationResult',
 ]
