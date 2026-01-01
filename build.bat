@@ -392,6 +392,9 @@ python -m PyInstaller ^
     --hidden-import=daemon.watchdog ^
     --hidden-import=daemon.watchdog.hardened_watchdog ^
     --hidden-import=daemon.watchdog.log_watchdog ^
+    --hidden-import=daemon.blockchain ^
+    --hidden-import=daemon.blockchain.validator_protection ^
+    --hidden-import=daemon.blockchain.rpc_protection ^
     --collect-submodules=nacl ^
     --collect-submodules=cffi ^
     --collect-submodules=cryptography ^

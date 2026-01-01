@@ -61,6 +61,9 @@ python3 -m PyInstaller \
     --hidden-import=daemon.telemetry \
     --hidden-import=daemon.auth.api_auth \
     --hidden-import=api.boundary_api \
+    --hidden-import=daemon.blockchain \
+    --hidden-import=daemon.blockchain.validator_protection \
+    --hidden-import=daemon.blockchain.rpc_protection \
     --collect-submodules=daemon \
     --collect-submodules=api \
     --collect-submodules=nacl \
