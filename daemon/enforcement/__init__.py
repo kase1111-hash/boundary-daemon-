@@ -95,6 +95,66 @@ from .secure_process_termination import (
     TerminationAttempt,
 )
 
+# Firewall Integration (External enforcement - rule generator)
+try:
+    from .firewall_integration import (
+        FirewallManager,
+        FirewallConfig,
+        FirewallRule,
+        FirewallBackend as FWBackend,
+        RuleAction,
+        RuleDirection,
+        get_firewall_manager,
+    )
+    FIREWALL_INTEGRATION_AVAILABLE = True
+except ImportError:
+    FIREWALL_INTEGRATION_AVAILABLE = False
+    FirewallManager = None
+    FirewallConfig = None
+    FirewallRule = None
+    FWBackend = None
+    RuleAction = None
+    RuleDirection = None
+    get_firewall_manager = None
+
+# MAC Profile Generator (SELinux/AppArmor)
+try:
+    from .mac_profiles import (
+        MACProfileGenerator,
+        ProfileConfig,
+        MACSystem,
+        SELinuxMode,
+        AppArmorMode,
+        get_mac_generator,
+    )
+    MAC_PROFILES_AVAILABLE = True
+except ImportError:
+    MAC_PROFILES_AVAILABLE = False
+    MACProfileGenerator = None
+    ProfileConfig = None
+    MACSystem = None
+    SELinuxMode = None
+    AppArmorMode = None
+    get_mac_generator = None
+
+# Disk Encryption Checker
+try:
+    from .disk_encryption import (
+        EncryptionChecker,
+        EncryptionType,
+        EncryptionStatus,
+        VolumeInfo,
+        get_encryption_checker,
+    )
+    DISK_ENCRYPTION_AVAILABLE = True
+except ImportError:
+    DISK_ENCRYPTION_AVAILABLE = False
+    EncryptionChecker = None
+    EncryptionType = None
+    EncryptionStatus = None
+    VolumeInfo = None
+    get_encryption_checker = None
+
 __all__ = [
     # Network Enforcement (Plan 1 Phase 1)
     'NetworkEnforcer',
@@ -139,4 +199,28 @@ __all__ = [
     'TerminationReason',
     'TerminationResult',
     'TerminationAttempt',
+    # Firewall Integration (External enforcement)
+    'FirewallManager',
+    'FirewallConfig',
+    'FirewallRule',
+    'FWBackend',
+    'RuleAction',
+    'RuleDirection',
+    'get_firewall_manager',
+    'FIREWALL_INTEGRATION_AVAILABLE',
+    # MAC Profiles (SELinux/AppArmor)
+    'MACProfileGenerator',
+    'ProfileConfig',
+    'MACSystem',
+    'SELinuxMode',
+    'AppArmorMode',
+    'get_mac_generator',
+    'MAC_PROFILES_AVAILABLE',
+    # Disk Encryption
+    'EncryptionChecker',
+    'EncryptionType',
+    'EncryptionStatus',
+    'VolumeInfo',
+    'get_encryption_checker',
+    'DISK_ENCRYPTION_AVAILABLE',
 ]
