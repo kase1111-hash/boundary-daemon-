@@ -25,8 +25,13 @@ import subprocess
 import argparse
 import time
 import platform
+import json
+import hashlib
+import hmac
+import stat
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
+from datetime import datetime
 
 
 # ANSI color codes (disabled on Windows without proper terminal support)
@@ -208,6 +213,181 @@ def clean_build() -> None:
             shutil.rmtree(pycache)
 
     print_success("Clean complete!")
+
+
+def generate_signing_key(key_path: Path) -> bool:
+    """Generate a signing key for manifest verification."""
+    if key_path.exists():
+        print_info(f"Signing key already exists: {key_path}")
+        return True
+
+    try:
+        # Generate 32 bytes of cryptographically secure random data
+        key_data = os.urandom(32)
+
+        # Create parent directory if needed
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write key with secure permissions
+        if sys.platform != "win32":
+            # Unix: use atomic create with correct permissions
+            fd = os.open(
+                str(key_path),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                stat.S_IRUSR | stat.S_IWUSR  # 0o600
+            )
+            try:
+                os.write(fd, key_data)
+            finally:
+                os.close(fd)
+        else:
+            # Windows: write file normally
+            key_path.write_bytes(key_data)
+
+        print_success(f"Generated signing key: {key_path}")
+        return True
+
+    except FileExistsError:
+        print_info(f"Signing key already exists: {key_path}")
+        return True
+    except Exception as e:
+        print_error(f"Failed to generate signing key: {e}")
+        return False
+
+
+def calculate_file_hash(filepath: Path, algorithm: str = "sha256") -> str:
+    """Calculate hash of a single file."""
+    try:
+        hasher = hashlib.new(algorithm)
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception as e:
+        print_warning(f"Failed to hash {filepath}: {e}")
+        return ""
+
+
+def scan_daemon_files(daemon_root: Path) -> Dict[str, Dict]:
+    """Scan all daemon and api Python files."""
+    files = {}
+    exclude_patterns = ["__pycache__", ".pyc", ".pyo", ".git", ".pytest_cache"]
+
+    for package in ["daemon", "api"]:
+        package_path = daemon_root / package
+        if not package_path.exists():
+            continue
+
+        for filepath in package_path.rglob("*.py"):
+            # Check exclusions
+            filepath_str = str(filepath)
+            if any(pattern in filepath_str for pattern in exclude_patterns):
+                continue
+
+            rel_path = str(filepath.relative_to(daemon_root))
+            file_hash = calculate_file_hash(filepath)
+            if file_hash:
+                stat_info = filepath.stat()
+                files[rel_path] = {
+                    'path': rel_path,
+                    'hash': file_hash,
+                    'size': stat_info.st_size,
+                    'mtime': stat_info.st_mtime,
+                }
+
+    return files
+
+
+def sign_manifest(manifest_data: Dict, signing_key: bytes) -> str:
+    """Create HMAC signature for manifest."""
+    # Exclude the signature field
+    data_to_sign = {k: v for k, v in manifest_data.items() if k != 'signature'}
+    canonical = json.dumps(data_to_sign, sort_keys=True, separators=(',', ':'))
+
+    signature = hmac.new(
+        signing_key,
+        canonical.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    return signature
+
+
+def generate_manifest(daemon_root: Path, key_path: Path, manifest_path: Path, version: str = "build") -> bool:
+    """Generate a signed manifest for the daemon files."""
+    try:
+        # Load signing key
+        if not key_path.exists():
+            print_error(f"Signing key not found: {key_path}")
+            return False
+
+        signing_key = key_path.read_bytes()
+        if len(signing_key) < 32:
+            print_error(f"Signing key too short: {len(signing_key)} bytes")
+            return False
+
+        # Scan files
+        files = scan_daemon_files(daemon_root)
+        if not files:
+            print_error("No files found to include in manifest")
+            return False
+
+        # Create manifest
+        manifest = {
+            'version': '1.0',
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'daemon_version': version,
+            'hash_algorithm': 'sha256',
+            'files': files,
+            'signature': '',
+        }
+
+        # Sign manifest
+        manifest['signature'] = sign_manifest(manifest, signing_key)
+
+        # Save manifest
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Make writable if exists
+        if manifest_path.exists():
+            try:
+                manifest_path.chmod(0o644)
+            except OSError:
+                pass
+
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f, indent=2)
+
+        # Set read-only
+        try:
+            manifest_path.chmod(0o444)
+        except OSError:
+            pass
+
+        print_success(f"Generated manifest with {len(files)} files: {manifest_path}")
+        return True
+
+    except Exception as e:
+        print_error(f"Failed to generate manifest: {e}")
+        return False
+
+
+def setup_integrity_files() -> bool:
+    """Set up signing key and manifest for the build."""
+    daemon_root = Path(".")
+    config_dir = daemon_root / "config"
+    key_path = config_dir / "signing.key"
+    manifest_path = config_dir / "manifest.json"
+
+    # Generate signing key if needed
+    if not generate_signing_key(key_path):
+        return False
+
+    # Generate manifest
+    if not generate_manifest(daemon_root, key_path, manifest_path):
+        return False
+
+    return True
 
 
 def get_hidden_imports() -> List[str]:
@@ -607,7 +787,7 @@ Examples:
     args = parser.parse_args()
 
     start_time = time.time()
-    total_steps = 5
+    total_steps = 6
 
     print_header("Boundary Daemon Build Script")
 
@@ -640,15 +820,20 @@ Examples:
         if not install_dependencies():
             return 1
 
-    # Step 4: Setup build environment
-    print_step(4, total_steps, "Setting up build environment...")
+    # Step 4: Generate integrity files (signing key and manifest)
+    print_step(4, total_steps, "Generating integrity manifest...")
+    if not setup_integrity_files():
+        print_warning("Failed to generate integrity files - build will continue but runtime verification may fail")
+
+    # Step 5: Setup build environment
+    print_step(5, total_steps, "Setting up build environment...")
     Path("dist").mkdir(exist_ok=True)
     Path("build").mkdir(exist_ok=True)
     print_info("Created output directories")
 
-    # Step 5: Build
+    # Step 6: Build
     onefile = not args.onedir
-    print_step(5, total_steps, "Building boundary-daemon...")
+    print_step(6, total_steps, "Building boundary-daemon...")
     success = build_executable(
         onefile=onefile,
         debug=args.debug,

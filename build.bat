@@ -84,7 +84,7 @@ echo.
 REM ============================================================================
 REM Pre-build checks
 REM ============================================================================
-echo %YELLOW%[1/5] Running pre-build checks...%RESET%
+echo %YELLOW%[1/6] Running pre-build checks...%RESET%
 
 REM Check if Python is available
 python --version >nul 2>&1
@@ -132,7 +132,7 @@ REM Clean build artifacts if requested
 REM ============================================================================
 if %CLEAN_BUILD%==1 (
     echo.
-    echo %YELLOW%[2/5] Cleaning previous build artifacts...%RESET%
+    echo %YELLOW%[2/6] Cleaning previous build artifacts...%RESET%
     if exist "build" (
         rmdir /s /q "build" 2>nul
         echo   Removed: build/
@@ -151,7 +151,7 @@ if %CLEAN_BUILD%==1 (
     echo %GREEN%   Clean complete!%RESET%
 ) else (
     echo.
-    echo %YELLOW%[2/5] Skipping clean (use --clean to enable)%RESET%
+    echo %YELLOW%[2/6] Skipping clean (use --clean to enable)%RESET%
 )
 
 REM ============================================================================
@@ -159,7 +159,7 @@ REM Install dependencies
 REM ============================================================================
 echo.
 if %SKIP_DEPS%==0 (
-    echo %YELLOW%[3/5] Installing dependencies...%RESET%
+    echo %YELLOW%[3/6] Installing dependencies...%RESET%
 
     REM Check if PyInstaller is installed
     python -c "import PyInstaller" >nul 2>&1
@@ -187,14 +187,42 @@ if %SKIP_DEPS%==0 (
         echo %YELLOW%   Warning: requirements.txt not found%RESET%
     )
 ) else (
-    echo %YELLOW%[3/5] Skipping dependency installation (--skip-deps)%RESET%
+    echo %YELLOW%[3/6] Skipping dependency installation (--skip-deps)%RESET%
+)
+
+REM ============================================================================
+REM Generate integrity manifest
+REM ============================================================================
+echo.
+echo %YELLOW%[4/6] Generating integrity manifest...%RESET%
+
+REM Generate signing key if it doesn't exist
+if not exist "config\signing.key" (
+    echo   Generating signing key...
+    python -m daemon.security.daemon_integrity generate-key --output config\signing.key
+    if errorlevel 1 (
+        echo %YELLOW%   Warning: Failed to generate signing key%RESET%
+    ) else (
+        echo %GREEN%   Generated signing key: config\signing.key%RESET%
+    )
+) else (
+    echo   Signing key already exists: config\signing.key
+)
+
+REM Generate manifest
+echo   Generating manifest...
+python -m daemon.security.daemon_integrity create --manifest config\manifest.json --key config\signing.key
+if errorlevel 1 (
+    echo %YELLOW%   Warning: Failed to generate manifest - runtime verification may fail%RESET%
+) else (
+    echo %GREEN%   Generated manifest: config\manifest.json%RESET%
 )
 
 REM ============================================================================
 REM Create output directories
 REM ============================================================================
 echo.
-echo %YELLOW%[4/5] Setting up build environment...%RESET%
+echo %YELLOW%[5/6] Setting up build environment...%RESET%
 if not exist "dist" mkdir dist
 if not exist "build" mkdir build
 echo   Created output directories
@@ -209,7 +237,7 @@ REM ============================================================================
 REM Build the executable
 REM ============================================================================
 echo.
-echo %YELLOW%[5/5] Building %APP_NAME%...%RESET%
+echo %YELLOW%[6/6] Building %APP_NAME%...%RESET%
 echo.
 
 REM Set build mode flag
