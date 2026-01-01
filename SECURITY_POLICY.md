@@ -116,16 +116,31 @@ The following patterns are **NEVER** allowed anywhere in the codebase:
 
 ### Pre-commit Hook
 
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
+A comprehensive credential detection hook is provided in `.githooks/pre-commit`.
 
-# Scan for potential secrets
-if grep -rE "(AKIA[A-Z0-9]{16}|-----BEGIN (RSA|EC|DSA) PRIVATE KEY-----|password\s*=\s*['\"][^'\"]+['\"])" \
-   --include="*.py" --exclude-dir=tests . ; then
-    echo "ERROR: Potential secret detected. Review before committing."
-    exit 1
-fi
+**Installation:**
+```bash
+# Run the install script
+./scripts/install-hooks.sh
+
+# Or configure manually
+git config core.hooksPath .githooks
+```
+
+**What it detects:**
+
+| Category | Examples |
+|----------|----------|
+| Cloud Provider Keys | AWS (AKIA...), GCP service accounts, Azure keys |
+| Private Keys | RSA, DSA, EC, OpenSSH, PGP private keys |
+| API Tokens | GitHub, GitLab, Slack, Stripe, SendGrid, Twilio |
+| Database URLs | PostgreSQL, MySQL, MongoDB, Redis with passwords |
+| Generic Secrets | JWT secrets, hardcoded passwords, API keys |
+| Credential Files | .env, credentials.json, .pem, .key files |
+
+**Bypass (not recommended):**
+```bash
+git commit --no-verify  # Skips all hooks
 ```
 
 ---
