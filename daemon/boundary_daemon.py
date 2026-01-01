@@ -354,6 +354,28 @@ except ImportError:
     get_event_publisher = None
     configure_event_publisher = None
 
+# Import SIEM integration (SECURITY: Security event forwarding)
+try:
+    from .security.siem_integration import (
+        SIEMIntegration,
+        SIEMConfig,
+        SIEMTransport,
+        SIEMFormat,
+        SecurityEventSeverity,
+        init_siem,
+    )
+    from .utils.error_handling import set_siem_integration
+    SIEM_AVAILABLE = True
+except ImportError:
+    SIEM_AVAILABLE = False
+    SIEMIntegration = None
+    SIEMConfig = None
+    SIEMTransport = None
+    SIEMFormat = None
+    SecurityEventSeverity = None
+    init_siem = None
+    set_siem_integration = None
+
 
 class BoundaryDaemon:
     """
@@ -835,6 +857,66 @@ class BoundaryDaemon:
                 logger.info("Telemetry: not enabled (set BOUNDARY_TELEMETRY_DIR to enable)")
         else:
             logger.info("Telemetry module not loaded")
+
+        # Initialize SIEM integration (SECURITY: Security event forwarding to SIEM)
+        self.siem = None
+        self.siem_enabled = False
+        if SIEM_AVAILABLE and SIEMIntegration:
+            # SIEM can be enabled via environment variable
+            siem_host = os.environ.get('BOUNDARY_SIEM_HOST', None)
+            if siem_host:
+                try:
+                    siem_port = int(os.environ.get('BOUNDARY_SIEM_PORT', '514'))
+                    siem_transport = os.environ.get('BOUNDARY_SIEM_TRANSPORT', 'tls').lower()
+                    siem_format = os.environ.get('BOUNDARY_SIEM_FORMAT', 'json').lower()
+
+                    # Map transport string to enum
+                    transport_map = {
+                        'udp': SIEMTransport.UDP,
+                        'tcp': SIEMTransport.TCP,
+                        'tls': SIEMTransport.TLS,
+                        'http': SIEMTransport.HTTP,
+                        'https': SIEMTransport.HTTPS,
+                    }
+                    transport = transport_map.get(siem_transport, SIEMTransport.TLS)
+
+                    # Map format string to enum
+                    format_map = {
+                        'json': SIEMFormat.JSON,
+                        'cef': SIEMFormat.CEF,
+                        'leef': SIEMFormat.LEEF,
+                        'syslog': SIEMFormat.SYSLOG,
+                    }
+                    fmt = format_map.get(siem_format, SIEMFormat.JSON)
+
+                    siem_config = SIEMConfig(
+                        enabled=True,
+                        host=siem_host,
+                        port=siem_port,
+                        transport=transport,
+                        format=fmt,
+                        tls_verify=os.environ.get('BOUNDARY_SIEM_TLS_VERIFY', 'true').lower() == 'true',
+                        http_token=os.environ.get('BOUNDARY_SIEM_TOKEN', None),
+                    )
+
+                    self.siem = SIEMIntegration(siem_config, event_logger=self.event_logger)
+                    success, message = self.siem.start()
+
+                    if success:
+                        self.siem_enabled = True
+                        # Wire error handling to SIEM
+                        if set_siem_integration:
+                            set_siem_integration(self.siem)
+                        logger.info(f"SIEM integration enabled ({siem_host}:{siem_port})")
+                        logger.info(f"  Transport: {transport.value}, Format: {fmt.value}")
+                    else:
+                        logger.warning(f"SIEM connection failed: {message}")
+                except Exception as e:
+                    logger.warning(f"SIEM integration failed to initialize: {e}")
+            else:
+                logger.info("SIEM integration: not enabled (set BOUNDARY_SIEM_HOST to enable)")
+        else:
+            logger.info("SIEM integration module not loaded")
 
         # Initialize memory monitor (Plan 11: Memory Leak Monitoring)
         self.memory_monitor = None
