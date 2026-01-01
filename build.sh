@@ -49,6 +49,7 @@ python3 -m PyInstaller \
     --hidden-import=nacl \
     --hidden-import=nacl.bindings \
     --hidden-import=nacl.signing \
+    --hidden-import=yara \
     --hidden-import=daemon.memory_monitor \
     --hidden-import=daemon.resource_monitor \
     --hidden-import=daemon.health_monitor \
@@ -64,6 +65,7 @@ python3 -m PyInstaller \
     --collect-submodules=api \
     --collect-submodules=nacl \
     --collect-submodules=cffi \
+    --collect-submodules=yara \
     --noconfirm \
     --clean \
     "$MAIN_SCRIPT"

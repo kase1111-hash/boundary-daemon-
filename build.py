@@ -404,6 +404,8 @@ def get_hidden_imports() -> List[str]:
         "--hidden-import=cryptography.hazmat.primitives",
         "--hidden-import=cryptography.hazmat.primitives.kdf.pbkdf2",
         "--hidden-import=cryptography.hazmat.backends",
+        # YARA detection engine (optional but included if available)
+        "--hidden-import=yara",
         # API package
         "--hidden-import=api",
         "--hidden-import=api.boundary_api",
@@ -620,6 +622,7 @@ def build_executable(
         "--collect-submodules=nacl",
         "--collect-submodules=cffi",
         "--collect-submodules=cryptography",
+        "--collect-submodules=yara",
     ])
 
     # Check for icon file

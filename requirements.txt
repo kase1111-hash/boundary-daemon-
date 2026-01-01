@@ -8,5 +8,8 @@ cffi>=1.15.0
 pynacl>=1.5.0
 cryptography>=41.0.0
 
+# Detection engines
+yara-python>=4.3.0
+
 # No other dependencies required
 # Minimal attack surface by design
