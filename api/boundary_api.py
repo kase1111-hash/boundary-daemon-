@@ -164,8 +164,9 @@ class BoundaryAPIServer:
                     latency_ms=latency_ms,
                     success=success,
                 )
-            except Exception:
-                pass  # Don't fail requests due to telemetry errors
+            except Exception as telemetry_err:
+                # Don't fail requests due to telemetry errors, but log for debugging
+                logger.debug(f"Telemetry recording failed: {telemetry_err}")
 
     def _server_loop(self):
         """Main server loop"""
@@ -249,8 +250,9 @@ class BoundaryAPIServer:
             error_response = {'error': str(e)}
             try:
                 conn.sendall(json.dumps(error_response).encode('utf-8'))
-            except:
-                pass
+            except (OSError, socket.error, BrokenPipeError) as send_err:
+                # Client disconnected or socket error - log at debug level
+                logger.debug(f"Failed to send error response to client: {send_err}")
         finally:
             # Record latency (Plan 11: API Latency Monitoring)
             elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -304,8 +306,9 @@ class BoundaryAPIServer:
                         'token_name': token.name,
                     }
                 )
-            except Exception:
-                pass  # Don't fail request on logging error
+            except Exception as log_err:
+                # Don't fail request on logging error, but record for debugging
+                logger.debug(f"API request logging failed: {log_err}")
 
         # Process command and get response
         response = self._dispatch_command(command, params, token)

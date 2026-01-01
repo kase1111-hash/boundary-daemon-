@@ -10,6 +10,7 @@ Plan 2: TPM Integration (Priority: HIGH)
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -19,6 +20,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Any, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 # SECURITY: Import AES-GCM for proper encryption instead of weak XOR
 try:
@@ -94,19 +97,22 @@ class SecureTempFile:
                         f.write(os.urandom(file_size))
                         f.flush()
                         os.fsync(f.fileno())
-            except Exception:
-                pass  # Best effort secure wipe
+            except (OSError, IOError) as wipe_err:
+                # Best effort secure wipe - log but continue cleanup
+                logger.debug(f"Secure wipe failed for temp file: {wipe_err}")
 
             try:
                 os.unlink(self.path)
-            except Exception:
-                pass  # Will be cleaned up by OS eventually
+            except (OSError, FileNotFoundError) as unlink_err:
+                # File cleanup failed - will be cleaned up by OS eventually
+                logger.debug(f"Temp file unlink failed: {unlink_err}")
 
         if self._fd is not None:
             try:
                 os.close(self._fd)
-            except Exception:
-                pass
+            except OSError as close_err:
+                # File descriptor close failed - may already be closed
+                logger.debug(f"Failed to close temp file descriptor: {close_err}")
             self._fd = None
 
     def write(self, data: bytes) -> None:
@@ -1047,13 +1053,18 @@ class TPMManager:
 
             return sealed_blob
 
+        except subprocess.TimeoutExpired as e:
+            raise TPMSealingError(f"TPM sealing operation timed out: {e}")
+        except subprocess.SubprocessError as e:
+            raise TPMSealingError(f"TPM subprocess error during sealing: {e}")
         finally:
             # Secure cleanup of all temp files (in reverse order)
             for tf in reversed(temp_files):
                 try:
                     tf.__exit__(None, None, None)
-                except Exception:
-                    pass  # Best effort cleanup
+                except (OSError, IOError) as cleanup_err:
+                    # Best effort cleanup - log but don't fail
+                    logger.debug(f"Temp file cleanup error: {cleanup_err}")
 
     def _unseal_tpm2tools(self, sealed_blob: bytes, mode_hash: str) -> bytes:
         """Unseal using tpm2-tools with secure temporary file handling.
@@ -1128,13 +1139,18 @@ class TPMManager:
 
             return secret
 
+        except subprocess.TimeoutExpired as e:
+            raise TPMUnsealingError(f"TPM unsealing operation timed out: {e}")
+        except subprocess.SubprocessError as e:
+            raise TPMUnsealingError(f"TPM subprocess error during unsealing: {e}")
         finally:
             # Secure cleanup of all temp files (in reverse order)
             for tf in reversed(temp_files):
                 try:
                     tf.__exit__(None, None, None)
-                except Exception:
-                    pass  # Best effort cleanup
+                except (OSError, IOError) as cleanup_err:
+                    # Best effort cleanup - log but don't fail
+                    logger.debug(f"Temp file cleanup error: {cleanup_err}")
 
     def _seal_pytss(self, secret: bytes, mode_hash: str) -> bytes:
         """Seal using tpm2-pytss with AES-GCM encryption"""
