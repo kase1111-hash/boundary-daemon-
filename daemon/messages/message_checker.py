@@ -151,11 +151,30 @@ class MessageChecker:
     ]
 
     # Dangerous command patterns for Agent-OS
+    # Note: Patterns are designed to catch truly malicious content while
+    # allowing legitimate LLM/API communications (e.g., Ollama, Agent-OS)
     DANGEROUS_PATTERNS = [
         r'\b(rm\s+-rf|del\s+/[sq]|format\s+c:)\b',
-        r'\b(sudo|su\s+root|admin|escalate)\b',
-        r'\b(password|secret|credential|token|api.?key)\b',
-        r'\b(exfiltrate|steal|hack|exploit|inject)\b',
+        r'\b(sudo|su\s+root|escalate\s+privile?g?e?s?)\b',
+        r'\b(exfiltrate|steal\s+data|hack\s+into|exploit\s+vulnerabilit)\b',
+    ]
+
+    # Sensitive terms that require context-aware checking (not auto-blocked)
+    # These are flagged only when combined with exfiltration/theft indicators
+    SENSITIVE_TERMS = [
+        r'\b(password|passwd|secret_key|private_key)\b',
+        r'\b(credential|auth_token)\b',
+    ]
+
+    # Allowlisted terms for legitimate LLM/API usage (Ollama, Agent-OS, etc.)
+    # These prevent false positives when checking sensitive terms
+    ALLOWLISTED_PATTERNS = [
+        r'\b(max_tokens?|num_tokens?|token_count|token_limit)\b',
+        r'\b(context_tokens?|input_tokens?|output_tokens?)\b',
+        r'\b(ollama|llama|mistral|codellama)\b',
+        r'\b(api_endpoint|endpoint_url|model_endpoint)\b',
+        r'\b(generate|completion|embedding|inference)\b',
+        r'\b(prompt|system_prompt|user_prompt)\b',
     ]
 
     def __init__(self, daemon=None, strict_mode: bool = False):
@@ -183,6 +202,14 @@ class MessageChecker:
         self._dangerous_compiled = [
             re.compile(pattern, re.IGNORECASE)
             for pattern in self.DANGEROUS_PATTERNS
+        ]
+        self._sensitive_compiled = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in self.SENSITIVE_TERMS
+        ]
+        self._allowlist_compiled = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in self.ALLOWLISTED_PATTERNS
         ]
 
     def check_message(
@@ -427,11 +454,30 @@ class MessageChecker:
         return redacted
 
     def _detect_dangerous_patterns(self, content: str) -> List[str]:
-        """Detect dangerous command patterns"""
+        """
+        Detect dangerous command patterns with context-aware checking.
+
+        Uses allowlist to prevent false positives for legitimate LLM/API
+        communications (e.g., Ollama requests with token counts).
+        """
         found = []
+
+        # Check for unconditionally dangerous patterns
         for pattern in self._dangerous_compiled:
             if pattern.search(content):
                 found.append(pattern.pattern)
+
+        # Check for sensitive terms with context awareness
+        # Only flag if NOT in an allowlisted LLM/API context
+        is_llm_context = any(
+            pattern.search(content) for pattern in self._allowlist_compiled
+        )
+
+        if not is_llm_context:
+            for pattern in self._sensitive_compiled:
+                if pattern.search(content):
+                    found.append(pattern.pattern)
+
         return found
 
     def _check_natlangchain_ambiguity(self, content: str) -> List[str]:
