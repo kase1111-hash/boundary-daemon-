@@ -37,6 +37,21 @@ logger = logging.getLogger(__name__)
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
 
+# Import error handling framework for consistent error management
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        log_filesystem_error,
+        ErrorCategory,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        logger.error(f"{op}: {e}")
+    def log_filesystem_error(e, op, **ctx):
+        logger.error(f"FILESYSTEM: {op}: {e}")
+
 # Import secure memory utilities for key cleanup
 try:
     from daemon.security.secure_memory import (
@@ -204,7 +219,7 @@ class SecureConfigStorage:
             except (IOError, OSError, ValueError) as e:
                 # IOError/OSError: file access errors
                 # ValueError: invalid key format
-                logger.warning(f"Failed to load config key: {e}")
+                log_filesystem_error(e, "load_config_key", key_file=str(self._key_file))
 
         # Derive key from machine characteristics
         machine_key = self._derive_machine_key()
@@ -220,7 +235,7 @@ class SecureConfigStorage:
                 os.chmod(self._key_file, 0o600)
             except (IOError, OSError, PermissionError) as e:
                 # File system errors - permission denied, disk full, etc.
-                logger.warning(f"Failed to save config key: {e}")
+                log_filesystem_error(e, "save_config_key", key_file=str(self._key_file))
 
     def _derive_machine_key(self) -> bytes:
         """Derive encryption key from machine-specific characteristics."""
@@ -676,7 +691,7 @@ class SecureConfigStorage:
 
         except (IOError, OSError, PermissionError, shutil.Error) as e:
             # File copy/permission errors
-            logger.warning(f"Failed to create config backup: {e}")
+            log_filesystem_error(e, "create_config_backup", filepath=str(filepath))
 
     def _cleanup_old_backups(self, backup_dir: Path, base_name: str):
         """Remove old backup files exceeding max_backups."""

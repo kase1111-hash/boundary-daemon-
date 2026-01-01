@@ -28,6 +28,24 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Import error handling framework for consistent error management
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        log_auth_error,
+        log_filesystem_error,
+        ErrorCategory,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        logger.error(f"{op}: {e}")
+    def log_auth_error(e, op, **ctx):
+        logger.error(f"AUTH: {op}: {e}")
+    def log_filesystem_error(e, op, **ctx):
+        logger.error(f"FILESYSTEM: {op}: {e}")
+
 # Import persistent rate limiter (SECURITY: survives restarts)
 try:
     from .persistent_rate_limiter import PersistentRateLimiter
@@ -397,7 +415,7 @@ class TokenManager:
             # IOError/OSError: file access errors
             # JSONDecodeError: corrupted token file
             # KeyError/ValueError: invalid token data format
-            logger.warning(f"Failed to load tokens: {e}")
+            log_auth_error(e, "load_tokens", token_file=str(self.token_file))
 
     def _save_tokens(self):
         """Save tokens to storage file."""
@@ -423,7 +441,7 @@ class TokenManager:
 
         except (IOError, OSError, PermissionError) as e:
             # File system errors - permission denied, disk full, etc.
-            logger.warning(f"Failed to save tokens: {e}")
+            log_filesystem_error(e, "save_tokens", token_file=str(self.token_file))
 
     def _create_bootstrap_token(self) -> str:
         """

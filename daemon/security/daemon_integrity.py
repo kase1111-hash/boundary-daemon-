@@ -28,6 +28,26 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Import error handling framework for consistent error management
+try:
+    from daemon.utils.error_handling import (
+        handle_error,
+        log_security_error,
+        log_filesystem_error,
+        ErrorCategory,
+        ErrorSeverity,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    # Fallback stubs
+    def handle_error(e, op, category=None, severity=None, additional_context=None, reraise=False, log_level=None):
+        logger.error(f"{op}: {e}")
+    def log_security_error(e, op, **ctx):
+        logger.error(f"SECURITY: {op}: {e}")
+    def log_filesystem_error(e, op, **ctx):
+        logger.error(f"FILESYSTEM: {op}: {e}")
+
 # Cross-platform path defaults
 IS_WINDOWS = sys.platform == 'win32'
 if IS_WINDOWS:
@@ -280,7 +300,7 @@ class DaemonIntegrityProtector:
                 return self._signing_key
             except (IOError, OSError, PermissionError) as e:
                 # File access errors - could be permissions, corruption, or I/O failure
-                logger.error(f"Failed to load signing key from {key_path}: {e}")
+                log_security_error(e, "load_signing_key", key_path=str(key_path))
                 return None
 
         # SECURITY: Fail-closed - do not generate ephemeral keys or use env vars
@@ -336,7 +356,7 @@ class DaemonIntegrityProtector:
             return False
         except (OSError, PermissionError) as e:
             # File system errors after FileExistsError is handled
-            logger.error(f"Failed to generate signing key: {e}")
+            log_filesystem_error(e, "generate_signing_key", output_path=str(output_path))
             return False
 
     def _calculate_file_hash(self, filepath: Path) -> str:
@@ -359,7 +379,7 @@ class DaemonIntegrityProtector:
 
         except (IOError, OSError, IsADirectoryError) as e:
             # File access errors - file deleted, permissions changed, or is directory
-            logger.error(f"Failed to hash {filepath}: {e}")
+            log_filesystem_error(e, "calculate_file_hash", filepath=str(filepath))
             return ""
 
     def _should_include_file(self, filepath: Path) -> bool:
@@ -556,7 +576,7 @@ class DaemonIntegrityProtector:
             # IOError/OSError: file access failure
             # KeyError: missing required field in manifest data
             # ValueError: invalid data format in manifest
-            logger.error(f"Failed to load manifest: {e}")
+            log_security_error(e, "load_manifest", manifest_path=str(load_path))
             return False
 
     def verify_integrity(self, strict: bool = True) -> IntegrityCheckResult:

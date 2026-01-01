@@ -16,6 +16,21 @@ from .event_logger import EventLogger, EventType, BoundaryEvent
 
 logger = logging.getLogger(__name__)
 
+# Import error handling framework for consistent error management
+try:
+    from daemon.utils.error_handling import (
+        log_security_error,
+        log_filesystem_error,
+        ErrorCategory,
+    )
+    ERROR_HANDLING_AVAILABLE = True
+except ImportError:
+    ERROR_HANDLING_AVAILABLE = False
+    def log_security_error(e, op, **ctx):
+        logger.error(f"SECURITY: {op}: {e}")
+    def log_filesystem_error(e, op, **ctx):
+        logger.error(f"FILESYSTEM: {op}: {e}")
+
 
 class SignedEventLogger(EventLogger):
     """
@@ -60,7 +75,7 @@ class SignedEventLogger(EventLogger):
             except (IOError, OSError, ValueError, nacl.exceptions.CryptoError) as e:
                 # IOError/OSError: file access errors
                 # ValueError/CryptoError: invalid key format or corrupted key
-                logger.error(f"Error loading signing key: {e}")
+                log_security_error(e, "load_signing_key", key_path=self.signing_key_path)
                 logger.info("Generating new key...")
 
         # Create new key
@@ -90,7 +105,7 @@ class SignedEventLogger(EventLogger):
             logger.info(f"Public key (for verification): {signing_key.verify_key.encode(encoder=nacl.encoding.HexEncoder).decode()}")
         except (IOError, OSError, PermissionError) as e:
             # File system errors - permission denied, disk full, etc.
-            logger.warning(f"Failed to save signing key: {e}")
+            log_filesystem_error(e, "save_signing_key", key_path=self.signing_key_path)
 
         return signing_key
 
@@ -142,7 +157,7 @@ class SignedEventLogger(EventLogger):
                     os.fsync(f.fileno())
             except (IOError, OSError, PermissionError) as e:
                 # Signature write failure is critical - must not lose signatures
-                logger.critical(f"Failed to write signature: {e}")
+                log_security_error(e, "write_signature", signature_file=self.signature_file_path)
                 raise
 
     def verify_signatures(self) -> Tuple[bool, Optional[str]]:
@@ -266,7 +281,7 @@ class SignedEventLogger(EventLogger):
             return True
         except (IOError, OSError, PermissionError) as e:
             # File write errors
-            logger.error(f"Error exporting public key: {e}")
+            log_filesystem_error(e, "export_public_key", output_path=output_path)
             return False
 
 
