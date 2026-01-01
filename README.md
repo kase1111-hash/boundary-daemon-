@@ -244,7 +244,12 @@ boundary-daemon/
 │  │  ├─ seccomp_filter.py            # Seccomp-bpf syscall filtering
 │  │  ├─ cgroups.py                   # Cgroups v2 resource limits
 │  │  ├─ network_policy.py            # Per-sandbox iptables/nftables firewall
-│  │  └─ sandbox_manager.py           # Policy-integrated sandbox orchestration
+│  │  ├─ sandbox_manager.py           # Policy-integrated sandbox orchestration
+│  │  ├─ mac_profiles.py              # AppArmor/SELinux profile generator (New!)
+│  │  └─ profile_config.py            # YAML profile configuration (New!)
+│  │
+│  ├─ api/                        # Internal APIs (New!)
+│  │  └─ health.py                    # Health check API for K8s/systemd
 │  │
 │  ├─ hardware/                   # Hardware integration
 │  │  └─ tpm_manager.py               # TPM sealing & attestation
@@ -259,6 +264,13 @@ boundary-daemon/
 │  ├─ watchdog/                   # Log monitoring
 │  │  ├─ log_watchdog.py              # Log pattern detection
 │  │  └─ hardened_watchdog.py         # Hardened watchdog
+│  │
+│  ├─ detection/                  # Threat detection (no ML)
+│  │  ├─ yara_engine.py               # YARA rule engine
+│  │  ├─ sigma_engine.py              # Sigma rule support
+│  │  ├─ ioc_feeds.py                 # Signed IOC feeds
+│  │  ├─ mitre_attack.py              # MITRE ATT&CK patterns
+│  │  └─ event_publisher.py           # BoundaryDaemon integration (New!)
 │  │
 │  ├─ telemetry/                  # Observability
 │  │  ├─ otel_setup.py                # OpenTelemetry instrumentation
@@ -411,6 +423,56 @@ exporter.start()  # Starts on port 9090
 # Prometheus can scrape: http://localhost:9090/metrics
 ```
 
+### Attack Detection Integration (Event Publisher)
+
+The Event Publisher connects BoundaryDaemon events to detection engines (YARA, Sigma, MITRE ATT&CK, IOC):
+
+```python
+from daemon.detection import (
+    EventPublisher,
+    get_event_publisher,
+    configure_event_publisher,
+)
+
+# Get the global event publisher
+publisher = get_event_publisher()
+
+# Events are automatically published when:
+# - Tripwire violations occur
+# - Boundary mode changes
+# - Lockdown is triggered
+# - Sandbox security events happen
+
+# Configure with custom detection engines
+from daemon.detection import YARAEngine, SigmaEngine, MITREDetector, IOCFeedManager
+
+configure_event_publisher(
+    yara_engine=YARAEngine('/path/to/rules'),
+    sigma_engine=SigmaEngine(),
+    mitre_detector=MITREDetector(),
+    ioc_manager=IOCFeedManager(),
+)
+
+# Subscribe to security alerts
+def on_alert(alert):
+    print(f"ALERT: {alert.severity} - {alert.description}")
+    print(f"MITRE: {alert.mitre_technique}")
+    print(f"Detections: {alert.detection_results}")
+
+publisher.subscribe(on_alert)
+
+# Manual event publishing (for custom integrations)
+from daemon.detection import SecurityEvent, EventType
+
+event = SecurityEvent(
+    event_type=EventType.CUSTOM,
+    source="my_component",
+    description="Custom security event",
+    data={"key": "value"},
+)
+publisher.publish_event(event)
+```
+
 ### Sandbox → SIEM Event Streaming
 
 ```python
@@ -436,6 +498,66 @@ config = SandboxEventEmitterConfig(
 # - oom_killed, timeout, escape_attempt
 
 # Shipped via Kafka, S3, GCS, HTTP, or file (configurable)
+```
+
+### Health Check API (Kubernetes/systemd)
+
+```python
+from daemon.api import HealthCheckServer, get_health_server
+
+# Start health check server
+server = get_health_server()
+server.start(port=8080)
+
+# Mark startup complete (enables readiness)
+server.notify_ready()
+
+# Register custom health check
+def check_sandbox():
+    return ComponentHealth(
+        name="sandbox",
+        status=HealthStatus.HEALTHY,
+        message="Sandbox module ready",
+    )
+server.register_check("sandbox", check_sandbox)
+
+# Endpoints:
+#   GET /health        - Full health status
+#   GET /health/live   - Liveness probe (is process alive?)
+#   GET /health/ready  - Readiness probe (can accept traffic?)
+#   GET /health/startup - Startup probe (has init completed?)
+```
+
+### YAML Profile Configuration
+
+```yaml
+# profiles.yaml
+version: "1"
+profiles:
+  restricted:
+    description: "Restricted sandbox for untrusted code"
+    namespaces: [pid, mount, net, ipc]
+    seccomp_profile: standard
+    cgroup_limits:
+      memory_max: "256M"
+      cpu_percent: 25
+      pids_max: 20
+    network_policy:
+      deny_all: false
+      allow_dns: true
+      allowed_ports: [80, 443]
+    timeout_seconds: 60
+```
+
+```python
+from daemon.sandbox import get_profile_loader
+
+loader = get_profile_loader()
+loader.load_config("/etc/boundary-daemon/profiles.yaml")
+
+# Use profile by name
+profile = loader.get_sandbox_profile("restricted")
+manager.run_sandboxed(command, profile=profile)
 ```
 
 ### Unix Socket API
@@ -675,6 +797,9 @@ python api/boundary_api.py
 - [x] Prometheus metrics exporter (sandbox, policy, firewall metrics)
 - [x] Sandbox → SIEM event streaming (real-time CEF/LEEF)
 - [x] sandboxctl CLI (run, list, inspect, kill, test commands)
+- [x] AppArmor/SELinux profile auto-generation
+- [x] Health Check API (Kubernetes liveness/readiness/startup probes)
+- [x] YAML configuration for sandbox profiles
 
 ---
 

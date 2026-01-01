@@ -324,6 +324,20 @@ except ImportError:
     ReportType = None
     create_report_generator = None
 
+# Import detection event publisher (Attack Detection Integration)
+try:
+    from .detection import (
+        EventPublisher,
+        get_event_publisher,
+        configure_event_publisher,
+    )
+    EVENT_PUBLISHER_AVAILABLE = True
+except ImportError:
+    EVENT_PUBLISHER_AVAILABLE = False
+    EventPublisher = None
+    get_event_publisher = None
+    configure_event_publisher = None
+
 
 class BoundaryDaemon:
     """
@@ -447,6 +461,18 @@ class BoundaryDaemon:
         self.policy_engine = PolicyEngine(initial_mode=initial_mode)
         self.tripwire_system = TripwireSystem()
         self.lockdown_manager = LockdownManager()
+
+        # Initialize Event Publisher (Attack Detection Integration)
+        # Connects tripwire/boundary events to YARA, Sigma, MITRE, IOC detection engines
+        self.event_publisher = None
+        if EVENT_PUBLISHER_AVAILABLE and get_event_publisher:
+            try:
+                self.event_publisher = get_event_publisher()
+                logger.info("Event publisher initialized for attack detection")
+            except Exception as e:
+                logger.warning(f"Event publisher initialization failed: {e}")
+        else:
+            logger.info("Event publisher: not available")
 
         # Initialize Privilege Manager (SECURITY: Prevents Silent Enforcement Failures)
         # This addresses Critical Finding: "Root Privilege Required = Silent Failure"
@@ -1116,6 +1142,18 @@ class BoundaryDaemon:
             )
             logger.info(f"Mode transition: {old_mode.name} → {new_mode.name} ({operator.value})")
 
+            # Publish mode change to attack detection engines
+            if self.event_publisher:
+                try:
+                    self.event_publisher.publish_mode_change(
+                        old_mode=old_mode.name,
+                        new_mode=new_mode.name,
+                        operator=operator.value,
+                        reason=reason,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to publish mode change event: {e}")
+
             # SECURITY: Check if we can properly enforce security-critical modes
             # Addresses Critical Finding: "Root Privilege Required = Silent Failure"
             if self.privilege_manager:
@@ -1209,6 +1247,13 @@ class BoundaryDaemon:
                 }
             )
 
+            # Publish to attack detection engines (YARA, Sigma, MITRE, IOC)
+            if self.event_publisher:
+                try:
+                    self.event_publisher.publish_tripwire_event(violation)
+                except Exception as e:
+                    logger.warning(f"Failed to publish tripwire event: {e}")
+
             # Trigger lockdown
             if violation.auto_lockdown:
                 self.lockdown_manager.trigger_lockdown(violation)
@@ -1217,6 +1262,16 @@ class BoundaryDaemon:
                     Operator.SYSTEM,
                     f"Tripwire: {violation.violation_type.value}"
                 )
+
+                # Publish lockdown event to detection engines
+                if self.event_publisher:
+                    try:
+                        self.event_publisher.publish_lockdown(
+                            reason=f"Tripwire: {violation.violation_type.value}",
+                            trigger=violation.violation_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to publish lockdown event: {e}")
 
         self.tripwire_system.register_callback(on_tripwire_violation)
 
