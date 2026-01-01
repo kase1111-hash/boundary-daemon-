@@ -458,7 +458,9 @@ class eBPFObserver:
         self._observer: Optional[BaseObserver] = None
 
         # Event callbacks
-        self._callbacks: List[Callable[[ObservationEvent], None]] = []
+        self._callbacks: Dict[int, Callable[[ObservationEvent], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
         # Stats
         self._events_received = 0
@@ -489,9 +491,37 @@ class eBPFObserver:
 
         return eBPFCapability.FULL
 
-    def add_callback(self, callback: Callable[[ObservationEvent], None]) -> None:
-        """Add callback for events."""
-        self._callbacks.append(callback)
+    def add_callback(self, callback: Callable[[ObservationEvent], None]) -> int:
+        """Add callback for events.
+
+        Returns:
+            Callback ID that can be used to remove the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._callbacks[callback_id] = callback
+            return callback_id
+
+    def remove_callback(self, callback_id: int) -> bool:
+        """Remove a previously added callback.
+
+        Args:
+            callback_id: The ID returned from add_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._callbacks:
+                del self._callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks."""
+        with self._callback_lock:
+            self._callbacks.clear()
 
     def start(self) -> bool:
         """Start observation."""
@@ -528,7 +558,9 @@ class eBPFObserver:
 
         # Invoke callbacks
         for event in events:
-            for callback in self._callbacks:
+            with self._callback_lock:
+                callbacks = list(self._callbacks.values())
+            for callback in callbacks:
                 try:
                     callback(event)
                 except Exception as e:

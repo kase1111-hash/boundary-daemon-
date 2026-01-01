@@ -602,7 +602,9 @@ class SIEMIntegration:
         self.connector = SIEMConnector(self.config)
         self._event_logger = event_logger
         self._correlation_window: Dict[str, List[SecurityEvent]] = {}
-        self._alert_callbacks: List[Callable[[SecurityEvent], None]] = []
+        self._alert_callbacks: Dict[int, Callable[[SecurityEvent], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
         self._lock = threading.Lock()
 
         # Auto-detected context
@@ -620,12 +622,37 @@ class SIEMIntegration:
         return success, message
 
     def stop(self):
-        """Stop SIEM integration."""
+        """Stop SIEM integration and cleanup resources."""
         self.connector.stop()
+        with self._callback_lock:
+            self._alert_callbacks.clear()
 
-    def register_alert_callback(self, callback: Callable[[SecurityEvent], None]):
-        """Register callback for high-severity events."""
-        self._alert_callbacks.append(callback)
+    def register_alert_callback(self, callback: Callable[[SecurityEvent], None]) -> int:
+        """Register callback for high-severity events.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._alert_callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_alert_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered alert callback.
+
+        Args:
+            callback_id: The ID returned from register_alert_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._alert_callbacks:
+                del self._alert_callbacks[callback_id]
+                return True
+            return False
 
     def _create_event(
         self,
@@ -684,7 +711,9 @@ class SIEMIntegration:
 
         # Trigger alert callbacks for high severity
         if event.severity >= SecurityEventSeverity.HIGH:
-            for callback in self._alert_callbacks:
+            with self._callback_lock:
+                callbacks = list(self._alert_callbacks.values())
+            for callback in callbacks:
                 try:
                     callback(event)
                 except Exception as e:

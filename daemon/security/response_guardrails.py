@@ -290,12 +290,46 @@ class ResponseGuardrails:
             ]
 
         # Callbacks
-        self._callbacks: List[Callable[[GuardrailResult], None]] = []
+        self._callbacks: Dict[int, Callable[[GuardrailResult], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
         # Mode-specific policies
         self._mode_policies: Dict[str, GuardrailPolicy] = self._init_mode_policies()
 
         logger.info("ResponseGuardrails initialized")
+
+    def register_callback(self, callback: Callable[[GuardrailResult], None]) -> int:
+        """Register a callback for guardrail results.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered callback.
+
+        Args:
+            callback_id: The ID returned from register_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._callbacks:
+                del self._callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks."""
+        with self._callback_lock:
+            self._callbacks.clear()
 
     def _init_mode_policies(self) -> Dict[str, GuardrailPolicy]:
         """Initialize mode-specific policies"""
@@ -428,7 +462,9 @@ class ResponseGuardrails:
         if violations or hallucinations:
             self._log_analysis(result)
 
-        for callback in self._callbacks:
+        with self._callback_lock:
+            callbacks = list(self._callbacks.values())
+        for callback in callbacks:
             try:
                 callback(result)
             except Exception as e:

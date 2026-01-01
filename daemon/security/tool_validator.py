@@ -256,7 +256,9 @@ class ToolOutputValidator:
         ]
 
         # Callbacks
-        self._callbacks: List[Callable[[ToolValidationResult], None]] = []
+        self._callbacks: Dict[int, Callable[[ToolValidationResult], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
         # Thread safety
         self._lock = threading.Lock()
@@ -278,6 +280,38 @@ class ToolOutputValidator:
             if tool_name not in self._policies:
                 self._policies[tool_name] = ToolPolicy(name=tool_name)
             return self._policies[tool_name]
+
+    def register_callback(self, callback: Callable[[ToolValidationResult], None]) -> int:
+        """Register a callback for validation results.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered callback.
+
+        Args:
+            callback_id: The ID returned from register_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._callbacks:
+                del self._callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks."""
+        with self._callback_lock:
+            self._callbacks.clear()
 
     def start_tool_call(
         self,
@@ -478,7 +512,9 @@ class ToolOutputValidator:
         if violations:
             self._log_violations(validation_result)
 
-        for callback in self._callbacks:
+        with self._callback_lock:
+            callbacks = list(self._callbacks.values())
+        for callback in callbacks:
             try:
                 callback(validation_result)
             except Exception as e:

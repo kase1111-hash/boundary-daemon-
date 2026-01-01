@@ -86,8 +86,10 @@ class ClusterManager:
         self._sync_thread: Optional[threading.Thread] = None
 
         # Callbacks
-        self._mode_change_callbacks: List[Callable] = []
-        self._violation_callbacks: List[Callable] = []
+        self._mode_change_callbacks: Dict[int, Callable] = {}
+        self._violation_callbacks: Dict[int, Callable] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
         logger.info(f"ClusterManager initialized: node_id={self.node_id}, hostname={self.hostname}")
 
@@ -116,7 +118,7 @@ class ClusterManager:
         logger.info(f"Cluster coordination started for node {self.node_id}")
 
     def stop(self):
-        """Stop cluster coordination"""
+        """Stop cluster coordination and cleanup resources"""
         if not self.is_running:
             return
 
@@ -125,7 +127,60 @@ class ClusterManager:
         # Deregister node
         self._deregister_node()
 
+        # Clear callbacks to prevent memory leaks
+        with self._callback_lock:
+            self._mode_change_callbacks.clear()
+            self._violation_callbacks.clear()
+
         logger.info(f"Cluster coordination stopped for node {self.node_id}")
+
+    def register_mode_change_callback(self, callback: Callable) -> int:
+        """Register a callback for mode changes.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._mode_change_callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_mode_change_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered mode change callback.
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._mode_change_callbacks:
+                del self._mode_change_callbacks[callback_id]
+                return True
+            return False
+
+    def register_violation_callback(self, callback: Callable) -> int:
+        """Register a callback for violations.
+
+        Returns:
+            Callback ID that can be used to unregister the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._violation_callbacks[callback_id] = callback
+            return callback_id
+
+    def unregister_violation_callback(self, callback_id: int) -> bool:
+        """Unregister a previously registered violation callback.
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._violation_callbacks:
+                del self._violation_callbacks[callback_id]
+                return True
+            return False
 
     def _register_node(self):
         """Register this node in the cluster"""
@@ -207,8 +262,13 @@ class ClusterManager:
                     if new_mode != self.daemon.policy_engine.current_mode:
                         logger.info(f"Syncing to cluster mode: {cluster_mode_name}")
                         # Trigger mode change callbacks
-                        for callback in self._mode_change_callbacks:
-                            callback(new_mode)
+                        with self._callback_lock:
+                            callbacks = list(self._mode_change_callbacks.values())
+                        for callback in callbacks:
+                            try:
+                                callback(new_mode)
+                            except Exception as e:
+                                logger.error(f"Mode change callback error: {e}")
                 except Exception as e:
                     logger.error(f"Error syncing mode: {e}")
 
@@ -248,8 +308,13 @@ class ClusterManager:
         self.coordinator.put(key, json.dumps(violation_data), ttl=3600)  # Keep for 1 hour
 
         # Trigger violation callbacks
-        for callback in self._violation_callbacks:
-            callback(violation)
+        with self._callback_lock:
+            callbacks = list(self._violation_callbacks.values())
+        for callback in callbacks:
+            try:
+                callback(violation)
+            except Exception as e:
+                logger.error(f"Violation callback error: {e}")
 
         logger.info(f"Reported violation to cluster: {violation.violation_type.value}")
 

@@ -85,14 +85,44 @@ class RealTimeEnforcement:
 
     def __init__(self, mode: 'RealTimeEnforcement.Mode' = None):
         self.mode = mode or self.Mode.MONITOR
-        self._alert_callbacks: List[Callable[[PolicyMatch], None]] = []
+        self._alert_callbacks: Dict[int, Callable[[PolicyMatch], None]] = {}
+        self._next_callback_id = 0
+        self._callback_lock = threading.Lock()
 
     def add_alert_callback(
         self,
         callback: Callable[[PolicyMatch], None],
-    ) -> None:
-        """Add callback for alerts."""
-        self._alert_callbacks.append(callback)
+    ) -> int:
+        """Add callback for alerts.
+
+        Returns:
+            Callback ID that can be used to remove the callback
+        """
+        with self._callback_lock:
+            callback_id = self._next_callback_id
+            self._next_callback_id += 1
+            self._alert_callbacks[callback_id] = callback
+            return callback_id
+
+    def remove_alert_callback(self, callback_id: int) -> bool:
+        """Remove a previously added alert callback.
+
+        Args:
+            callback_id: The ID returned from add_alert_callback
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        with self._callback_lock:
+            if callback_id in self._alert_callbacks:
+                del self._alert_callbacks[callback_id]
+                return True
+            return False
+
+    def cleanup(self):
+        """Cleanup resources and clear callbacks."""
+        with self._callback_lock:
+            self._alert_callbacks.clear()
 
     def process_match(self, match: PolicyMatch) -> None:
         """Process a policy match."""
@@ -100,7 +130,9 @@ class RealTimeEnforcement:
             return
 
         if self.mode in (self.Mode.ALERT, self.Mode.STRICT):
-            for callback in self._alert_callbacks:
+            with self._callback_lock:
+                callbacks = list(self._alert_callbacks.values())
+            for callback in callbacks:
                 try:
                     callback(match)
                 except Exception as e:
