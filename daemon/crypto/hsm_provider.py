@@ -51,6 +51,7 @@ Security Properties:
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -66,10 +67,14 @@ import base64
 try:
     from nacl.signing import SigningKey, VerifyKey
     from nacl.public import PrivateKey, PublicKey, Box
+    from nacl.secret import SecretBox
+    from nacl.utils import random as nacl_random
     from nacl.encoding import HexEncoder
+    from nacl.exceptions import CryptoError
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False
+    CryptoError = Exception  # Fallback
 
 logger = logging.getLogger(__name__)
 
@@ -401,15 +406,27 @@ class PKCS11Provider(HSMProvider):
         key_id: str,
         data: bytes,
     ) -> bytes:
-        """Sign data using a key in the HSM."""
+        """
+        Sign data using a key in the HSM.
+
+        In software fallback mode (no real PKCS#11 library), uses Ed25519 via libsodium.
+        SECURITY NOTE: Software mode keys are NOT hardware-protected. Use real HSM
+        in production for proper key isolation.
+        """
         self._verify_session(session)
         session.operation_count += 1
         session.last_operation = datetime.now()
 
-        # In production, would call PKCS#11 C_Sign
-        # For now, return a placeholder signature
-        signature = hashlib.sha256(data + key_id.encode()).digest()
-        return signature
+        # Get or create signing key for this key_id
+        signing_key = self._get_or_create_signing_key(session, key_id)
+
+        if signing_key and NACL_AVAILABLE:
+            # Use Ed25519 signature (64 bytes)
+            signed = signing_key.sign(data)
+            return bytes(signed.signature)
+        else:
+            # Fallback: HMAC-SHA256 (weaker but deterministic)
+            return hmac.new(key_id.encode(), data, hashlib.sha256).digest()
 
     def verify(
         self,
@@ -418,14 +435,28 @@ class PKCS11Provider(HSMProvider):
         data: bytes,
         signature: bytes,
     ) -> bool:
-        """Verify a signature using a key in the HSM."""
+        """
+        Verify a signature using a key in the HSM.
+
+        Supports both Ed25519 (preferred) and HMAC-SHA256 fallback.
+        """
         self._verify_session(session)
         session.operation_count += 1
         session.last_operation = datetime.now()
 
-        # In production, would call PKCS#11 C_Verify
-        expected = hashlib.sha256(data + key_id.encode()).digest()
-        return signature == expected
+        signing_key = self._get_or_create_signing_key(session, key_id)
+
+        if signing_key and NACL_AVAILABLE:
+            try:
+                verify_key = signing_key.verify_key
+                verify_key.verify(data, signature)
+                return True
+            except Exception:
+                return False
+        else:
+            # Fallback: HMAC-SHA256
+            expected = hmac.new(key_id.encode(), data, hashlib.sha256).digest()
+            return hmac.compare_digest(signature, expected)
 
     def encrypt(
         self,
@@ -433,16 +464,36 @@ class PKCS11Provider(HSMProvider):
         key_id: str,
         plaintext: bytes,
     ) -> bytes:
-        """Encrypt data using a key in the HSM."""
+        """
+        Encrypt data using a key in the HSM.
+
+        Uses XSalsa20-Poly1305 authenticated encryption (libsodium SecretBox).
+        Returns: nonce (24 bytes) || ciphertext (includes 16-byte auth tag)
+
+        SECURITY NOTE: In software mode, keys are derived from key_id via HKDF.
+        Real HSMs would use hardware-isolated keys.
+        """
         self._verify_session(session)
         session.operation_count += 1
         session.last_operation = datetime.now()
 
-        # In production, would call PKCS#11 C_Encrypt
-        # Placeholder: XOR with hash of key_id (NOT SECURE - for demo only)
-        key_hash = hashlib.sha256(key_id.encode()).digest()
-        ciphertext = bytes(p ^ key_hash[i % len(key_hash)] for i, p in enumerate(plaintext))
-        return ciphertext
+        if NACL_AVAILABLE:
+            # Derive 32-byte symmetric key from key_id using HKDF-like construction
+            symmetric_key = self._derive_symmetric_key(session, key_id)
+            box = SecretBox(symmetric_key)
+            # SecretBox automatically generates nonce and prepends it
+            ciphertext = box.encrypt(plaintext)
+            return bytes(ciphertext)
+        else:
+            # Fallback: AES-like construction using hashlib (NOT AUTHENTICATED)
+            # WARNING: This fallback provides confidentiality but NOT integrity
+            logger.warning("HSM encrypt using weak fallback - nacl not available")
+            key_material = hashlib.pbkdf2_hmac('sha256', key_id.encode(), b'hsm_salt', 100000)
+            nonce = os.urandom(16)
+            # XOR cipher with key stream (weak but functional fallback)
+            keystream = hashlib.sha256(key_material + nonce).digest()
+            ciphertext = bytes(p ^ keystream[i % len(keystream)] for i, p in enumerate(plaintext))
+            return nonce + ciphertext
 
     def decrypt(
         self,
@@ -450,15 +501,64 @@ class PKCS11Provider(HSMProvider):
         key_id: str,
         ciphertext: bytes,
     ) -> bytes:
-        """Decrypt data using a key in the HSM."""
+        """
+        Decrypt data using a key in the HSM.
+
+        Expects format from encrypt(): nonce || ciphertext
+        Uses XSalsa20-Poly1305 authenticated decryption.
+        """
         self._verify_session(session)
         session.operation_count += 1
         session.last_operation = datetime.now()
 
-        # In production, would call PKCS#11 C_Decrypt
-        key_hash = hashlib.sha256(key_id.encode()).digest()
-        plaintext = bytes(c ^ key_hash[i % len(key_hash)] for i, c in enumerate(ciphertext))
-        return plaintext
+        if NACL_AVAILABLE:
+            symmetric_key = self._derive_symmetric_key(session, key_id)
+            box = SecretBox(symmetric_key)
+            try:
+                plaintext = box.decrypt(ciphertext)
+                return bytes(plaintext)
+            except CryptoError as e:
+                raise HSMOperationError(f"Decryption failed: {e}")
+        else:
+            # Fallback: reverse the weak XOR cipher
+            logger.warning("HSM decrypt using weak fallback - nacl not available")
+            key_material = hashlib.pbkdf2_hmac('sha256', key_id.encode(), b'hsm_salt', 100000)
+            nonce = ciphertext[:16]
+            encrypted = ciphertext[16:]
+            keystream = hashlib.sha256(key_material + nonce).digest()
+            plaintext = bytes(c ^ keystream[i % len(keystream)] for i, c in enumerate(encrypted))
+            return plaintext
+
+    def _get_or_create_signing_key(self, session: HSMSession, key_id: str) -> Optional[Any]:
+        """Get or create an Ed25519 signing key for the given key_id."""
+        if not NACL_AVAILABLE:
+            return None
+
+        with self._lock:
+            session_data = self._sessions.get(session.session_id, {})
+            keys = session_data.get('signing_keys', {})
+
+            if key_id not in keys:
+                # Derive signing key deterministically from key_id + session
+                seed_material = hashlib.sha256(
+                    f"{key_id}:{session.session_id}".encode()
+                ).digest()
+                keys[key_id] = SigningKey(seed_material)
+                session_data['signing_keys'] = keys
+                self._sessions[session.session_id] = session_data
+
+            return keys.get(key_id)
+
+    def _derive_symmetric_key(self, session: HSMSession, key_id: str) -> bytes:
+        """Derive a 32-byte symmetric key for encryption operations."""
+        # Use HKDF-like construction for key derivation
+        return hashlib.pbkdf2_hmac(
+            'sha256',
+            key_id.encode(),
+            f"hsm:{session.session_id}".encode(),
+            100000,  # iterations
+            dklen=32
+        )
 
     def _verify_session(self, session: HSMSession) -> None:
         """Verify session is valid."""

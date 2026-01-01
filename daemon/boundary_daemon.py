@@ -376,6 +376,22 @@ except ImportError:
     init_siem = None
     set_siem_integration = None
 
+# Import dreaming status reporter (CLI status updates)
+try:
+    from .dreaming import (
+        DreamingReporter,
+        DreamPhase,
+        create_dreaming_reporter,
+        set_dreaming_reporter,
+    )
+    DREAMING_AVAILABLE = True
+except ImportError:
+    DREAMING_AVAILABLE = False
+    DreamingReporter = None
+    DreamPhase = None
+    create_dreaming_reporter = None
+    set_dreaming_reporter = None
+
 
 class BoundaryDaemon:
     """
@@ -1201,6 +1217,27 @@ class BoundaryDaemon:
         else:
             logger.info("API server: not available")
 
+        # Initialize dreaming status reporter (CLI status updates)
+        self._dreaming_reporter = None
+        self.dreaming_enabled = True  # Can be disabled via config
+        if DREAMING_AVAILABLE and self.dreaming_enabled:
+            try:
+                self._dreaming_reporter = create_dreaming_reporter(
+                    interval=5.0,  # Report every 5 seconds
+                    use_colors=True,
+                )
+                # Register state callback for mode display
+                if self._dreaming_reporter:
+                    self._dreaming_reporter.register_state_callback(
+                        'mode',
+                        lambda: f"mode:{self.policy_engine.get_current_mode().name}"
+                    )
+                    logger.info("Dreaming status reporter initialized (5s interval)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize dreaming reporter: {e}")
+        else:
+            logger.info("Dreaming reporter: not available")
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -1834,6 +1871,12 @@ class BoundaryDaemon:
         # Start state monitoring
         self.state_monitor.start()
 
+        # Start dreaming status reporter
+        if self._dreaming_reporter:
+            self._dreaming_reporter.start()
+            self._dreaming_reporter.set_phase(DreamPhase.WATCHING)
+            logger.info("Dreaming status reporter started")
+
         # Start enforcement loop
         self._enforcement_thread = threading.Thread(target=self._enforcement_loop, daemon=False)
         self._enforcement_thread.start()
@@ -1958,6 +2001,14 @@ class BoundaryDaemon:
 
         # Stop state monitor
         self.state_monitor.stop()
+
+        # Stop dreaming status reporter
+        if self._dreaming_reporter:
+            try:
+                self._dreaming_reporter.stop()
+                logger.info("Dreaming status reporter stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop dreaming reporter: {e}")
 
         # Stop API server
         if self.api_server:
@@ -2177,6 +2228,11 @@ class BoundaryDaemon:
 
     def _perform_health_check(self):
         """Perform periodic health check"""
+        # Update dreaming phase
+        if self._dreaming_reporter:
+            self._dreaming_reporter.start_operation("health_check")
+            self._dreaming_reporter.set_phase(DreamPhase.VERIFYING)
+
         # Check daemon health
         daemon_healthy = self.tripwire_system.check_daemon_health()
 
@@ -2198,6 +2254,11 @@ class BoundaryDaemon:
                 f"Event log chain integrity violated: {error}",
                 metadata={'healthy': False}
             )
+
+        # Complete health check and return to watching phase
+        if self._dreaming_reporter:
+            self._dreaming_reporter.complete_operation("health_check", success=daemon_healthy and is_valid)
+            self._dreaming_reporter.set_phase(DreamPhase.WATCHING)
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals"""
