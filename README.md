@@ -1,8 +1,26 @@
 # Boundary Daemon - Agent Smith
 
+## Version: Alpha (v0.1.0-alpha)
+
 **The Trust Policy & Audit Layer for Agent OS**
 
 > *"If the Memory Vault is the safe, the Boundary Daemon is the armed guard + walls + air-gap switches."*
+
+---
+
+## Alpha Release Overview
+
+This is the **Alpha release** of Boundary Daemon, representing a fully-featured security policy and audit system for AI agent environments. While all core functionality is implemented and tested, this release is intended for:
+
+- **Development and testing environments**
+- **Security researchers and evaluators**
+- **Early adopters building on Agent OS**
+
+**What Alpha means:**
+- All documented features are implemented and functional
+- API contracts may change before v1.0 stable release
+- Performance optimizations are ongoing
+- Community feedback is actively incorporated
 
 ---
 
@@ -88,6 +106,107 @@ Agent Smith serves as the **policy authority and audit system** - the decision-m
 4. **Execution Gating** - Restrict tools, IO, models
 5. **Tripwire Response** - Lock down on violation
 6. **Audit Signaling** - Emit immutable boundary events
+
+---
+
+## Alpha Feature Summary
+
+This Alpha release includes **140+ modules** across the following capability areas:
+
+### Core Security Engine
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Six Boundary Modes | ✅ Complete | OPEN, RESTRICTED, TRUSTED, AIRGAP, COLDROOM, LOCKDOWN |
+| Fail-Closed Security | ✅ Complete | Ambiguous states default to DENY |
+| Immutable Audit Log | ✅ Complete | SHA-256 hash-chained, Ed25519 signed events |
+| Tripwire System | ✅ Complete | Automatic LOCKDOWN on security violations |
+| Human Override Ceremony | ✅ Complete | Multi-step confirmation with cooldown |
+| Memory Classification | ✅ Complete | 6 levels: PUBLIC → CROWN_JEWEL |
+
+### AI/Agent Security Suite
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Prompt Injection Detection | ✅ Complete | 50+ patterns: jailbreaks, DAN, encoding bypasses |
+| Tool Output Validation | ✅ Complete | Sanitization, size limits, chain depth enforcement |
+| Response Guardrails | ✅ Complete | Content safety, hallucination detection |
+| RAG Injection Detection | ✅ Complete | Poisoned documents, indirect injection |
+| Agent Attestation (CBAC) | ✅ Complete | Cryptographic identity, capability tokens, delegation |
+
+### Process Sandboxing (Linux)
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Namespace Isolation | ✅ Complete | PID, network, mount, user, IPC, UTS |
+| Seccomp-BPF Filtering | ✅ Complete | Syscall filtering with mode-aware profiles |
+| Cgroups v2 Limits | ✅ Complete | CPU, memory, I/O, PIDs limits |
+| Per-Sandbox Firewall | ✅ Complete | iptables/nftables with cgroup matching |
+| Network Policy | ✅ Complete | Host/port/CIDR allow lists |
+
+### Platform Enforcement
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Linux iptables/nftables | ✅ Complete | Network isolation enforcement |
+| Linux USB/udev Control | ✅ Complete | USB device blocking |
+| Windows Firewall | ✅ Complete | Mode-based firewall rules |
+| AppArmor/SELinux | ✅ Complete | Profile generation |
+
+### Security Monitoring
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Network State Detection | ✅ Complete | Online/offline, VPN, interfaces |
+| USB/Hardware Monitoring | ✅ Complete | Device insertion detection |
+| Process Monitoring | ✅ Complete | Anomaly detection, behavioral analysis |
+| DNS Security | ✅ Complete | Spoofing and cache poisoning detection |
+| ARP Security | ✅ Complete | MITM and spoofing detection |
+| WiFi Security | ✅ Complete | Rogue AP detection |
+| File Integrity | ✅ Complete | Hash-based change monitoring |
+| Traffic Anomaly | ✅ Complete | Network traffic analysis |
+| Antivirus | ✅ Complete | Malware scanning |
+| Clock Monitor | ✅ Complete | System time drift detection |
+
+### Threat Detection (Deterministic, No ML)
+| Feature | Status | Description |
+|---------|--------|-------------|
+| YARA Engine | ✅ Complete | Custom rule evaluation |
+| Sigma Engine | ✅ Complete | Log-based detection rules |
+| IOC Feeds | ✅ Complete | Signed indicator feeds |
+| MITRE ATT&CK | ✅ Complete | Technique pattern matching |
+
+### Enterprise Integration
+| Feature | Status | Description |
+|---------|--------|-------------|
+| SIEM Integration | ✅ Complete | CEF/LEEF export, Kafka/S3/GCS shipping |
+| Identity Federation | ✅ Complete | OIDC, LDAP, PAM integration |
+| Compliance Automation | ✅ Complete | NIST 800-53, ISO 27001 mapping |
+| Prometheus Metrics | ✅ Complete | Sandbox, policy, firewall metrics |
+| Health Check API | ✅ Complete | Kubernetes liveness/readiness probes |
+
+### Advanced Cryptography
+| Feature | Status | Description |
+|---------|--------|-------------|
+| HSM Support | ✅ Complete | PKCS#11, CloudHSM, YubiHSM |
+| Post-Quantum Crypto | ✅ Complete | Kyber, Dilithium preparation |
+| TPM Integration | ✅ Complete | Hardware security module binding |
+
+### Air-Gap Operations
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Data Diode | ✅ Complete | One-way log export |
+| QR Ceremonies | ✅ Complete | Offline approval workflows |
+| Sneakernet Protocol | ✅ Complete | Secure physical transfer |
+
+### CLI Tools
+| Tool | Description |
+|------|-------------|
+| `boundaryctl` | Main daemon control and monitoring |
+| `sandboxctl` | Sandbox lifecycle management |
+| `authctl` | Authentication and token management |
+| `policy_ctl` | Policy configuration |
+| `cluster_ctl` | Distributed deployment management |
+| `biometric_ctl` | Biometric verification |
+| `security_scan` | Security scanning utilities |
+| `verify_signatures` | Signature verification |
+
+---
 
 ## Quick Start
 

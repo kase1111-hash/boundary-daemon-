@@ -5,7 +5,28 @@ All notable changes to the Boundary Daemon project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0-alpha] - 2026-01-01
+
+**Alpha Release** - First public Alpha of Boundary Daemon (Agent Smith)
+
+This release represents a fully-featured security policy and audit system for AI agent environments with 140+ modules across all capability areas.
+
+### Highlights
+
+- **Complete Core Security Engine**: Six boundary modes, fail-closed security, immutable audit logging
+- **AI/Agent Security Suite**: Prompt injection detection (50+ patterns), RAG injection detection, agent attestation
+- **Process Sandboxing**: Linux namespace isolation, seccomp-bpf filtering, cgroups v2, per-sandbox firewall
+- **Enterprise Ready**: SIEM integration, identity federation, compliance automation, Prometheus metrics
+- **Cross-Platform**: Linux (full support) and Windows (monitoring + firewall enforcement)
+
+### What's in Alpha
+
+All documented features are implemented and tested. This release is suitable for:
+- Development and testing environments
+- Security researchers and evaluators
+- Early adopters building on Agent OS
+
+API contracts may evolve before v1.0 stable release.
 
 ### Added
 - **SIEM Integration** (`daemon/integrations/siem/`):
@@ -146,10 +167,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrated centralized error framework for consistent security logging
 - Fixed potential security issues identified in security audit
 
-## [1.0.0] - 2024-01-01
+## [0.0.1] - 2024-01-01 (Initial Development)
 
 ### Added
-- Initial release of Boundary Daemon (Agent Smith)
+- Initial development version of Boundary Daemon (Agent Smith)
 - Policy decision and audit layer for Agent OS
 - Six security boundary modes: OPEN, RESTRICTED, TRUSTED, AIRGAP, COLDROOM, LOCKDOWN
 - Memory classification system (PUBLIC to CROWN_JEWEL)
@@ -185,5 +206,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate limiting to prevent abuse
 - Privilege tracking and alerting for root requirements
 
-[Unreleased]: https://github.com/kase1111-hash/boundary-daemon-/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/kase1111-hash/boundary-daemon-/releases/tag/v1.0.0
+[0.1.0-alpha]: https://github.com/kase1111-hash/boundary-daemon-/releases/tag/v0.1.0-alpha
