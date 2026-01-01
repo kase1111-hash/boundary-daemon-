@@ -486,16 +486,113 @@ Client Handler Threads (daemon, transient):
 
 **External**:
 - `psutil` - System monitoring (network, hardware, processes)
+- `cryptography` - Encryption and key derivation (Fernet, PBKDF2)
+- `pynacl` - Ed25519 digital signatures for event signing
+- `cffi` - C library bindings (dependency of pynacl)
 
 **Standard Library**:
 - `socket` - Unix socket API
 - `threading` - Concurrent components
 - `json` - API serialization
-- `hashlib` - Event log hashing
+- `hashlib` - Event log hashing (SHA-256)
 - `signal` - Signal handling
 - `os`, `sys` - System operations
+- `subprocess` - External command execution
+- `dataclasses` - Structured data types
 
 **Minimalism**: By design, very few dependencies to reduce attack surface.
+
+## Additional Components
+
+### Authentication (`daemon/auth/`)
+
+| Module | Purpose |
+|--------|---------|
+| `api_auth.py` | Token-based API authentication with capabilities |
+| `enhanced_ceremony.py` | Multi-step human override with mandatory cooldown |
+| `biometric_verifier.py` | Biometric authentication support |
+| `secure_token_storage.py` | Encrypted token storage using Fernet |
+| `persistent_rate_limiter.py` | Rate limiting with persistence across restarts |
+
+### Enforcement (`daemon/enforcement/`)
+
+Kernel-level enforcement modules (Linux only, requires root):
+
+| Module | Purpose |
+|--------|---------|
+| `network_enforcer.py` | Network isolation via iptables/nftables rules |
+| `usb_enforcer.py` | USB device control via udev |
+| `process_enforcer.py` | Process isolation via containers (podman/docker) |
+| `secure_process_termination.py` | Safe process termination with cleanup |
+| `secure_profile_manager.py` | AppArmor/SELinux profile management |
+| `protection_persistence.py` | Persistent enforcement rules storage |
+
+### Security Monitoring (`daemon/security/`)
+
+Multi-layer security detection and monitoring:
+
+| Module | Purpose |
+|--------|---------|
+| `antivirus.py` | Malware scanning and detection |
+| `daemon_integrity.py` | Self-verification and tampering detection |
+| `dns_security.py` | DNS monitoring and spoofing detection |
+| `arp_security.py` | ARP spoofing and MITM detection |
+| `wifi_security.py` | WiFi security monitoring and rogue AP detection |
+| `process_security.py` | Process anomaly detection |
+| `traffic_anomaly.py` | Network traffic analysis |
+| `file_integrity.py` | File change monitoring via hash verification |
+| `code_advisor.py` | Code vulnerability analysis |
+| `threat_intel.py` | Threat intelligence integration |
+| `clock_monitor.py` | System clock verification and time attack detection |
+| `secure_memory.py` | Memory protection utilities |
+
+### Storage (`daemon/storage/`)
+
+| Module | Purpose |
+|--------|---------|
+| `append_only.py` | Append-only log file implementation |
+| `log_hardening.py` | Log security hardening (chattr +a, permissions) |
+
+### PII Detection (`daemon/pii/`)
+
+| Module | Purpose |
+|--------|---------|
+| `detector.py` | PII pattern detection (SSN, email, phone, etc.) |
+| `bypass_resistant_detector.py` | Advanced obfuscation-resistant PII detection |
+| `filter.py` | PII filtering and redaction |
+
+### Utilities (`daemon/utils/`)
+
+| Module | Purpose |
+|--------|---------|
+| `error_handling.py` | Robust error handling framework with categorization, aggregation, and retry logic |
+
+### Error Handling Framework
+
+The error handling framework provides consistent error management:
+
+```python
+from daemon.utils.error_handling import (
+    ErrorCategory,
+    ErrorSeverity,
+    handle_error,
+    with_error_handling,
+    safe_execute,
+)
+
+# Decorator usage
+@with_error_handling(category=ErrorCategory.SECURITY, retry_count=3)
+def my_function():
+    ...
+
+# Context manager usage
+with safe_execute("operation_name", ErrorCategory.NETWORK) as result:
+    result.value = risky_operation()
+```
+
+**Error Categories**: SECURITY, AUTH, NETWORK, FILESYSTEM, SYSTEM, CONFIG, PLATFORM, RESOURCE, EXTERNAL, UNKNOWN
+
+**Error Severities**: INFO, WARNING, ERROR, CRITICAL, FATAL
 
 ## Configuration
 
@@ -550,16 +647,29 @@ Agent-OS ──────┼──→ Unix Socket ──→ Boundary Daemon
 synth-mind ────┘
 ```
 
+## Implemented Enhancement Plans
+
+The following enhancement plans have been implemented:
+
+1. **Plan 1: Kernel-Level Enforcement** - Network, USB, and process enforcement via iptables, udev, and containers (`daemon/enforcement/`)
+2. **Plan 2: TPM Integration** - Hardware attestation and sealed secrets (`daemon/hardware/tpm_manager.py`)
+3. **Plan 3: Cryptographic Log Signing** - Ed25519 signatures on events (`daemon/signed_event_logger.py`)
+4. **Plan 4: Distributed Deployment** - Multi-host coordination (`daemon/distributed/`)
+5. **Plan 5: Custom Policy DSL** - Policy language and evaluation (`daemon/policy/custom_policy_engine.py`)
+6. **Plan 6: Biometric Authentication** - Biometric verification for ceremonies (`daemon/auth/biometric_verifier.py`)
+7. **Plan 7: Code Vulnerability Advisor** - Code scanning (`daemon/security/code_advisor.py`)
+8. **Plan 8: Log Watchdog Agent** - Log pattern monitoring (`daemon/watchdog/`)
+9. **Plan 9: OpenTelemetry Integration** - Observability (`daemon/telemetry/otel_setup.py`)
+
 ## Future Enhancements
 
 Potential future additions (maintaining security principles):
 
-1. **TPM Integration** - Bind mode to TPM sealed secrets
-2. **Biometric Confirmation** - Add biometric to ceremony
-3. **Network Attestation** - Verify VPN/network trust
-4. **Log Signing** - Cryptographically sign events
-5. **Distributed Deployment** - Multi-host coordination
-6. **Policy Language** - Custom policy definitions
+1. **Hardware Security Key Support** - YubiKey/FIDO2 for ceremony verification
+2. **Blockchain Log Anchoring** - External validation of log integrity
+3. **Secure Enclave Integration** - Intel SGX/ARM TrustZone support
+4. **Real-time Threat Intelligence** - Live threat feed integration
+5. **AI-powered Anomaly Detection** - ML-based behavioral analysis
 
 ---
 
