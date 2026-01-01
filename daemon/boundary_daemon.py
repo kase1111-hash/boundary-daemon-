@@ -26,6 +26,7 @@ from .state_monitor import StateMonitor, EnvironmentState, NetworkState
 from .policy_engine import PolicyEngine, BoundaryMode, PolicyRequest, PolicyDecision, Operator, MemoryClass
 from .tripwires import TripwireSystem, LockdownManager, TripwireViolation
 from .event_logger import EventLogger, EventType
+from .constants import Paths
 
 # Import API server for external CLI tools
 try:
@@ -418,25 +419,14 @@ class BoundaryDaemon:
 
         if not skip_integrity_check and DAEMON_INTEGRITY_AVAILABLE:
             logger.info("Verifying daemon integrity...")
-            # Determine config paths - use local config for development
-            # Check local config first, then fall back to system paths
-            local_config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
-            local_signing_key = os.path.join(local_config_dir, 'signing.key')
-            local_manifest = os.path.join(local_config_dir, 'manifest.json')
-            system_signing_key = '/etc/boundary-daemon/signing.key'
-            system_manifest = '/etc/boundary-daemon/manifest.json'
-
-            if os.path.exists(local_signing_key):
-                signing_key_path = local_signing_key
-                manifest_path = local_manifest
-                logger.info(f"Using local signing key: {local_signing_key}")
-            elif os.path.exists(system_signing_key):
-                signing_key_path = system_signing_key
-                manifest_path = system_manifest
-                logger.info(f"Using system signing key: {system_signing_key}")
-            else:
-                signing_key_path = local_signing_key
-                manifest_path = local_manifest
+            # Determine config paths using centralized path resolution
+            # This handles PyInstaller frozen executables, local dev, and system installs
+            config_dir = Paths.get_config_dir()
+            manifest_path = Paths.get_manifest_path()
+            signing_key_path = Paths.get_signing_key_path()
+            logger.info(f"Using config directory: {config_dir}")
+            logger.info(f"Manifest path: {manifest_path}")
+            logger.info(f"Signing key path: {signing_key_path}")
             self._integrity_protector = DaemonIntegrityProtector(
                 config=IntegrityConfig(
                     # In production, use restrictive settings:

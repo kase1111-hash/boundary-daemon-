@@ -48,14 +48,40 @@ except ImportError:
     def log_filesystem_error(e, op, **ctx):
         logger.error(f"FILESYSTEM: {op}: {e}")
 
+# Import centralized paths for PyInstaller-aware path resolution
+try:
+    from daemon.constants import Paths
+    PATHS_AVAILABLE = True
+except ImportError:
+    PATHS_AVAILABLE = False
+
 # Cross-platform path defaults
+# Uses centralized Paths class if available (handles PyInstaller frozen executables)
 IS_WINDOWS = sys.platform == 'win32'
-if IS_WINDOWS:
-    _DEFAULT_MANIFEST_PATH = "./config/manifest.json"
-    _DEFAULT_SIGNING_KEY_PATH = "./config/signing.key"
-else:
-    _DEFAULT_MANIFEST_PATH = "/etc/boundary-daemon/manifest.json"
-    _DEFAULT_SIGNING_KEY_PATH = "/etc/boundary-daemon/signing.key"
+
+
+def _get_default_manifest_path() -> str:
+    """Get the default manifest path, handling PyInstaller frozen executables."""
+    if PATHS_AVAILABLE:
+        return Paths.get_manifest_path()
+    # Fallback for when Paths is not available
+    if IS_WINDOWS:
+        return "./config/manifest.json"
+    return "/etc/boundary-daemon/manifest.json"
+
+
+def _get_default_signing_key_path() -> str:
+    """Get the default signing key path, handling PyInstaller frozen executables."""
+    if PATHS_AVAILABLE:
+        return Paths.get_signing_key_path()
+    # Fallback for when Paths is not available
+    if IS_WINDOWS:
+        return "./config/signing.key"
+    return "/etc/boundary-daemon/signing.key"
+
+
+_DEFAULT_MANIFEST_PATH = _get_default_manifest_path()
+_DEFAULT_SIGNING_KEY_PATH = _get_default_signing_key_path()
 
 
 class IntegrityStatus(Enum):

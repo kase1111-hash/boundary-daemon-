@@ -383,6 +383,86 @@ class Paths:
             return False
         return os.path.exists('/proc')
 
+    @classmethod
+    def get_base_path(cls) -> str:
+        """Get the base path for the application.
+
+        Handles PyInstaller frozen executables by checking for sys._MEIPASS.
+        For frozen executables, returns the PyInstaller extraction directory.
+        For normal execution, returns the daemon package's parent directory.
+
+        Returns:
+            Base path for locating application resources.
+        """
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller frozen executable
+            return sys._MEIPASS
+        else:
+            # Running as normal Python script
+            # Return the parent of the daemon package directory
+            return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @classmethod
+    def get_config_dir(cls) -> str:
+        """Get the configuration directory path.
+
+        For frozen executables, checks in order:
+        1. PyInstaller _MEIPASS/config (bundled config)
+        2. Executable directory/config (config next to exe)
+        3. System paths (/etc/boundary-daemon or local config)
+
+        For normal execution:
+        1. Local development config (daemon/../config)
+        2. System paths
+
+        Returns:
+            Path to the configuration directory.
+        """
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller frozen executable
+            # Check bundled config first
+            meipass_config = os.path.join(sys._MEIPASS, 'config')
+            if os.path.isdir(meipass_config):
+                return meipass_config
+
+            # Check next to the executable
+            exe_dir = os.path.dirname(sys.executable)
+            exe_config = os.path.join(exe_dir, 'config')
+            if os.path.isdir(exe_config):
+                return exe_config
+
+            # Fall through to system/local paths below
+
+        # Local development config
+        local_config = os.path.join(cls.get_base_path(), 'config')
+        if os.path.isdir(local_config):
+            return local_config
+
+        # System path (Linux)
+        if not IS_WINDOWS and os.path.isdir(cls.ETC_BASE):
+            return cls.ETC_BASE
+
+        # Default to local config path (may not exist yet)
+        return local_config
+
+    @classmethod
+    def get_manifest_path(cls) -> str:
+        """Get the manifest.json file path.
+
+        Returns:
+            Full path to manifest.json in the appropriate config directory.
+        """
+        return os.path.join(cls.get_config_dir(), 'manifest.json')
+
+    @classmethod
+    def get_signing_key_path(cls) -> str:
+        """Get the signing.key file path.
+
+        Returns:
+            Full path to signing.key in the appropriate config directory.
+        """
+        return os.path.join(cls.get_config_dir(), 'signing.key')
+
 
 # =============================================================================
 # CRYPTOGRAPHIC CONSTANTS

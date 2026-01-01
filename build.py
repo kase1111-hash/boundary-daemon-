@@ -620,6 +620,11 @@ def build_executable(
         f"--add-data=api{separator}api",
     ]
 
+    # Add config directory if it exists (manifest.json, signing.key)
+    config_dir = Path("config")
+    if config_dir.exists():
+        cmd.append(f"--add-data=config{separator}config")
+
     # Add all hidden imports
     cmd.extend(get_hidden_imports())
 
