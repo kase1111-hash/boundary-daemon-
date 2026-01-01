@@ -265,6 +265,13 @@ boundary-daemon/
 │  │  ├─ log_watchdog.py              # Log pattern detection
 │  │  └─ hardened_watchdog.py         # Hardened watchdog
 │  │
+│  ├─ detection/                  # Threat detection (no ML)
+│  │  ├─ yara_engine.py               # YARA rule engine
+│  │  ├─ sigma_engine.py              # Sigma rule support
+│  │  ├─ ioc_feeds.py                 # Signed IOC feeds
+│  │  ├─ mitre_attack.py              # MITRE ATT&CK patterns
+│  │  └─ event_publisher.py           # BoundaryDaemon integration (New!)
+│  │
 │  ├─ telemetry/                  # Observability
 │  │  ├─ otel_setup.py                # OpenTelemetry instrumentation
 │  │  └─ prometheus_metrics.py        # Prometheus metrics exporter
@@ -414,6 +421,56 @@ exporter.start()  # Starts on port 9090
 # - Resource usage (CPU, memory, I/O)
 
 # Prometheus can scrape: http://localhost:9090/metrics
+```
+
+### Attack Detection Integration (Event Publisher)
+
+The Event Publisher connects BoundaryDaemon events to detection engines (YARA, Sigma, MITRE ATT&CK, IOC):
+
+```python
+from daemon.detection import (
+    EventPublisher,
+    get_event_publisher,
+    configure_event_publisher,
+)
+
+# Get the global event publisher
+publisher = get_event_publisher()
+
+# Events are automatically published when:
+# - Tripwire violations occur
+# - Boundary mode changes
+# - Lockdown is triggered
+# - Sandbox security events happen
+
+# Configure with custom detection engines
+from daemon.detection import YARAEngine, SigmaEngine, MITREDetector, IOCFeedManager
+
+configure_event_publisher(
+    yara_engine=YARAEngine('/path/to/rules'),
+    sigma_engine=SigmaEngine(),
+    mitre_detector=MITREDetector(),
+    ioc_manager=IOCFeedManager(),
+)
+
+# Subscribe to security alerts
+def on_alert(alert):
+    print(f"ALERT: {alert.severity} - {alert.description}")
+    print(f"MITRE: {alert.mitre_technique}")
+    print(f"Detections: {alert.detection_results}")
+
+publisher.subscribe(on_alert)
+
+# Manual event publishing (for custom integrations)
+from daemon.detection import SecurityEvent, EventType
+
+event = SecurityEvent(
+    event_type=EventType.CUSTOM,
+    source="my_component",
+    description="Custom security event",
+    data={"key": "value"},
+)
+publisher.publish_event(event)
 ```
 
 ### Sandbox → SIEM Event Streaming

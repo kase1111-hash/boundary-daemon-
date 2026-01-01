@@ -46,6 +46,17 @@ from .mitre_attack import (
     TechniqueMapping,
 )
 
+from .event_publisher import (
+    EventPublisher,
+    SecurityEvent,
+    SecurityAlert,
+    DetectionResult,
+    EventType as DetectionEventType,
+    AlertSeverity,
+    get_event_publisher,
+    configure_event_publisher,
+)
+
 __all__ = [
     # YARA
     'YARAEngine',
@@ -77,4 +88,14 @@ __all__ = [
     'MITREDetector',
     'AttackMatch',
     'TechniqueMapping',
+
+    # Event Publisher
+    'EventPublisher',
+    'SecurityEvent',
+    'SecurityAlert',
+    'DetectionResult',
+    'DetectionEventType',
+    'AlertSeverity',
+    'get_event_publisher',
+    'configure_event_publisher',
 ]
