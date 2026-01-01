@@ -201,7 +201,9 @@ class SecureConfigStorage:
                     self._encryption_key = key_data
                     self._fernet = Fernet(key_data)
                     return
-            except Exception as e:
+            except (IOError, OSError, ValueError) as e:
+                # IOError/OSError: file access errors
+                # ValueError: invalid key format
                 logger.warning(f"Failed to load config key: {e}")
 
         # Derive key from machine characteristics
@@ -216,7 +218,8 @@ class SecureConfigStorage:
                 with open(self._key_file, 'wb') as f:
                     f.write(machine_key)
                 os.chmod(self._key_file, 0o600)
-            except Exception as e:
+            except (IOError, OSError, PermissionError) as e:
+                # File system errors - permission denied, disk full, etc.
                 logger.warning(f"Failed to save config key: {e}")
 
     def _derive_machine_key(self) -> bytes:
@@ -234,13 +237,16 @@ class SecureConfigStorage:
                 machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
                 winreg.CloseKey(key)
                 machine_data.append(machine_guid)
-            except Exception:
+            except (ImportError, OSError, KeyError, AttributeError):
+                # ImportError: winreg not available
+                # OSError: registry access failure
+                # KeyError: registry key not found
                 pass
 
             # Computer name as fallback
             try:
                 machine_data.append(os.environ.get('COMPUTERNAME', ''))
-            except Exception:
+            except (KeyError, AttributeError):
                 pass
         else:
             # Machine ID (Linux)
@@ -248,7 +254,7 @@ class SecureConfigStorage:
             if machine_id_path.exists():
                 try:
                     machine_data.append(machine_id_path.read_text().strip())
-                except Exception:
+                except (IOError, OSError):
                     pass
 
             # Boot ID (changes on reboot - provides some forward secrecy)
@@ -263,7 +269,7 @@ class SecureConfigStorage:
                             "Encrypted configs will be UNREADABLE after system reboot. "
                             "Set use_boot_id=False if you need persistent encryption."
                         )
-                    except Exception:
+                    except (IOError, OSError):
                         pass
 
         # Installation-specific salt
@@ -275,7 +281,7 @@ class SecureConfigStorage:
         if salt_path.exists():
             try:
                 salt = salt_path.read_bytes()
-            except Exception:
+            except (IOError, OSError):
                 salt = secrets.token_bytes(32)
         else:
             salt = secrets.token_bytes(32)
@@ -284,7 +290,7 @@ class SecureConfigStorage:
                 with open(salt_path, 'wb') as f:
                     f.write(salt)
                 os.chmod(salt_path, 0o600)
-            except Exception as e:
+            except (IOError, OSError, PermissionError) as e:
                 logger.warning(f"Could not save config salt: {e}")
 
         # Combine and derive key
@@ -334,7 +340,7 @@ class SecureConfigStorage:
                     return ConfigFormat.YAML
                 else:
                     return ConfigFormat.INI
-            except Exception:
+            except (IOError, OSError, UnicodeDecodeError):
                 return ConfigFormat.JSON
 
     def _is_sensitive_field(self, field_name: str) -> bool:
@@ -644,11 +650,11 @@ class SecureConfigStorage:
             # Atomic rename
             os.rename(temp_path, filepath)
 
-        except Exception:
+        except (IOError, OSError, PermissionError):
             # Clean up temp file on error
             try:
                 os.unlink(temp_path)
-            except Exception:
+            except (IOError, OSError):
                 pass
             raise
 
@@ -668,7 +674,8 @@ class SecureConfigStorage:
             # Clean up old backups
             self._cleanup_old_backups(backup_dir, filepath.name)
 
-        except Exception as e:
+        except (IOError, OSError, PermissionError, shutil.Error) as e:
+            # File copy/permission errors
             logger.warning(f"Failed to create config backup: {e}")
 
     def _cleanup_old_backups(self, backup_dir: Path, base_name: str):
@@ -683,7 +690,7 @@ class SecureConfigStorage:
         for old_backup in backups[self.options.max_backups:]:
             try:
                 old_backup.unlink()
-            except Exception:
+            except (IOError, OSError):
                 pass
 
     def rotate_key(self, new_key_file: Optional[str] = None) -> bool:

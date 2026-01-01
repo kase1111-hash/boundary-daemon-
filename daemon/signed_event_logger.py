@@ -57,7 +57,9 @@ class SignedEventLogger(EventLogger):
                 signing_key = nacl.signing.SigningKey(key_bytes)
                 logger.info(f"Loaded signing key from {self.signing_key_path}")
                 return signing_key
-            except Exception as e:
+            except (IOError, OSError, ValueError, nacl.exceptions.CryptoError) as e:
+                # IOError/OSError: file access errors
+                # ValueError/CryptoError: invalid key format or corrupted key
                 logger.error(f"Error loading signing key: {e}")
                 logger.info("Generating new key...")
 
@@ -86,7 +88,8 @@ class SignedEventLogger(EventLogger):
                 os.close(fd)
             logger.info(f"Generated new signing key at {self.signing_key_path}")
             logger.info(f"Public key (for verification): {signing_key.verify_key.encode(encoder=nacl.encoding.HexEncoder).decode()}")
-        except Exception as e:
+        except (IOError, OSError, PermissionError) as e:
+            # File system errors - permission denied, disk full, etc.
             logger.warning(f"Failed to save signing key: {e}")
 
         return signing_key
@@ -137,7 +140,8 @@ class SignedEventLogger(EventLogger):
                     f.write(json.dumps(signature_record) + '\n')
                     f.flush()
                     os.fsync(f.fileno())
-            except Exception as e:
+            except (IOError, OSError, PermissionError) as e:
+                # Signature write failure is critical - must not lose signatures
                 logger.critical(f"Failed to write signature: {e}")
                 raise
 
@@ -202,12 +206,16 @@ class SignedEventLogger(EventLogger):
                     )
                 except nacl.exceptions.BadSignatureError:
                     return (False, f"Invalid signature for event {event.event_id} at line {i+1}")
-                except Exception as e:
+                except (ValueError, json.JSONDecodeError, nacl.exceptions.CryptoError) as e:
+                    # ValueError: invalid hex/data format
+                    # JSONDecodeError: corrupted signature record
+                    # CryptoError: invalid public key format
                     return (False, f"Error verifying signature at line {i+1}: {e}")
 
             return (True, None)
 
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError) as e:
+            # File access or JSON parsing errors
             return (False, f"Error reading logs: {e}")
 
     def verify_full_integrity(self) -> Tuple[bool, Optional[str]]:
@@ -256,7 +264,8 @@ class SignedEventLogger(EventLogger):
                 f.write(self.get_public_key_hex() + '\n')
             logger.info(f"Public key exported to {output_path}")
             return True
-        except Exception as e:
+        except (IOError, OSError, PermissionError) as e:
+            # File write errors
             logger.error(f"Error exporting public key: {e}")
             return False
 
