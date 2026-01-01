@@ -8,6 +8,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **SIEM Integration** (`daemon/integrations/siem/`):
+  - CEF/LEEF event formatting for Splunk/QRadar/ArcSight
+  - Log shipping via Kafka, S3, GCS, HTTP endpoints
+  - Sandbox event streaming
+  - Signature verification API for external SIEMs
+- **Identity Federation** (`daemon/identity/`):
+  - OIDC token validation
+  - LDAP group to capability mapping
+  - PAM integration for system authentication
+  - Identity manager for centralized identity handling
+- **Compliance Automation** (`daemon/compliance/`):
+  - NIST 800-53 / ISO 27001 control mapping
+  - Evidence bundle generation for auditors
+  - Periodic access review ceremonies
+  - Zero-knowledge proof support
+- **Threat Detection** (`daemon/detection/`):
+  - YARA rule engine integration
+  - Sigma rule support
+  - Signed IOC feed management
+  - MITRE ATT&CK pattern detection
+- **eBPF Observability** (`daemon/ebpf/`):
+  - eBPF-based kernel observability
+  - Policy integration for eBPF events
+  - Multiple probe definitions
+- **Process Sandboxing** (`daemon/sandbox/`):
+  - Linux namespace isolation (PID, network, mount, IPC, UTS, user)
+  - Seccomp-bpf syscall filtering
+  - Cgroups v2 resource limits
+  - Per-sandbox network policy
+  - AppArmor/SELinux profile generation
+  - YAML profile configuration
+- **Air-Gap Operations** (`daemon/airgap/`):
+  - Data diode for one-way log export
+  - QR code ceremonies for offline approval
+  - Sneakernet protocol for secure data transfer
+- **Cryptographic Enhancements** (`daemon/crypto/`):
+  - HSM abstraction layer (PKCS#11, CloudHSM, YubiHSM)
+  - Post-quantum cryptography preparation (Kyber, Dilithium)
+- **Threat Federation** (`daemon/federation/`):
+  - Multi-host threat intelligence sharing
+  - Privacy-preserving pattern sharing
+- **Security Intelligence** (`daemon/intelligence/`):
+  - Mode advisor for context-based recommendations
+- **Alert Case Management** (`daemon/alerts/`):
+  - Case lifecycle management (NEW → INVESTIGATING → RESOLVED)
+  - SLA tracking
+- **Code Integrity** (`daemon/integrity/`):
+  - Ed25519 code signing utilities
+  - Runtime integrity verification
+  - Manifest-based verification
+- **Agent Containment** (`daemon/containment/`):
+  - Agent behavior profiling
+  - Anomaly detection for AI agents
+- **Terminal Dashboard** (`daemon/tui/`):
+  - Real-time TUI dashboard
+- **Configuration Linting** (`daemon/config/linter.py`):
+  - Configuration validation
+  - Security posture scoring
+- **Health Check API** (`daemon/api/health.py`):
+  - Kubernetes/systemd compatibility
+  - Liveness, readiness, startup probes
 - **AI/Agent Security Features**:
   - Prompt injection detection (`daemon/security/prompt_injection.py`):
     - 50+ detection patterns across 10 injection categories

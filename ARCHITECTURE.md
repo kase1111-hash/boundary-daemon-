@@ -636,6 +636,125 @@ with safe_execute("operation_name", ErrorCategory.NETWORK) as result:
 
 **Error Severities**: INFO, WARNING, ERROR, CRITICAL, FATAL
 
+### SIEM Integration (`daemon/integrations/siem/`)
+
+Enterprise SIEM integration for security event streaming:
+
+| Module | Purpose |
+|--------|---------|
+| `cef_leef.py` | CEF/LEEF event formatting for Splunk/QRadar/ArcSight |
+| `log_shipper.py` | Event shipping via Kafka, S3, GCS, HTTP |
+| `sandbox_events.py` | Real-time sandbox event streaming |
+| `verification_api.py` | Signature verification API for SIEMs |
+
+### Identity Federation (`daemon/identity/`)
+
+External identity provider integration:
+
+| Module | Purpose |
+|--------|---------|
+| `identity_manager.py` | Central identity management |
+| `oidc_validator.py` | OIDC token validation |
+| `ldap_mapper.py` | LDAP group to capability mapping |
+| `pam_integration.py` | PAM integration for system auth |
+
+### Compliance Automation (`daemon/compliance/`)
+
+Compliance evidence and reporting:
+
+| Module | Purpose |
+|--------|---------|
+| `control_mapping.py` | NIST 800-53 / ISO 27001 control mapping |
+| `evidence_bundle.py` | Auditor evidence bundle generation |
+| `access_review.py` | Periodic access review ceremonies |
+| `zk_proofs.py` | Zero-knowledge proof support |
+
+### Cryptographic Modules (`daemon/crypto/`)
+
+Advanced cryptography support:
+
+| Module | Purpose |
+|--------|---------|
+| `hsm_provider.py` | HSM abstraction (PKCS#11, CloudHSM, YubiHSM) |
+| `post_quantum.py` | Post-quantum cryptography (Kyber, Dilithium) |
+
+### eBPF Observability (`daemon/ebpf/`)
+
+Kernel-level observability without kernel driver:
+
+| Module | Purpose |
+|--------|---------|
+| `ebpf_observer.py` | eBPF event observer |
+| `probes.py` | eBPF probe definitions |
+| `policy_integration.py` | Policy-eBPF integration |
+
+### Air-Gap Operations (`daemon/airgap/`)
+
+Specialized modules for air-gapped environments:
+
+| Module | Purpose |
+|--------|---------|
+| `data_diode.py` | One-way data transfer (log export) |
+| `qr_ceremony.py` | QR code-based ceremonies |
+| `sneakernet.py` | Secure sneakernet protocol |
+
+### Threat Federation (`daemon/federation/`)
+
+Multi-organization threat sharing:
+
+| Module | Purpose |
+|--------|---------|
+| `threat_mesh.py` | Privacy-preserving threat intelligence sharing |
+
+### Security Intelligence (`daemon/intelligence/`)
+
+Intelligent security recommendations:
+
+| Module | Purpose |
+|--------|---------|
+| `mode_advisor.py` | Predictive mode recommendations based on context |
+
+### Alert Management (`daemon/alerts/`)
+
+Alert lifecycle management:
+
+| Module | Purpose |
+|--------|---------|
+| `case_manager.py` | Case lifecycle (NEW → INVESTIGATING → RESOLVED) |
+
+### Code Integrity (`daemon/integrity/`)
+
+Code signing and verification:
+
+| Module | Purpose |
+|--------|---------|
+| `code_signer.py` | Ed25519 code signing utilities |
+| `integrity_verifier.py` | Runtime integrity verification |
+
+### Agent Containment (`daemon/containment/`)
+
+AI agent behavior monitoring:
+
+| Module | Purpose |
+|--------|---------|
+| `agent_profiler.py` | Agent behavior profiling and anomaly detection |
+
+### Terminal UI (`daemon/tui/`)
+
+Real-time visibility:
+
+| Module | Purpose |
+|--------|---------|
+| `dashboard.py` | TUI dashboard for real-time status |
+
+### Configuration Linting (`daemon/config/`)
+
+Configuration validation:
+
+| Module | Purpose |
+|--------|---------|
+| `linter.py` | Config validation and security posture scoring |
+
 ## Configuration
 
 Configuration is minimal and security-focused:
@@ -693,6 +812,8 @@ synth-mind ────┘
 
 The following enhancement plans have been implemented:
 
+### Core Security (Plans 1-10)
+
 1. **Plan 1: Kernel-Level Enforcement** - Network, USB, and process enforcement via iptables, udev, and containers (`daemon/enforcement/`)
 2. **Plan 2: TPM Integration** - Hardware attestation and sealed secrets (`daemon/hardware/tpm_manager.py`)
 3. **Plan 3: Cryptographic Log Signing** - Ed25519 signatures on events (`daemon/signed_event_logger.py`)
@@ -709,6 +830,28 @@ The following enhancement plans have been implemented:
     - RAG injection detection (`daemon/security/rag_injection.py`)
     - Agent attestation system (`daemon/security/agent_attestation.py`)
 
+### Enterprise Features (Plans 11-20)
+
+11. **Plan 11: SIEM Integration** - CEF/LEEF export, Kafka/S3 shipping (`daemon/integrations/siem/`)
+12. **Plan 12: Identity Federation** - OIDC, LDAP, PAM integration (`daemon/identity/`)
+13. **Plan 13: Compliance Automation** - NIST/ISO control mapping, evidence bundles (`daemon/compliance/`)
+14. **Plan 14: Threat Detection** - YARA, Sigma, MITRE ATT&CK patterns (`daemon/detection/`)
+15. **Plan 15: eBPF Observability** - Kernel visibility without drivers (`daemon/ebpf/`)
+16. **Plan 16: Process Sandboxing** - Namespace, seccomp, cgroups isolation (`daemon/sandbox/`)
+17. **Plan 17: Windows Support** - Windows Firewall enforcement (`daemon/enforcement/windows_firewall.py`)
+18. **Plan 18: Air-Gap Operations** - Data diode, QR ceremonies, sneakernet (`daemon/airgap/`)
+19. **Plan 19: HSM/Post-Quantum** - HSM support, quantum-resistant crypto (`daemon/crypto/`)
+20. **Plan 20: Threat Federation** - Multi-host threat sharing (`daemon/federation/`)
+
+### Additional Enhancements
+
+21. **Alert Case Management** - Alert lifecycle and workflow (`daemon/alerts/`)
+22. **Code Integrity** - Code signing and verification (`daemon/integrity/`)
+23. **Agent Containment** - Behavior profiling and containment (`daemon/containment/`)
+24. **Terminal Dashboard** - Real-time TUI visibility (`daemon/tui/`)
+25. **Config Linting** - Configuration validation (`daemon/config/linter.py`)
+26. **Mode Advisor** - Intelligent mode recommendations (`daemon/intelligence/`)
+
 ## Future Enhancements
 
 Potential future additions (maintaining security principles):
@@ -717,7 +860,8 @@ Potential future additions (maintaining security principles):
 2. **Blockchain Log Anchoring** - External validation of log integrity
 3. **Secure Enclave Integration** - Intel SGX/ARM TrustZone support
 4. **Real-time Threat Intelligence** - Live threat feed integration
-5. **AI-powered Anomaly Detection** - ML-based behavioral analysis
+5. **N-of-M Ceremonies** - Multi-party ceremony approvals
+6. **Merkle Tree Proofs** - Compact audit proofs without full log
 
 ---
 

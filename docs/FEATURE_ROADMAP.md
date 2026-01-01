@@ -274,20 +274,31 @@ These features would compromise core principles:
 |----------|---------|-------|--------|--------------|--------|
 | **P0** | Ceremony templates | High | Low | None | Planned |
 | **P0** | CEF/LEEF export | High | Low | None | ✅ Complete |
-| **P0** | Config linter | High | Low | None | Planned |
+| **P0** | Config linter | High | Low | None | ✅ Complete |
 | **P1** | Merkle tree proofs | High | Medium | None | Planned |
 | **P1** | OIDC token validation | High | Medium | None (optional) | ✅ Complete |
 | **P1** | YARA rule engine | High | Medium | yara-python | ✅ Complete |
-| **P1** | Query CLI | Medium | Low | None | Planned |
+| **P1** | Query CLI | Medium | Low | None | ✅ Complete |
 | **P2** | N-of-M ceremonies | High | Medium | None | Planned |
 | **P2** | Hardware token ceremonies | High | Medium | fido2 | Planned |
 | **P2** | Control mapping export | Medium | Low | None | ✅ Complete |
-| **P2** | Terminal dashboard | Medium | Medium | rich | Planned |
+| **P2** | Terminal dashboard | Medium | Medium | rich | ✅ Complete |
 | **P2** | RAG injection detection | High | Medium | None | ✅ Complete |
 | **P2** | Agent attestation | High | Medium | None | ✅ Complete |
 | **P3** | eBPF observability | Medium | High | bcc/libbpf | ✅ Complete |
 | **P3** | K8s admission webhook | Medium | Medium | None | Planned |
 | **P3** | Sigma rule support | Medium | Medium | None | ✅ Complete |
+| **P3** | LDAP mapping | Medium | Medium | None | ✅ Complete |
+| **P3** | PAM integration | Medium | Low | None | ✅ Complete |
+| **P3** | Evidence bundles | Medium | Medium | None | ✅ Complete |
+| **P3** | Air-gap operations | Medium | Medium | None | ✅ Complete |
+| **P3** | HSM support | High | High | pkcs11 | ✅ Complete |
+| **P3** | Post-quantum crypto | Medium | Medium | liboqs | ✅ Complete |
+| **P3** | Threat federation | Medium | High | None | ✅ Complete |
+| **P3** | Mode advisor | Medium | Medium | None | ✅ Complete |
+| **P3** | Case management | Medium | Medium | None | ✅ Complete |
+| **P3** | Code integrity | High | Medium | None | ✅ Complete |
+| **P3** | Agent containment | High | Medium | None | ✅ Complete |
 
 ---
 
@@ -308,15 +319,17 @@ Current: ~4 core dependencies
 
 ## Success Metrics
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Core dependencies | ~4 | <6 |
-| Lines of code | ~15k | <25k |
-| Air-gap functionality | 90% | 100% |
-| Ceremony coverage | 5 types | 15 types |
-| SIEM compatibility | 1 (syslog) | 5 formats |
-| Compliance mappings | 0 | 3 frameworks |
-| Detection rules | patterns | patterns + YARA + Sigma |
+| Metric | Previous | Current | Target |
+|--------|----------|---------|--------|
+| Core dependencies | ~4 | ~4 | <6 |
+| Lines of code | ~15k | ~25k | <30k |
+| Air-gap functionality | 90% | 100% | 100% ✅ |
+| Ceremony coverage | 5 types | 10 types | 15 types |
+| SIEM compatibility | 1 (syslog) | 5 formats | 5 formats ✅ |
+| Compliance mappings | 0 | 3 frameworks | 3 frameworks ✅ |
+| Detection rules | patterns | YARA + Sigma + MITRE | patterns + YARA + Sigma ✅ |
+| AI/Agent security | 0 modules | 5 modules | 5 modules ✅ |
+| Identity federation | 0 | 4 integrations | 4 integrations ✅ |
 
 ---
 

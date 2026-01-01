@@ -1,44 +1,54 @@
 # Security Audit Report: Boundary Daemon (Agent Smith)
 
-**Audit Date:** 2025-12-18
+**Audit Date:** 2025-12-18 (Original) | **Updated:** 2026-01-01
 **Auditor:** Security Review
-**Status:** 🔴 CRITICAL ISSUES FOUND
+**Status:** 🟡 MOST CRITICAL ISSUES FIXED
 
 ---
 
 ## Executive Summary
 
-**The Boundary Daemon looks like a security system but does not actually enforce security.**
+> **⚠️ UPDATE (2026-01-01)**: Many critical issues identified in this audit have been addressed.
+> See the "Remediation Status" sections below for details on implemented fixes.
+
+The Boundary Daemon now provides **policy decisions, audit logging, AND optional enforcement**.
 
 - ✅ **What it DOES:** Logs security decisions, monitors environment, provides policy decisions
-- ❌ **What it DOESN'T DO:** Prevent unauthorized operations, block network access, stop memory recalls, enforce lockdowns
+- ✅ **What it NOW ALSO DOES:** Network enforcement (iptables/nftables), USB enforcement (udev), process isolation (seccomp/containers)
+- ⚠️ **Enforcement requires:** Root privileges and explicit enablement via environment variables
 
-**Verdict:** This is **security theater** - it provides audit trails and policy recommendations, but no actual enforcement.
+**Updated Verdict:** With enforcement modules enabled, this is a **functional security layer**. Without enforcement enabled, it remains an audit/policy system.
 
 ### Quick Findings Overview
 
-**🔴 CRITICAL Issues (Must Fix)**
+**🔴 CRITICAL Issues - REMEDIATION STATUS**
 
-1. **No Real Enforcement** - All security checks return `(True/False, reason)` tuples that can be ignored
-2. **Network Not Blocked** - AIRGAP mode detects network but doesn't prevent network access
-3. **USB Not Prevented** - COLDROOM mode detects USB insertion but doesn't block mounting
-4. **Lockdown Not Locked** - LOCKDOWN mode sets a flag but doesn't stop running processes
-5. **Race Conditions** - 1-second polling interval creates vulnerability windows
-6. **Daemon Killable** - Regular Python process can be terminated, disabling all "protection"
+| # | Issue | Original Status | Current Status |
+|---|-------|-----------------|----------------|
+| 1 | No Real Enforcement | 🔴 CRITICAL | ✅ FIXED - `daemon/enforcement/` modules |
+| 2 | Network Not Blocked | 🔴 CRITICAL | ✅ FIXED - `network_enforcer.py`, `windows_firewall.py` |
+| 3 | USB Not Prevented | 🔴 CRITICAL | ✅ FIXED - `usb_enforcer.py` (udev rules) |
+| 4 | Lockdown Not Locked | 🔴 CRITICAL | ✅ FIXED - `process_enforcer.py` (seccomp + containers) |
+| 5 | Race Conditions | 🔴 CRITICAL | 🟡 MITIGATED - External watchdog, fail-closed design |
+| 6 | Daemon Killable | 🔴 CRITICAL | 🟡 MITIGATED - External watchdog in `process_enforcer.py` |
 
-**🟡 HIGH Issues (Should Fix)**
+**🟡 HIGH Issues - REMEDIATION STATUS**
 
-7. **Log Tampering** - Event log file can be deleted/modified despite hash chains
-8. **No Human Verification** - "Physical presence" check uses keyboard input (automatable)
-9. **Weak Detection** - External AI API detection is bypassable (IP addresses, encoding, etc.)
-10. **Clock Attacks** - No protection against system time manipulation
+| # | Issue | Original Status | Current Status |
+|---|-------|-----------------|----------------|
+| 7 | Log Tampering | 🟡 HIGH | ✅ FIXED - `storage/log_hardening.py` (chattr +a) |
+| 8 | No Human Verification | 🟡 HIGH | ✅ FIXED - `auth/biometric_verifier.py` |
+| 9 | Weak Detection | 🟡 HIGH | 🟡 IMPROVED - Additional AI security modules |
+| 10 | Clock Attacks | 🟡 HIGH | ✅ FIXED - `security/clock_monitor.py` |
 
-**🟢 MEDIUM Issues (Nice to Fix)**
+**🟢 MEDIUM Issues - REMEDIATION STATUS**
 
-11. No authentication on Unix socket API
-12. No rate limiting on permission checks
-13. No code integrity verification
-14. Potential secrets in log metadata
+| # | Issue | Original Status | Current Status |
+|---|-------|-----------------|----------------|
+| 11 | No API authentication | 🟢 MEDIUM | ✅ FIXED - `auth/api_auth.py` (token + capabilities) |
+| 12 | No rate limiting | 🟢 MEDIUM | ✅ FIXED - `auth/persistent_rate_limiter.py` |
+| 13 | No code integrity | 🟢 MEDIUM | ✅ FIXED - `integrity/code_signer.py`, `integrity_verifier.py` |
+| 14 | Secrets in logs | 🟢 MEDIUM | ✅ FIXED - PII detection and redaction |
 
 ### What Actually Works
 
@@ -506,6 +516,85 @@ This daemon should be **one component** in a defense-in-depth strategy:
 
 ---
 
-**Report Version:** 1.0
+## Remediation Details (2026-01-01 Update)
+
+### Enforcement Modules Added
+
+The following enforcement modules have been implemented to address critical issues:
+
+#### 1. Network Enforcement (`daemon/enforcement/network_enforcer.py`)
+- **Linux**: iptables/nftables rule management
+- **Windows**: Windows Firewall via netsh/PowerShell (`windows_firewall.py`)
+- **Mode-based rules**: Automatic rule application on mode transitions
+- **Requirements**: Root privileges, `BOUNDARY_NETWORK_ENFORCE=1`
+
+#### 2. USB Enforcement (`daemon/enforcement/usb_enforcer.py`)
+- udev rules for device authorization
+- Device baseline tracking
+- Forcible unmount capabilities
+- **Requirements**: Root privileges, `BOUNDARY_USB_ENFORCE=1`
+
+#### 3. Process Enforcement (`daemon/enforcement/process_enforcer.py`)
+- seccomp-bpf syscall filtering
+- Container isolation (podman/docker)
+- External watchdog process
+- **Requirements**: Root privileges, `BOUNDARY_PROCESS_ENFORCE=1`
+
+### Security Modules Added
+
+#### Clock Protection (`daemon/security/clock_monitor.py`)
+- Time manipulation detection (jumps, drift)
+- NTP sync verification
+- Monotonic time for rate limiting
+- Secure timer class
+
+#### API Authentication (`daemon/auth/api_auth.py`)
+- Token-based authentication (256-bit entropy)
+- Capability-based access control (9 capabilities)
+- Constant-time token comparison
+
+#### Rate Limiting (`daemon/auth/persistent_rate_limiter.py`)
+- Per-command rate limits
+- Persistence across restarts
+- Monotonic clock (manipulation-resistant)
+
+#### Log Hardening (`daemon/storage/log_hardening.py`)
+- Linux chattr +a (append-only)
+- Secure file permissions
+- Integrity verification
+
+#### Code Integrity (`daemon/integrity/`)
+- Ed25519 code signing
+- Runtime integrity verification
+- Manifest-based verification
+
+#### Biometric Verification (`daemon/auth/biometric_verifier.py`)
+- Fingerprint recognition
+- Facial recognition with liveness detection
+- Template encryption
+
+### AI/Agent Security Stack
+
+New modules specifically for AI/LLM security:
+
+- **Prompt Injection Detection** (`security/prompt_injection.py`) - 50+ patterns
+- **Tool Output Validation** (`security/tool_validator.py`) - Chain depth, PII, rate limits
+- **Response Guardrails** (`security/response_guardrails.py`) - Content safety, hallucination detection
+- **RAG Injection Detection** (`security/rag_injection.py`) - Poisoned document detection
+- **Agent Attestation** (`security/agent_attestation.py`) - Cryptographic identity, CBAC
+
+### Remaining Recommendations
+
+While most issues are addressed, consider:
+
+1. **Hardware Security Key Support** - YubiKey/FIDO2 for ceremonies
+2. **HSM Integration** - For enterprise key management
+3. **FIPS 140-2/3 Certification** - For government deployments
+4. **External Log Anchoring** - Blockchain or timestamping service
+
+---
+
+**Report Version:** 2.0
 **Classification:** CONFIDENTIAL
 **Distribution:** Security Team Only
+**Last Updated:** 2026-01-01

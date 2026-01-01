@@ -184,7 +184,7 @@ python daemon/boundary_daemon.py --mode=airgap
 
 ```
 boundary-daemon/
-├─ daemon/                    # Core daemon components
+├─ daemon/                    # Core daemon components (140+ modules)
 │  ├─ boundary_daemon.py          # Main service orchestrator
 │  ├─ state_monitor.py            # Environment sensing
 │  ├─ policy_engine.py            # Mode enforcement
@@ -199,32 +199,38 @@ boundary-daemon/
 │  ├─ privilege_manager.py        # Privilege management
 │  ├─ signed_event_logger.py      # Cryptographic log signing
 │  ├─ redundant_event_logger.py   # Redundant logging
+│  ├─ monitoring_report.py        # Monitoring reports
 │  │
 │  ├─ auth/                       # Authentication & ceremony
 │  │  ├─ api_auth.py                  # API authentication & rate limiting
 │  │  ├─ enhanced_ceremony.py         # Human override ceremony
+│  │  ├─ advanced_ceremony.py         # Advanced ceremony workflows
 │  │  ├─ biometric_verifier.py        # Biometric authentication
 │  │  ├─ secure_token_storage.py      # Token management
 │  │  └─ persistent_rate_limiter.py   # Rate limiting
 │  │
 │  ├─ enforcement/                # Kernel-level enforcement
 │  │  ├─ network_enforcer.py          # Network isolation via iptables (Linux)
-│  │  ├─ windows_firewall.py          # Windows Firewall enforcement (New!)
+│  │  ├─ windows_firewall.py          # Windows Firewall enforcement
 │  │  ├─ usb_enforcer.py              # USB device control
 │  │  ├─ process_enforcer.py          # Process isolation & containers
-│  │  ├─ secure_process_termination.py
+│  │  ├─ secure_process_termination.py # Safe process termination
 │  │  ├─ secure_profile_manager.py    # AppArmor/SELinux profiles
-│  │  └─ protection_persistence.py
+│  │  ├─ protection_persistence.py    # Persistent enforcement rules
+│  │  ├─ firewall_integration.py      # Cross-platform firewall rules
+│  │  ├─ disk_encryption.py           # Encryption detection/verification
+│  │  └─ mac_profiles.py              # MAC policy generation
 │  │
-│  ├─ security/                   # Multi-layer security
+│  ├─ security/                   # Multi-layer security (20+ modules)
 │  │  ├─ antivirus.py                 # Malware scanning
-│  │  ├─ prompt_injection.py          # AI jailbreak detection (New!)
-│  │  ├─ tool_validator.py            # Tool output validation (New!)
-│  │  ├─ response_guardrails.py       # Response safety/hallucination (New!)
-│  │  ├─ rag_injection.py             # RAG poisoning detection (New!)
-│  │  ├─ agent_attestation.py         # Cryptographic agent identity (New!)
+│  │  ├─ prompt_injection.py          # AI jailbreak detection (50+ patterns)
+│  │  ├─ tool_validator.py            # Tool output validation
+│  │  ├─ response_guardrails.py       # Response safety/hallucination
+│  │  ├─ rag_injection.py             # RAG poisoning detection
+│  │  ├─ agent_attestation.py         # Cryptographic agent identity (CBAC)
 │  │  ├─ daemon_integrity.py          # Self-verification
 │  │  ├─ dns_security.py              # DNS monitoring
+│  │  ├─ native_dns_resolver.py       # Native DNS resolution
 │  │  ├─ arp_security.py              # ARP spoofing detection
 │  │  ├─ wifi_security.py             # WiFi security monitoring
 │  │  ├─ process_security.py          # Process anomaly detection
@@ -233,11 +239,15 @@ boundary-daemon/
 │  │  ├─ code_advisor.py              # Code vulnerability scanning
 │  │  ├─ threat_intel.py              # Threat intelligence
 │  │  ├─ clock_monitor.py             # System clock verification
-│  │  └─ secure_memory.py             # Memory protection
+│  │  ├─ secure_memory.py             # Memory protection
+│  │  ├─ network_attestation.py       # Network trust verification
+│  │  ├─ hardening.py                 # System hardening checks
+│  │  └─ siem_integration.py          # SIEM event formatting
 │  │
 │  ├─ storage/                    # Data persistence
 │  │  ├─ append_only.py               # Append-only log storage
-│  │  └─ log_hardening.py             # Log security hardening
+│  │  ├─ log_hardening.py             # Log security hardening
+│  │  └─ forensic_audit.py            # Forensic audit trail
 │  │
 │  ├─ pii/                        # PII detection & filtering
 │  │  ├─ detector.py                  # PII pattern detection
@@ -251,10 +261,10 @@ boundary-daemon/
 │  │  ├─ cgroups.py                   # Cgroups v2 resource limits
 │  │  ├─ network_policy.py            # Per-sandbox iptables/nftables firewall
 │  │  ├─ sandbox_manager.py           # Policy-integrated sandbox orchestration
-│  │  ├─ mac_profiles.py              # AppArmor/SELinux profile generator (New!)
-│  │  └─ profile_config.py            # YAML profile configuration (New!)
+│  │  ├─ mac_profiles.py              # AppArmor/SELinux profile generator
+│  │  └─ profile_config.py            # YAML profile configuration
 │  │
-│  ├─ api/                        # Internal APIs (New!)
+│  ├─ api/                        # Internal APIs
 │  │  └─ health.py                    # Health check API for K8s/systemd
 │  │
 │  ├─ hardware/                   # Hardware integration
@@ -271,30 +281,88 @@ boundary-daemon/
 │  │  ├─ log_watchdog.py              # Log pattern detection
 │  │  └─ hardened_watchdog.py         # Hardened watchdog
 │  │
-│  ├─ detection/                  # Threat detection (no ML)
+│  ├─ detection/                  # Threat detection (deterministic, no ML)
 │  │  ├─ yara_engine.py               # YARA rule engine
 │  │  ├─ sigma_engine.py              # Sigma rule support
 │  │  ├─ ioc_feeds.py                 # Signed IOC feeds
 │  │  ├─ mitre_attack.py              # MITRE ATT&CK patterns
-│  │  └─ event_publisher.py           # BoundaryDaemon integration (New!)
+│  │  └─ event_publisher.py           # Detection event integration
 │  │
 │  ├─ telemetry/                  # Observability
 │  │  ├─ otel_setup.py                # OpenTelemetry instrumentation
 │  │  └─ prometheus_metrics.py        # Prometheus metrics exporter
 │  │
+│  ├─ integrations/               # External integrations
+│  │  └─ siem/                        # SIEM integration
+│  │     ├─ cef_leef.py                   # CEF/LEEF event formatting
+│  │     ├─ log_shipper.py                # Kafka, S3, GCS, HTTP shipping
+│  │     ├─ sandbox_events.py             # Sandbox event streaming
+│  │     └─ verification_api.py           # Signature verification for SIEMs
+│  │
+│  ├─ identity/                   # Identity federation
+│  │  ├─ identity_manager.py          # Identity management
+│  │  ├─ ldap_mapper.py               # LDAP group mapping
+│  │  ├─ oidc_validator.py            # OIDC token validation
+│  │  └─ pam_integration.py           # PAM integration
+│  │
+│  ├─ compliance/                 # Compliance automation
+│  │  ├─ control_mapping.py           # NIST/ISO control mapping
+│  │  ├─ evidence_bundle.py           # Auditor evidence bundles
+│  │  ├─ access_review.py             # Access review ceremonies
+│  │  └─ zk_proofs.py                 # Zero-knowledge proof support
+│  │
+│  ├─ crypto/                     # Cryptography
+│  │  ├─ hsm_provider.py              # HSM abstraction layer
+│  │  └─ post_quantum.py              # Post-quantum cryptography
+│  │
+│  ├─ ebpf/                       # eBPF kernel observability
+│  │  ├─ ebpf_observer.py             # eBPF event observer
+│  │  ├─ policy_integration.py        # Policy-eBPF integration
+│  │  └─ probes.py                    # eBPF probe definitions
+│  │
+│  ├─ airgap/                     # Air-gap operations
+│  │  ├─ data_diode.py                # One-way data transfer
+│  │  ├─ qr_ceremony.py               # QR code ceremonies
+│  │  └─ sneakernet.py                # Secure sneakernet protocol
+│  │
+│  ├─ federation/                 # Threat federation
+│  │  └─ threat_mesh.py               # Multi-host threat sharing
+│  │
+│  ├─ intelligence/               # Security intelligence
+│  │  └─ mode_advisor.py              # Mode recommendation engine
+│  │
+│  ├─ alerts/                     # Alert management
+│  │  └─ case_manager.py              # Case lifecycle management
+│  │
+│  ├─ integrity/                  # Code integrity
+│  │  ├─ code_signer.py               # Code signing utilities
+│  │  └─ integrity_verifier.py        # Runtime integrity verification
+│  │
+│  ├─ containment/                # Agent containment
+│  │  └─ agent_profiler.py            # Agent behavior profiling
+│  │
+│  ├─ messages/                   # Message validation
+│  │  └─ message_checker.py           # Message content checking
+│  │
+│  ├─ tui/                        # Terminal UI
+│  │  └─ dashboard.py                 # Real-time TUI dashboard
+│  │
 │  ├─ cli/                        # CLI tools
+│  │  ├─ boundaryctl.py               # Main control CLI
+│  │  ├─ queryctl.py                  # Event query CLI
 │  │  └─ sandboxctl.py                # Sandbox management CLI
 │  │
 │  ├─ utils/                      # Utilities
 │  │  └─ error_handling.py            # Error handling framework
 │  │
 │  └─ config/                     # Configuration management
-│     └─ secure_config.py             # Encrypted config handling
+│     ├─ secure_config.py             # Encrypted config handling
+│     └─ linter.py                    # Configuration linter
 │
 ├─ api/                           # External interface
 │  └─ boundary_api.py                 # Unix socket API + client
 │
-├─ tests/                         # Comprehensive test suite
+├─ tests/                         # Comprehensive test suite (15+ modules)
 │  ├─ test_*.py                       # Test modules
 │  └─ conftest.py                     # Test fixtures
 │
@@ -303,18 +371,21 @@ boundary-daemon/
 │
 ├─ config/                        # Configuration
 │  ├─ boundary.conf                   # Daemon configuration
-│  └─ boundary-daemon.service         # Systemd service
+│  ├─ boundary-daemon.service         # Systemd service
+│  └─ policies.d/                     # Policy files
+│     └─ 00-examples.yaml                 # Policy examples
 │
 ├─ systemd/                       # Systemd service files
 │  ├─ boundary-daemon.service
 │  └─ boundary-watchdog.service
 │
 ├─ scripts/                       # Setup scripts
-│  └─ setup-watchdog.sh
+│  ├─ setup-watchdog.sh               # Watchdog setup
+│  └─ sign_release.py                 # Release signing
 │
 ├─ CLI Tools
 │  ├─ boundaryctl                     # Main control CLI
-│  ├─ sandboxctl                      # Sandbox management CLI (New!)
+│  ├─ sandboxctl                      # Sandbox management CLI
 │  ├─ authctl                         # Authentication management
 │  ├─ policy_ctl                      # Policy management
 │  ├─ cluster_ctl                     # Cluster management
@@ -323,19 +394,30 @@ boundary-daemon/
 │  └─ verify_signatures               # Signature verification
 │
 ├─ requirements.txt               # Python dependencies
+├─ requirements-dev.txt           # Development dependencies
 ├─ setup.py                       # Installation script
+├─ pytest.ini                     # Test configuration
+│
+├─ .github/workflows/             # CI/CD configuration
+│  ├─ ci.yml                          # Test automation
+│  └─ publish.yml                     # Release publishing
 │
 └─ Documentation
    ├─ README.md                       # This file
    ├─ ARCHITECTURE.md                 # System architecture
-   ├─ SPEC.md                         # Full specification
+   ├─ SPEC.md                         # Full specification (v2.5)
    ├─ INTEGRATION.md                  # Integration guide
    ├─ USAGE.md                        # Usage guide
    ├─ USER_GUIDE.md                   # User manual
    ├─ SECURITY.md                     # Security policies
    ├─ SECURITY_AUDIT.md               # Security audit
    ├─ ENFORCEMENT_MODEL.md            # Enforcement explanation
-   └─ CHANGELOG.md                    # Change history
+   ├─ CHANGELOG.md                    # Change history
+   ├─ TODO.md                         # External enforcement TODOs
+   └─ docs/
+      ├─ FIVE_STAR_ROADMAP.md             # Long-term roadmap
+      ├─ FEATURE_ROADMAP.md               # Feature priorities
+      └─ SECURITY_COMPARISON.md           # Security comparison
 ```
 
 ## Integration

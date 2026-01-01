@@ -138,22 +138,43 @@ Boundary Daemon running. Close this window or press Ctrl+Break to stop.
 
 ## Security Modes
 
-The daemon operates in four security modes, from most permissive to most restrictive:
+The daemon operates in **six security modes**, from most permissive to most restrictive:
+
+| Mode | Network | Memory Classes | Tools | Use Case |
+|------|---------|----------------|-------|----------|
+| **OPEN** | ✓ Online | 0-1 | All | Casual use |
+| **RESTRICTED** | ✓ Online | 0-2 | Most | Research |
+| **TRUSTED** | VPN only | 0-3 | No USB | Serious work |
+| **AIRGAP** | ✗ Offline | 0-4 | No network | High-value IP |
+| **COLDROOM** | ✗ Offline | 0-5 | Display only | Crown jewels |
+| **LOCKDOWN** | ✗ Blocked | None | None | Emergency |
 
 ### OPEN Mode (Default)
 ```
 Mode: OPEN
 Description: Permissive monitoring mode
 Behavior: All operations allowed, events logged
+Memory Access: PUBLIC, INTERNAL only
 Use Case: Development, testing, initial setup
 ```
 
-### GUARDED Mode
+### RESTRICTED Mode
 ```
-Mode: GUARDED
+Mode: RESTRICTED
 Description: Active monitoring with warnings
 Behavior: Operations allowed but flagged if suspicious
+Memory Access: Up to CONFIDENTIAL
 Use Case: Normal operation with oversight
+```
+
+### TRUSTED Mode
+```
+Mode: TRUSTED
+Description: VPN-only network access
+Behavior: USB storage blocked, VPN required
+Memory Access: Up to SECRET
+Use Case: Serious work requiring network
+Requires: VPN connection
 ```
 
 ### AIRGAP Mode
@@ -161,18 +182,41 @@ Use Case: Normal operation with oversight
 Mode: AIRGAP
 Description: Network isolation enforced
 Behavior: External network access blocked
+Memory Access: Up to TOP_SECRET
 Use Case: Sensitive operations, data processing
-Requires: Linux with root privileges
+Requires: Linux with root privileges (for enforcement)
+```
+
+### COLDROOM Mode
+```
+Mode: COLDROOM
+Description: Maximum isolation
+Behavior: Display-only, minimal I/O
+Memory Access: All including CROWN_JEWEL
+Use Case: Crown jewel IP protection
+Requires: Linux with root privileges (for enforcement)
 ```
 
 ### LOCKDOWN Mode
 ```
 Mode: LOCKDOWN
-Description: Maximum security
-Behavior: All external access blocked
-Use Case: Emergency response, incident containment
-Requires: Linux with root privileges
+Description: Emergency response
+Behavior: All external access blocked, no memory access
+Memory Access: None
+Use Case: Security incident response
+Requires: Linux with root privileges (for enforcement)
 ```
+
+### Memory Classification
+
+| Level | Name | Minimum Mode |
+|-------|------|--------------|
+| 0 | PUBLIC | OPEN |
+| 1 | INTERNAL | OPEN |
+| 2 | CONFIDENTIAL | RESTRICTED |
+| 3 | SECRET | TRUSTED |
+| 4 | TOP_SECRET | AIRGAP |
+| 5 | CROWN_JEWEL | COLDROOM |
 
 ### Changing Modes
 
@@ -181,8 +225,15 @@ Modes can be changed via the API:
 from api.boundary_api import BoundaryAPIClient
 
 client = BoundaryAPIClient()
-client.set_mode("GUARDED")
+client.set_mode("RESTRICTED")
 ```
+
+Or using the CLI:
+```bash
+boundaryctl set-mode RESTRICTED
+```
+
+**Note:** Transitioning to higher security modes (AIRGAP, COLDROOM, LOCKDOWN) may require a ceremony (human verification) depending on configuration.
 
 ---
 
@@ -680,3 +731,234 @@ On Windows, some features work without Administrator, but enforcement modules re
 | File Descriptors | 70% of limit | N/A |
 | Queue Depth | 100 events | 500 events |
 | Heartbeat | N/A | 60s timeout |
+
+---
+
+## AI/Agent Security Features
+
+The Boundary Daemon includes comprehensive security features specifically designed for AI agents and LLM systems.
+
+### Prompt Injection Detection
+
+Detects and blocks prompt injection attacks across 10+ categories:
+
+```python
+from daemon.security.prompt_injection import PromptInjectionDetector
+
+detector = PromptInjectionDetector(sensitivity="high")
+result = detector.scan(user_input)
+
+if result.is_threat:
+    print(f"Blocked: {result.category} - {result.description}")
+```
+
+**Detection Categories:**
+- Jailbreaks (DAN, "ignore instructions")
+- Instruction injection
+- Prompt extraction attempts
+- Delimiter injection (XML, markdown)
+- Encoding bypasses (Base64, Unicode)
+- Authority escalation
+- Tool abuse attempts
+- Memory poisoning
+
+### Tool Output Validation
+
+Validates and sanitizes tool outputs:
+
+```python
+from daemon.security.tool_validator import ToolOutputValidator
+
+validator = ToolOutputValidator()
+
+# Register tool policies
+validator.register_tool("web_search", {
+    "max_output_size": 10000,
+    "max_calls_per_minute": 10,
+    "pii_scan": True
+})
+
+# Validate output
+result = validator.validate("web_search", tool_output)
+```
+
+### Response Guardrails
+
+Ensures AI responses meet safety standards:
+
+```python
+from daemon.security.response_guardrails import ResponseGuardrails
+
+guardrails = ResponseGuardrails(mode="RESTRICTED")
+result = guardrails.check(response_text)
+
+if not result.safe:
+    response_text = result.sanitized_content
+```
+
+### RAG Injection Detection
+
+Detects poisoned documents in RAG pipelines:
+
+```python
+from daemon.security.rag_injection import RAGInjectionDetector
+
+detector = RAGInjectionDetector()
+for doc in retrieved_documents:
+    result = detector.scan_document(doc)
+    if result.is_poisoned:
+        documents.remove(doc)
+```
+
+### Agent Attestation
+
+Cryptographic identity for AI agents:
+
+```python
+from daemon.security.agent_attestation import AgentAttestationSystem
+
+attestation = AgentAttestationSystem()
+
+# Register an agent
+agent_id = attestation.register_agent(
+    name="research_agent",
+    capabilities=["file_read", "web_search"],
+    trust_level="STANDARD"
+)
+
+# Issue attestation token
+token = attestation.issue_token(agent_id, ttl=3600)
+
+# Verify token before action
+if attestation.verify_token(token, required_capability="web_search"):
+    # Perform action
+    pass
+```
+
+---
+
+## SIEM Integration
+
+Export security events to enterprise SIEMs:
+
+### CEF/LEEF Format
+
+```python
+from daemon.integrations.siem import CEFFormatter
+
+formatter = CEFFormatter()
+cef_events = formatter.format_events(daemon.get_events())
+```
+
+### Log Shipping
+
+```python
+from daemon.integrations.siem import LogShipper
+
+shipper = LogShipper(
+    destination="kafka",
+    endpoint="kafka://broker:9092/boundary-events"
+)
+shipper.ship_events(events)
+```
+
+**Supported Destinations:**
+- Kafka
+- Amazon S3
+- Google Cloud Storage
+- HTTP/HTTPS endpoints
+- Syslog (RFC 5424)
+
+---
+
+## Process Sandboxing
+
+Isolate processes with security constraints:
+
+```bash
+# Create a sandbox profile
+sandboxctl create --name research --mode RESTRICTED
+
+# Run process in sandbox
+sandboxctl run --profile research python my_agent.py
+
+# List active sandboxes
+sandboxctl list
+
+# Terminate sandbox
+sandboxctl stop research
+```
+
+**Sandbox Features:**
+- Linux namespace isolation (PID, network, mount)
+- Seccomp syscall filtering
+- Cgroups resource limits
+- Per-sandbox network policies
+- AppArmor/SELinux profiles
+
+---
+
+## CLI Reference
+
+### boundaryctl
+
+Main control CLI for the daemon:
+
+```bash
+# Check status
+boundaryctl status
+
+# Watch live events
+boundaryctl watch
+
+# Set security mode
+boundaryctl set-mode RESTRICTED
+
+# Check tool permission
+boundaryctl check-tool web_browser
+
+# Check memory recall permission
+boundaryctl check-recall CONFIDENTIAL
+
+# Verify log integrity
+boundaryctl verify
+
+# View recent events
+boundaryctl events --limit 50
+```
+
+### authctl
+
+Authentication management:
+
+```bash
+# Create new token
+authctl create-token --name api-client --capabilities read,write
+
+# List tokens
+authctl list-tokens
+
+# Revoke token
+authctl revoke-token <token-id>
+```
+
+### sandboxctl
+
+Sandbox management:
+
+```bash
+# List profiles
+sandboxctl profiles
+
+# Create sandbox
+sandboxctl create --name myapp --mode AIRGAP
+
+# Run in sandbox
+sandboxctl run --profile myapp ./my_application
+
+# Monitor sandbox
+sandboxctl monitor myapp
+
+# Stop sandbox
+sandboxctl stop myapp
+```
