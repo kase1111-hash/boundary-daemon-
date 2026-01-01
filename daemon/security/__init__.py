@@ -174,25 +174,32 @@ try:
     from .rag_injection import (
         RAGInjectionDetector,
         RAGThreatType,
-        RAGDetectionResult,
-        DocumentAnalysis,
+        RAGAnalysisResult,
+        RAGThreat,
         RetrievedDocument,
-        RAGPolicy,
+        DocumentTrustLevel,
         ThreatSeverity,
-        get_rag_injection_detector,
-        configure_rag_injection_detector,
+        get_rag_detector,
+        configure_rag_detector,
     )
+    # Aliases for consistency
+    RAGDetectionResult = RAGAnalysisResult
+    get_rag_injection_detector = get_rag_detector
+    configure_rag_injection_detector = configure_rag_detector
     RAG_INJECTION_AVAILABLE = True
 except ImportError:
     RAG_INJECTION_AVAILABLE = False
     RAGInjectionDetector = None
     RAGThreatType = None
+    RAGAnalysisResult = None
     RAGDetectionResult = None
-    DocumentAnalysis = None
+    RAGThreat = None
     RetrievedDocument = None
-    RAGPolicy = None
+    DocumentTrustLevel = None
     ThreatSeverity = None
+    get_rag_detector = None
     get_rag_injection_detector = None
+    configure_rag_detector = None
     configure_rag_injection_detector = None
 
 # Agent attestation (SECURITY: Cryptographic agent identity)
@@ -302,13 +309,16 @@ __all__ = [
     # RAG injection detection (SECURITY: RAG poisoning prevention)
     'RAGInjectionDetector',
     'RAGThreatType',
-    'RAGDetectionResult',
-    'DocumentAnalysis',
+    'RAGAnalysisResult',
+    'RAGDetectionResult',  # Alias
+    'RAGThreat',
     'RetrievedDocument',
-    'RAGPolicy',
+    'DocumentTrustLevel',
     'ThreatSeverity',
-    'get_rag_injection_detector',
-    'configure_rag_injection_detector',
+    'get_rag_detector',
+    'get_rag_injection_detector',  # Alias
+    'configure_rag_detector',
+    'configure_rag_injection_detector',  # Alias
     'RAG_INJECTION_AVAILABLE',
     # Agent attestation (SECURITY: Cryptographic agent identity)
     'AgentAttestationSystem',
