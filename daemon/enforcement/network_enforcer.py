@@ -133,7 +133,8 @@ class NetworkEnforcer:
             try:
                 import ctypes
                 self._has_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
-            except Exception:
+            except (AttributeError, OSError, ImportError) as e:
+                logger.debug(f"Windows admin check failed: {e}")
                 self._has_root = False
         else:
             self._has_root = os.geteuid() == 0
@@ -182,7 +183,10 @@ class NetworkEnforcer:
                     return protection.mode
                 else:
                     logger.error(f"Failed to re-apply persisted mode: {msg}")
-        except Exception as e:
+        except (ImportError, KeyError, ValueError) as e:
+            # ImportError: protection_persistence module unavailable
+            # KeyError: invalid mode name in BoundaryMode enum
+            # ValueError: invalid protection data
             logger.error(f"Error re-applying persisted mode: {e}")
 
         return None
@@ -300,7 +304,10 @@ class NetworkEnforcer:
                             sticky=sticky,
                             emergency=emergency,
                         )
-                    except Exception as e:
+                    except (ImportError, AttributeError, IOError, OSError) as e:
+                        # ImportError: persistence module unavailable
+                        # AttributeError: persistence_manager method missing
+                        # IOError/OSError: file storage failure
                         logger.warning(f"Failed to persist protection: {e}")
 
                 # Log the enforcement action
@@ -313,7 +320,11 @@ class NetworkEnforcer:
 
                 return (True, f"Network enforcement applied for {mode.name} mode")
 
-            except Exception as e:
+            except (NetworkEnforcementError, subprocess.CalledProcessError,
+                    subprocess.TimeoutExpired, OSError) as e:
+                # NetworkEnforcementError: our own firewall errors
+                # subprocess errors: iptables/nftables command failures
+                # OSError: low-level system errors
                 error_msg = f"Failed to apply network enforcement: {e}"
                 logger.error(error_msg)
 
@@ -324,7 +335,7 @@ class NetworkEnforcer:
                         action="FAIL_CLOSED",
                         error=str(e)
                     )
-                except Exception as e2:
+                except (NetworkEnforcementError, subprocess.SubprocessError, OSError) as e2:
                     logger.critical(f"Failed to apply lockdown rules: {e2}")
 
                 raise NetworkEnforcementError(error_msg) from e
@@ -575,7 +586,10 @@ class NetworkEnforcer:
                         **kwargs
                     }
                 )
-            except Exception as e:
+            except (ImportError, AttributeError, IOError) as e:
+                # ImportError: event_logger module unavailable
+                # AttributeError: log_event method missing
+                # IOError: log file write failure
                 logger.error(f"Failed to log enforcement action: {e}")
 
     def get_status(self) -> Dict:
@@ -609,7 +623,7 @@ class NetworkEnforcer:
                     timeout=5
                 )
                 return result.stdout.decode() if result.returncode == 0 else "No rules"
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             return f"Error getting rules: {e}"
 
     def cleanup(
@@ -648,7 +662,10 @@ class NetworkEnforcer:
                 if not allowed:
                     logger.info(f"Network cleanup blocked by persistence: {msg}")
                     return False, f"Cleanup blocked: {msg}"
-            except Exception as e:
+            except (ImportError, AttributeError, IOError, OSError) as e:
+                # ImportError: protection_persistence unavailable
+                # AttributeError: method missing on persistence_manager
+                # IOError/OSError: file access failure
                 logger.warning(f"Persistence check failed: {e}")
                 # If persistence check fails, default to NOT cleaning up (fail-safe)
                 if not force:
@@ -666,7 +683,7 @@ class NetworkEnforcer:
                 logger.info("Network enforcement rules cleaned up")
                 return True, "Network rules cleaned up"
 
-            except Exception as e:
+            except (NetworkEnforcementError, subprocess.SubprocessError, OSError) as e:
                 logger.error(f"Error cleaning up network rules: {e}")
                 return False, f"Cleanup failed: {e}"
 
@@ -691,7 +708,7 @@ class NetworkEnforcer:
                 self._current_mode = None
                 logger.warning("Network enforcement rules cleaned up (LEGACY MODE)")
 
-            except Exception as e:
+            except (NetworkEnforcementError, subprocess.SubprocessError, OSError) as e:
                 logger.error(f"Error cleaning up network rules: {e}")
 
     def emergency_lockdown(self) -> bool:
@@ -721,7 +738,7 @@ class NetworkEnforcer:
                 emergency=True,
             )
             return True
-        except Exception as e:
+        except (NetworkEnforcementError, subprocess.SubprocessError, OSError) as e:
             logger.critical(f"Emergency lockdown failed: {e}")
             return False
 

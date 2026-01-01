@@ -295,7 +295,9 @@ class TokenManager:
                     event_logger=event_logger,
                 )
                 logger.info("SECURITY: Persistent rate limiting enabled (survives restarts)")
-            except Exception as e:
+            except (IOError, OSError, TypeError, ValueError) as e:
+                # IOError/OSError: state file access errors
+                # TypeError/ValueError: invalid configuration parameters
                 logger.warning(f"Persistent rate limiting failed to initialize: {e}")
                 logger.warning("Rate limits will be reset on daemon restart!")
         elif use_persistent_rate_limit:
@@ -366,8 +368,11 @@ class TokenManager:
                 data['requests_in_window'] = requests_in_window
 
             self._event_logger.log_event(event_type=et, data=data)
-        except Exception:
-            pass  # Don't fail on logging errors
+        except (ImportError, AttributeError, IOError) as e:
+            # ImportError: event_logger module unavailable
+            # AttributeError: log_event method missing
+            # IOError: log file write failure
+            logger.debug(f"Rate limit event logging failed: {e}")
 
     def _generate_token(self) -> str:
         """Generate a secure random token."""
@@ -388,7 +393,10 @@ class TokenManager:
                 token = APIToken.from_dict(token_data)
                 self._tokens[token.token_hash] = token
 
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            # IOError/OSError: file access errors
+            # JSONDecodeError: corrupted token file
+            # KeyError/ValueError: invalid token data format
             logger.warning(f"Failed to load tokens: {e}")
 
     def _save_tokens(self):
@@ -413,7 +421,8 @@ class TokenManager:
             # Atomic rename
             temp_file.rename(self.token_file)
 
-        except Exception as e:
+        except (IOError, OSError, PermissionError) as e:
+            # File system errors - permission denied, disk full, etc.
             logger.warning(f"Failed to save tokens: {e}")
 
     def _create_bootstrap_token(self) -> str:

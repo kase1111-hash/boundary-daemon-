@@ -278,7 +278,8 @@ class DaemonIntegrityProtector:
                     return None
                 logger.info(f"Loaded signing key from {key_path}")
                 return self._signing_key
-            except Exception as e:
+            except (IOError, OSError, PermissionError) as e:
+                # File access errors - could be permissions, corruption, or I/O failure
                 logger.error(f"Failed to load signing key from {key_path}: {e}")
                 return None
 
@@ -333,7 +334,8 @@ class DaemonIntegrityProtector:
         except FileExistsError:
             logger.error(f"Signing key already exists at {output_path}")
             return False
-        except Exception as e:
+        except (OSError, PermissionError) as e:
+            # File system errors after FileExistsError is handled
             logger.error(f"Failed to generate signing key: {e}")
             return False
 
@@ -355,7 +357,8 @@ class DaemonIntegrityProtector:
 
             return hasher.hexdigest()
 
-        except Exception as e:
+        except (IOError, OSError, IsADirectoryError) as e:
+            # File access errors - file deleted, permissions changed, or is directory
             logger.error(f"Failed to hash {filepath}: {e}")
             return ""
 
@@ -549,7 +552,10 @@ class DaemonIntegrityProtector:
         except json.JSONDecodeError as e:
             logger.error(f"Invalid manifest JSON: {e}")
             return False
-        except Exception as e:
+        except (IOError, OSError, KeyError, ValueError) as e:
+            # IOError/OSError: file access failure
+            # KeyError: missing required field in manifest data
+            # ValueError: invalid data format in manifest
             logger.error(f"Failed to load manifest: {e}")
             return False
 
@@ -685,8 +691,10 @@ class DaemonIntegrityProtector:
                         severity="critical",
                         details=result.to_dict(),
                     )
-                except Exception:
-                    pass
+                except (AttributeError, IOError, OSError) as e:
+                    # AttributeError: event_logger method missing
+                    # IOError/OSError: log file write failure
+                    logger.debug(f"Failed to log integrity failure to event logger: {e}")
 
     def verify_startup(self) -> Tuple[bool, str]:
         """
@@ -719,7 +727,8 @@ class DaemonIntegrityProtector:
                     self.create_manifest(daemon_version="dev")
                     self.save_manifest()
                     logger.info("Auto-generated development manifest")
-                except Exception as e:
+                except (IOError, OSError, PermissionError, ValueError) as e:
+                    # File I/O errors or invalid configuration
                     logger.warning(f"Could not auto-generate manifest: {e}")
                 return True, "Running with auto-generated manifest (development mode)"
             else:
@@ -737,7 +746,8 @@ class DaemonIntegrityProtector:
                     self.create_manifest(daemon_version="dev")
                     self.save_manifest()
                     logger.info("Regenerated development manifest with new signing key")
-                except Exception as e:
+                except (IOError, OSError, PermissionError, ValueError) as e:
+                    # File I/O errors or invalid configuration
                     logger.warning(f"Could not regenerate manifest: {e}")
                 return True, "Running with regenerated manifest (development mode)"
             else:
@@ -803,7 +813,8 @@ class DaemonIntegrityProtector:
                 if not result.is_valid:
                     self._handle_runtime_failure(result)
 
-            except Exception as e:
+            except (IOError, OSError, KeyError, ValueError) as e:
+                # File access errors or data validation errors during monitoring
                 logger.error(f"Error in integrity monitor: {e}")
 
     def _handle_runtime_failure(self, result: IntegrityCheckResult):
@@ -824,8 +835,9 @@ class DaemonIntegrityProtector:
                         'action': 'runtime_detection',
                     },
                 )
-            except Exception:
-                pass
+            except (AttributeError, IOError, OSError) as e:
+                # Event logging failure - don't mask the runtime failure
+                logger.debug(f"Failed to log runtime integrity failure: {e}")
 
         # For runtime failures, we could:
         # 1. Trigger immediate shutdown
