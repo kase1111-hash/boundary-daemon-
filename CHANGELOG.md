@@ -16,6 +16,7 @@ This release represents a fully-featured security policy and audit system for AI
 - **Complete Core Security Engine**: Six boundary modes, fail-closed security, immutable audit logging
 - **AI/Agent Security Suite**: Prompt injection detection (50+ patterns), RAG injection detection, agent attestation
 - **Process Sandboxing**: Linux namespace isolation, seccomp-bpf filtering, cgroups v2, per-sandbox firewall
+- **Blockchain Security**: Validator key protection (slashing prevention), RPC endpoint hardening, MEV protection
 - **Enterprise Ready**: SIEM integration, identity federation, compliance automation, Prometheus metrics
 - **Cross-Platform**: Linux (full support) and Windows (monitoring + firewall enforcement)
 
@@ -143,6 +144,30 @@ API contracts may evolve before v1.0 stable release.
 - Persistent signing key support for daemon integrity verification
 - Windows platform support across core modules
 - Centralized constants module for security-sensitive values
+- **Blockchain Security Module** (`daemon/blockchain/`):
+  - Validator key protection with double-sign/slashing prevention
+  - Height/round/step tracking for Tendermint/CometBFT validators
+  - Ethereum 2.0 validator slashing protection
+  - Persistent signing history for crash recovery
+  - RPC endpoint firewall with method risk classification
+  - MEV (Maximal Extractable Value) attack protection
+  - Per-client rate limiting for RPC endpoints
+  - Authentication enforcement for sensitive RPC methods
+- **Dreaming Status Reporter** (`daemon/dreaming.py`):
+  - Periodic CLI status updates during daemon operations
+  - Activity-based output (only prints during active operations)
+  - Phase tracking (watching, verifying, guarding, etc.)
+  - Operation completion status with success/failure indicators
+- **Threat Mesh Federation** (`daemon/federation/threat_mesh.py`):
+  - HTTPS-based threat signature sharing between daemon instances
+  - Ed25519 signed payloads for peer verification
+  - TLS verification for secure federation
+- **HSM Cryptographic Strengthening** (`daemon/crypto/hsm_provider.py`):
+  - XSalsa20-Poly1305 authenticated encryption (replacing weak XOR)
+  - PBKDF2 key derivation with 100k iterations
+  - Ed25519 signatures for HSM operations
+- YARA scanning enabled via yara-python dependency
+- Comprehensive unit test suite expanded to 488 tests
 
 ### Changed
 - Updated minimum Python version to 3.9 (dropped Python 3.8 EOL support)
@@ -160,12 +185,19 @@ API contracts may evolve before v1.0 stable release.
 - Fixed four medium severity security issues in TPM manager
 - Fixed three low severity security issues
 - Improved error handling in API server and TPM manager
+- Fixed memory leaks in state_monitor, tripwires, privilege_manager, queue_monitor
+  - Converted unbounded lists to bounded deques (maxlen=100-1000)
+- Fixed deque slicing in cellular threat detection
+- Rate-limited manifest integrity failure messages (10-minute cooldown)
 
 ### Security
 - Narrowed exception handlers to prevent catching security-critical exceptions
 - Added specific exception handling for known error types
 - Integrated centralized error framework for consistent security logging
 - Fixed potential security issues identified in security audit
+- Static security analysis with Bandit (77,576 lines, 0 high severity issues)
+- Use tempfile.TemporaryDirectory for SELinux module compilation
+- Added nosec annotations for intentional security choices (documented in SECURITY.md)
 
 ## [0.0.1] - 2024-01-01 (Initial Development)
 
