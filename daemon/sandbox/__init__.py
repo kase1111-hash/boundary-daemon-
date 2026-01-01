@@ -75,6 +75,23 @@ from .sandbox_manager import (
     SandboxError,
 )
 
+from .mac_profiles import (
+    MACProfileGenerator,
+    MACSystem,
+    ProfileMode,
+    MACProfileConfig,
+    get_mac_generator,
+)
+
+from .profile_config import (
+    ProfileConfigLoader,
+    SandboxProfileConfig,
+    CgroupLimitsConfig,
+    NetworkPolicyConfig,
+    get_profile_loader,
+    YAML_AVAILABLE,
+)
+
 __all__ = [
     # Namespace
     'NamespaceManager',
@@ -102,4 +119,17 @@ __all__ = [
     'SandboxProfile',
     'SandboxResult',
     'SandboxError',
+    # MAC Profiles
+    'MACProfileGenerator',
+    'MACSystem',
+    'ProfileMode',
+    'MACProfileConfig',
+    'get_mac_generator',
+    # Profile Config
+    'ProfileConfigLoader',
+    'SandboxProfileConfig',
+    'CgroupLimitsConfig',
+    'NetworkPolicyConfig',
+    'get_profile_loader',
+    'YAML_AVAILABLE',
 ]

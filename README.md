@@ -244,7 +244,12 @@ boundary-daemon/
 │  │  ├─ seccomp_filter.py            # Seccomp-bpf syscall filtering
 │  │  ├─ cgroups.py                   # Cgroups v2 resource limits
 │  │  ├─ network_policy.py            # Per-sandbox iptables/nftables firewall
-│  │  └─ sandbox_manager.py           # Policy-integrated sandbox orchestration
+│  │  ├─ sandbox_manager.py           # Policy-integrated sandbox orchestration
+│  │  ├─ mac_profiles.py              # AppArmor/SELinux profile generator (New!)
+│  │  └─ profile_config.py            # YAML profile configuration (New!)
+│  │
+│  ├─ api/                        # Internal APIs (New!)
+│  │  └─ health.py                    # Health check API for K8s/systemd
 │  │
 │  ├─ hardware/                   # Hardware integration
 │  │  └─ tpm_manager.py               # TPM sealing & attestation
@@ -436,6 +441,66 @@ config = SandboxEventEmitterConfig(
 # - oom_killed, timeout, escape_attempt
 
 # Shipped via Kafka, S3, GCS, HTTP, or file (configurable)
+```
+
+### Health Check API (Kubernetes/systemd)
+
+```python
+from daemon.api import HealthCheckServer, get_health_server
+
+# Start health check server
+server = get_health_server()
+server.start(port=8080)
+
+# Mark startup complete (enables readiness)
+server.notify_ready()
+
+# Register custom health check
+def check_sandbox():
+    return ComponentHealth(
+        name="sandbox",
+        status=HealthStatus.HEALTHY,
+        message="Sandbox module ready",
+    )
+server.register_check("sandbox", check_sandbox)
+
+# Endpoints:
+#   GET /health        - Full health status
+#   GET /health/live   - Liveness probe (is process alive?)
+#   GET /health/ready  - Readiness probe (can accept traffic?)
+#   GET /health/startup - Startup probe (has init completed?)
+```
+
+### YAML Profile Configuration
+
+```yaml
+# profiles.yaml
+version: "1"
+profiles:
+  restricted:
+    description: "Restricted sandbox for untrusted code"
+    namespaces: [pid, mount, net, ipc]
+    seccomp_profile: standard
+    cgroup_limits:
+      memory_max: "256M"
+      cpu_percent: 25
+      pids_max: 20
+    network_policy:
+      deny_all: false
+      allow_dns: true
+      allowed_ports: [80, 443]
+    timeout_seconds: 60
+```
+
+```python
+from daemon.sandbox import get_profile_loader
+
+loader = get_profile_loader()
+loader.load_config("/etc/boundary-daemon/profiles.yaml")
+
+# Use profile by name
+profile = loader.get_sandbox_profile("restricted")
+manager.run_sandboxed(command, profile=profile)
 ```
 
 ### Unix Socket API
@@ -675,6 +740,9 @@ python api/boundary_api.py
 - [x] Prometheus metrics exporter (sandbox, policy, firewall metrics)
 - [x] Sandbox → SIEM event streaming (real-time CEF/LEEF)
 - [x] sandboxctl CLI (run, list, inspect, kill, test commands)
+- [x] AppArmor/SELinux profile auto-generation
+- [x] Health Check API (Kubernetes liveness/readiness/startup probes)
+- [x] YAML configuration for sandbox profiles
 
 ---
 
