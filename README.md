@@ -260,8 +260,12 @@ boundary-daemon/
 │  │  ├─ log_watchdog.py              # Log pattern detection
 │  │  └─ hardened_watchdog.py         # Hardened watchdog
 │  │
-│  ├─ telemetry/                  # OpenTelemetry
-│  │  └─ otel_setup.py                # OTEL instrumentation
+│  ├─ telemetry/                  # Observability
+│  │  ├─ otel_setup.py                # OpenTelemetry instrumentation
+│  │  └─ prometheus_metrics.py        # Prometheus metrics exporter
+│  │
+│  ├─ cli/                        # CLI tools
+│  │  └─ sandboxctl.py                # Sandbox management CLI
 │  │
 │  ├─ utils/                      # Utilities
 │  │  └─ error_handling.py            # Error handling framework
@@ -292,6 +296,7 @@ boundary-daemon/
 │
 ├─ CLI Tools
 │  ├─ boundaryctl                     # Main control CLI
+│  ├─ sandboxctl                      # Sandbox management CLI (New!)
 │  ├─ authctl                         # Authentication management
 │  ├─ policy_ctl                      # Policy management
 │  ├─ cluster_ctl                     # Cluster management
@@ -388,6 +393,51 @@ sandbox.run(["./process_data.sh"])
 sandbox.terminate()
 ```
 
+### Prometheus Metrics Integration
+
+```python
+from daemon.telemetry import MetricsExporter, get_metrics_exporter
+
+# Start Prometheus metrics server
+exporter = get_metrics_exporter()
+exporter.start()  # Starts on port 9090
+
+# Metrics are automatically collected for:
+# - Sandbox operations (created, started, stopped, errors)
+# - Policy decisions (allowed, denied, by type)
+# - Firewall events (blocked connections)
+# - Resource usage (CPU, memory, I/O)
+
+# Prometheus can scrape: http://localhost:9090/metrics
+```
+
+### Sandbox → SIEM Event Streaming
+
+```python
+from daemon.integrations.siem import (
+    get_sandbox_emitter,
+    SandboxEventEmitterConfig,
+    SIEMFormat,
+)
+
+# Get emitter (auto-configures from environment)
+emitter = get_sandbox_emitter()
+
+# Or configure manually
+config = SandboxEventEmitterConfig(
+    siem_format=SIEMFormat.CEF,  # CEF, LEEF, or JSON
+    min_severity=CEFSeverity.MEDIUM,
+)
+
+# Events are emitted automatically for:
+# - sandbox_created, sandbox_started, sandbox_stopped
+# - seccomp_violation, syscall_denied
+# - firewall_blocked, firewall_allowed
+# - oom_killed, timeout, escape_attempt
+
+# Shipped via Kafka, S3, GCS, HTTP, or file (configurable)
+```
+
 ### Unix Socket API
 
 ```bash
@@ -416,6 +466,16 @@ boundaryctl check-tool wget --network  # Check network tool
 # Mode management
 boundaryctl set-mode airgap     # Change to AIRGAP mode
 boundaryctl set-mode restricted --reason "Code review"
+
+# Sandbox management (NEW)
+sandboxctl run -- python3 script.py             # Run in default sandbox
+sandboxctl run --profile restricted -- npm test # Run with restricted profile
+sandboxctl run --memory 512M --timeout 60 -- ./build.sh  # With limits
+sandboxctl list                                 # List active sandboxes
+sandboxctl inspect sandbox-001                  # Inspect sandbox config
+sandboxctl kill sandbox-001                     # Kill sandbox
+sandboxctl profiles                             # List available profiles
+sandboxctl test --profile airgap                # Test sandbox capabilities
 ```
 
 ## Design Principles
@@ -609,6 +669,12 @@ python api/boundary_api.py
 - [x] Policy engine integration for sandbox decisions
 - [x] Per-sandbox iptables/nftables firewall (cgroup-matched)
 - [x] Fine-grained network policy (hosts, ports, CIDRs)
+
+#### Observability & Tooling (New!)
+
+- [x] Prometheus metrics exporter (sandbox, policy, firewall metrics)
+- [x] Sandbox → SIEM event streaming (real-time CEF/LEEF)
+- [x] sandboxctl CLI (run, list, inspect, kill, test commands)
 
 ---
 

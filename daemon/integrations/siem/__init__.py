@@ -6,6 +6,7 @@ Provides integration with Security Information and Event Management systems:
 - Kafka producer for streaming events
 - S3/GCS log shipping for cloud SIEMs
 - Signature verification API for SIEM consumers
+- Sandbox event streaming
 """
 
 from .cef_leef import (
@@ -24,6 +25,7 @@ from .log_shipper import (
     GCSShipper,
     KafkaShipper,
     ShipperConfig,
+    create_shipper,
 )
 
 from .verification_api import (
@@ -31,6 +33,14 @@ from .verification_api import (
     VerificationRequest,
     VerificationResponse,
     BatchVerificationResult,
+)
+
+from .sandbox_events import (
+    SandboxEventEmitter,
+    SandboxEventEmitterConfig,
+    SandboxEventType,
+    get_sandbox_emitter,
+    configure_sandbox_emitter,
 )
 
 __all__ = [
@@ -49,10 +59,18 @@ __all__ = [
     'GCSShipper',
     'KafkaShipper',
     'ShipperConfig',
+    'create_shipper',
 
     # Verification API
     'SignatureVerificationAPI',
     'VerificationRequest',
     'VerificationResponse',
     'BatchVerificationResult',
+
+    # Sandbox events
+    'SandboxEventEmitter',
+    'SandboxEventEmitterConfig',
+    'SandboxEventType',
+    'get_sandbox_emitter',
+    'configure_sandbox_emitter',
 ]

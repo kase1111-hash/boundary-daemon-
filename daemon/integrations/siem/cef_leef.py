@@ -63,6 +63,22 @@ EVENT_TYPE_TO_SIGNATURE_ID = {
     'CONFIG_CHANGE': 8001,
     'INTEGRITY_CHECK': 9001,
     'INTEGRITY_VIOLATION': 9002,
+    # Sandbox events (10xxx range)
+    'SANDBOX_CREATED': 10001,
+    'SANDBOX_STARTED': 10002,
+    'SANDBOX_STOPPED': 10003,
+    'SANDBOX_TERMINATED': 10004,
+    'SANDBOX_ERROR': 10005,
+    'SANDBOX_TIMEOUT': 10006,
+    'SANDBOX_OOM_KILLED': 10007,
+    'SANDBOX_SECCOMP_VIOLATION': 10008,
+    'SANDBOX_NAMESPACE_SETUP': 10009,
+    'SANDBOX_CGROUP_LIMIT': 10010,
+    'SANDBOX_FIREWALL_BLOCKED': 10011,
+    'SANDBOX_FIREWALL_ALLOWED': 10012,
+    'SANDBOX_SYSCALL_DENIED': 10013,
+    'SANDBOX_ESCAPE_ATTEMPT': 10014,
+    'SANDBOX_RESOURCE_EXCEEDED': 10015,
 }
 
 # Mapping from event types to CEF severity
@@ -85,6 +101,22 @@ EVENT_TYPE_TO_SEVERITY = {
     'CONFIG_CHANGE': CEFSeverity.MEDIUM,
     'INTEGRITY_CHECK': CEFSeverity.LOW,
     'INTEGRITY_VIOLATION': CEFSeverity.EMERGENCY,
+    # Sandbox event severities
+    'SANDBOX_CREATED': CEFSeverity.LOW,
+    'SANDBOX_STARTED': CEFSeverity.LOW,
+    'SANDBOX_STOPPED': CEFSeverity.LOW,
+    'SANDBOX_TERMINATED': CEFSeverity.MEDIUM,
+    'SANDBOX_ERROR': CEFSeverity.HIGH,
+    'SANDBOX_TIMEOUT': CEFSeverity.MEDIUM,
+    'SANDBOX_OOM_KILLED': CEFSeverity.HIGH,
+    'SANDBOX_SECCOMP_VIOLATION': CEFSeverity.CRITICAL,
+    'SANDBOX_NAMESPACE_SETUP': CEFSeverity.LOW,
+    'SANDBOX_CGROUP_LIMIT': CEFSeverity.MEDIUM,
+    'SANDBOX_FIREWALL_BLOCKED': CEFSeverity.MEDIUM,
+    'SANDBOX_FIREWALL_ALLOWED': CEFSeverity.LOW,
+    'SANDBOX_SYSCALL_DENIED': CEFSeverity.HIGH,
+    'SANDBOX_ESCAPE_ATTEMPT': CEFSeverity.EMERGENCY,
+    'SANDBOX_RESOURCE_EXCEEDED': CEFSeverity.HIGH,
 }
 
 # CEF extension key mappings
@@ -112,6 +144,14 @@ CEF_EXTENSION_KEYS = {
     'hash_chain': 'cs4',
     'signature': 'cs5',
     'public_key': 'cs6',
+    # Sandbox-specific fields
+    'sandbox_id': 'cn1',
+    'sandbox_profile': 'cs7',
+    'cgroup_path': 'cs8',
+    'syscall_name': 'cs9',
+    'resource_type': 'cs10',
+    'cpu_usage_percent': 'cn2',
+    'memory_usage_bytes': 'cn3',
 }
 
 # CEF custom string labels
@@ -122,6 +162,14 @@ CEF_CUSTOM_LABELS = {
     'cs4Label': 'HashChain',
     'cs5Label': 'Signature',
     'cs6Label': 'PublicKey',
+    # Sandbox labels
+    'cn1Label': 'SandboxID',
+    'cs7Label': 'SandboxProfile',
+    'cs8Label': 'CgroupPath',
+    'cs9Label': 'SyscallName',
+    'cs10Label': 'ResourceType',
+    'cn2Label': 'CPUUsagePercent',
+    'cn3Label': 'MemoryUsageBytes',
 }
 
 
