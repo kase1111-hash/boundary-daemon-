@@ -115,6 +115,37 @@ We minimize dependencies to reduce attack surface:
 
 - `psutil`: System monitoring
 - `pynacl`: Ed25519 cryptography (libsodium bindings)
-- `cryptography`: Additional cryptographic primitives
+- `cryptography`: Additional cryptographic primitives (Fernet, PBKDF2)
+- `cffi`: C library bindings (dependency of pynacl)
 
 All dependencies are regularly scanned for vulnerabilities using `safety` and GitHub Dependabot.
+
+## Error Handling
+
+The daemon uses a robust error handling framework that:
+
+- **Categorizes errors** by type (security, auth, network, filesystem, etc.)
+- **Assigns severity levels** (info, warning, error, critical, fatal)
+- **Aggregates and deduplicates** errors to prevent log flooding
+- **Provides retry logic** with exponential backoff for transient failures
+- **Normalizes platform-specific errors** for consistent handling across Windows/Linux
+
+### Security-Critical Error Handling
+
+For security-critical operations, the daemon:
+
+1. Uses narrow exception handling to avoid catching security exceptions
+2. Logs all errors with full context for forensic analysis
+3. Applies fail-closed semantics for ambiguous errors
+4. Suggests appropriate recovery actions based on error type
+
+## Recent Security Fixes
+
+The following security issues have been addressed:
+
+- **Critical**: Fixed four critical security vulnerabilities in core modules
+- **High**: Fixed three high severity security vulnerabilities
+- **Medium**: Fixed four medium severity security issues in TPM manager
+- **Low**: Fixed three low severity security issues
+- Narrowed broad Exception catches in security-critical paths
+- Integrated centralized error framework for consistent security logging

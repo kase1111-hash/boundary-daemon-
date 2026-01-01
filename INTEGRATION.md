@@ -479,9 +479,51 @@ For integration issues:
 
 1. **Mandatory Enforcement**: Components MUST NOT bypass the daemon
 2. **Fail-Closed**: Ambiguity defaults to DENY
-3. **Immutable Logging**: All decisions are logged with hash chain
+3. **Immutable Logging**: All decisions are logged with hash chain and Ed25519 signatures
 4. **Human Override**: Requires ceremony, never silent
 5. **Deterministic**: Same inputs → same decision
+
+## Error Handling Integration
+
+All integrating components should use the daemon's error handling framework for consistent error management:
+
+```python
+from daemon.utils.error_handling import (
+    ErrorCategory,
+    handle_error,
+    with_error_handling,
+    safe_execute,
+)
+
+# Decorator for automatic error handling with retries
+@with_error_handling(
+    category=ErrorCategory.NETWORK,
+    retry_count=3,
+    retry_delay=1.0,
+    retry_backoff=2.0,
+)
+def call_boundary_daemon():
+    client = BoundaryAPIClient()
+    return client.check_recall(memory_class=3)
+
+# Context manager for scoped error handling
+with safe_execute("boundary_check", ErrorCategory.SECURITY) as result:
+    client = BoundaryAPIClient()
+    result.value = client.check_recall(memory_class=3)
+
+if not result.success:
+    # Handle error (already logged)
+    fallback_behavior()
+```
+
+### Error Categories
+
+- **SECURITY**: Security-related errors (highest priority)
+- **AUTH**: Authentication/authorization errors
+- **NETWORK**: Network connectivity errors
+- **FILESYSTEM**: File system errors
+- **SYSTEM**: Process/system errors
+- **CONFIG**: Configuration errors
 
 ---
 

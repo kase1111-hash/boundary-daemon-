@@ -43,7 +43,7 @@ The Boundary Daemon (Agent Smith) is a trust boundary enforcement system that mo
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.9 or higher (supports 3.9, 3.10, 3.11, 3.12, 3.13)
 - Ollama (optional, for AI features)
 
 ### Windows Installation
@@ -655,7 +655,7 @@ On Windows, some features work without Administrator, but enforcement modules re
 ## Version Information
 
 - **Current Version:** See startup banner
-- **Python Required:** 3.10+
+- **Python Required:** 3.9+ (supports 3.9, 3.10, 3.11, 3.12, 3.13)
 - **Supported Platforms:** Windows 10+, Linux (kernel 4.4+)
 
 ---

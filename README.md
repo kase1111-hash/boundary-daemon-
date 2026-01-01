@@ -118,61 +118,180 @@ python daemon/boundary_daemon.py --mode=airgap
 
 ## Key Features
 
-### 🛡️ Fail-Closed Security
+### Fail-Closed Security
 - Ambiguous signals → DENY
 - Daemon crash → LOCKDOWN
 - Clock drift → Freeze transitions
 - Unknown states → Block operation
 
-### 🔗 Immutable Audit Log
-- Blockchain-style hash chain
-- Tamper-evident event log
-- Verifiable integrity
+### Immutable Audit Log
+- Blockchain-style hash chain (SHA-256)
+- Ed25519 cryptographic signatures
+- Append-only log storage with chattr +a
+- Tamper-evident and verifiable
 - Complete audit trail
 
-### 🚨 Tripwire System
+### Tripwire System
 - Network in AIRGAP → LOCKDOWN
 - USB in COLDROOM → LOCKDOWN
 - Unauthorized recall → LOCKDOWN
 - Daemon tampering → LOCKDOWN
 
-### 🎭 Human Override Ceremony
+### Human Override Ceremony
 - Multi-step confirmation
 - Mandatory cooldown delay
 - Physical presence required
+- Biometric verification support
 - Immutably logged
 - **No silent overrides. Ever.**
+
+### Optional Enforcement (Linux)
+- Network isolation via iptables/nftables
+- USB device control via udev
+- Process isolation via containers (podman/docker)
+- AppArmor/SELinux profile management
+
+### Advanced Security Features
+- Malware scanning (antivirus module)
+- DNS/ARP/WiFi security monitoring
+- Traffic anomaly detection
+- File integrity monitoring
+- Threat intelligence integration
+- PII detection and filtering
+- TPM integration for hardware security
+
+### Robust Error Handling
+- Categorized error types (security, network, auth, etc.)
+- Automatic error aggregation and deduplication
+- Retry logic with exponential backoff
+- Cross-platform error normalization
+- Recovery action suggestions
 
 ## Directory Structure
 
 ```
 boundary-daemon/
-├─ daemon/              # Core daemon components
-│  ├─ boundary_daemon.py    # Main service orchestrator
-│  ├─ state_monitor.py      # Environment sensing
-│  ├─ policy_engine.py      # Mode enforcement
-│  ├─ tripwires.py          # Security violations
-│  ├─ event_logger.py       # Immutable logging
-│  └─ integrations.py       # RecallGate, ToolGate, Ceremony
+├─ daemon/                    # Core daemon components
+│  ├─ boundary_daemon.py          # Main service orchestrator
+│  ├─ state_monitor.py            # Environment sensing
+│  ├─ policy_engine.py            # Mode enforcement
+│  ├─ tripwires.py                # Security violations
+│  ├─ event_logger.py             # Immutable logging
+│  ├─ integrations.py             # RecallGate, ToolGate, Ceremony
+│  ├─ constants.py                # Centralized constants & config
+│  ├─ health_monitor.py           # Daemon health checks
+│  ├─ memory_monitor.py           # Memory usage tracking
+│  ├─ resource_monitor.py         # Resource monitoring
+│  ├─ queue_monitor.py            # Queue monitoring
+│  ├─ privilege_manager.py        # Privilege management
+│  ├─ signed_event_logger.py      # Cryptographic log signing
+│  ├─ redundant_event_logger.py   # Redundant logging
+│  │
+│  ├─ auth/                       # Authentication & ceremony
+│  │  ├─ api_auth.py                  # API authentication & rate limiting
+│  │  ├─ enhanced_ceremony.py         # Human override ceremony
+│  │  ├─ biometric_verifier.py        # Biometric authentication
+│  │  ├─ secure_token_storage.py      # Token management
+│  │  └─ persistent_rate_limiter.py   # Rate limiting
+│  │
+│  ├─ enforcement/                # Kernel-level enforcement
+│  │  ├─ network_enforcer.py          # Network isolation via iptables
+│  │  ├─ usb_enforcer.py              # USB device control
+│  │  ├─ process_enforcer.py          # Process isolation & containers
+│  │  ├─ secure_process_termination.py
+│  │  ├─ secure_profile_manager.py    # AppArmor/SELinux profiles
+│  │  └─ protection_persistence.py
+│  │
+│  ├─ security/                   # Multi-layer security
+│  │  ├─ antivirus.py                 # Malware scanning
+│  │  ├─ daemon_integrity.py          # Self-verification
+│  │  ├─ dns_security.py              # DNS monitoring
+│  │  ├─ arp_security.py              # ARP spoofing detection
+│  │  ├─ wifi_security.py             # WiFi security monitoring
+│  │  ├─ process_security.py          # Process anomaly detection
+│  │  ├─ traffic_anomaly.py           # Network traffic analysis
+│  │  ├─ file_integrity.py            # File change monitoring
+│  │  ├─ code_advisor.py              # Code vulnerability scanning
+│  │  ├─ threat_intel.py              # Threat intelligence
+│  │  ├─ clock_monitor.py             # System clock verification
+│  │  └─ secure_memory.py             # Memory protection
+│  │
+│  ├─ storage/                    # Data persistence
+│  │  ├─ append_only.py               # Append-only log storage
+│  │  └─ log_hardening.py             # Log security hardening
+│  │
+│  ├─ pii/                        # PII detection & filtering
+│  │  ├─ detector.py                  # PII pattern detection
+│  │  ├─ bypass_resistant_detector.py # Advanced PII detection
+│  │  └─ filter.py                    # PII filtering/redaction
+│  │
+│  ├─ hardware/                   # Hardware integration
+│  │  └─ tpm_manager.py               # TPM sealing & attestation
+│  │
+│  ├─ distributed/                # Multi-host deployment
+│  │  ├─ cluster_manager.py           # Cluster coordination
+│  │  └─ coordinators.py              # Distributed consensus
+│  │
+│  ├─ policy/                     # Custom policy engine
+│  │  └─ custom_policy_engine.py      # Policy DSL & evaluation
+│  │
+│  ├─ watchdog/                   # Log monitoring
+│  │  ├─ log_watchdog.py              # Log pattern detection
+│  │  └─ hardened_watchdog.py         # Hardened watchdog
+│  │
+│  ├─ telemetry/                  # OpenTelemetry
+│  │  └─ otel_setup.py                # OTEL instrumentation
+│  │
+│  ├─ utils/                      # Utilities
+│  │  └─ error_handling.py            # Error handling framework
+│  │
+│  └─ config/                     # Configuration management
+│     └─ secure_config.py             # Encrypted config handling
 │
-├─ api/                 # External interface
-│  └─ boundary_api.py       # Unix socket API + client
+├─ api/                           # External interface
+│  └─ boundary_api.py                 # Unix socket API + client
 │
-├─ logs/                # Event logs
-│  └─ boundary_chain.log    # Immutable hash-chained log
+├─ tests/                         # Comprehensive test suite
+│  ├─ test_*.py                       # Test modules
+│  └─ conftest.py                     # Test fixtures
 │
-├─ config/              # Configuration
-│  ├─ boundary.conf         # Daemon configuration
-│  └─ boundary-daemon.service  # Systemd service
+├─ logs/                          # Event logs
+│  └─ boundary_chain.log              # Immutable hash-chained log
 │
-├─ boundaryctl          # CLI control tool
-├─ requirements.txt     # Python dependencies
-├─ setup.py            # Installation script
+├─ config/                        # Configuration
+│  ├─ boundary.conf                   # Daemon configuration
+│  └─ boundary-daemon.service         # Systemd service
 │
-└─ docs/
-   ├─ specs.md         # Full specification
-   ├─ INTEGRATION.md   # Integration guide
-   └─ USAGE.md         # Usage guide
+├─ systemd/                       # Systemd service files
+│  ├─ boundary-daemon.service
+│  └─ boundary-watchdog.service
+│
+├─ scripts/                       # Setup scripts
+│  └─ setup-watchdog.sh
+│
+├─ CLI Tools
+│  ├─ boundaryctl                     # Main control CLI
+│  ├─ authctl                         # Authentication management
+│  ├─ policy_ctl                      # Policy management
+│  ├─ cluster_ctl                     # Cluster management
+│  ├─ biometric_ctl                   # Biometric management
+│  ├─ security_scan                   # Security scanning
+│  └─ verify_signatures               # Signature verification
+│
+├─ requirements.txt               # Python dependencies
+├─ setup.py                       # Installation script
+│
+└─ Documentation
+   ├─ README.md                       # This file
+   ├─ ARCHITECTURE.md                 # System architecture
+   ├─ SPEC.md                         # Full specification
+   ├─ INTEGRATION.md                  # Integration guide
+   ├─ USAGE.md                        # Usage guide
+   ├─ USER_GUIDE.md                   # User manual
+   ├─ SECURITY.md                     # Security policies
+   ├─ SECURITY_AUDIT.md               # Security audit
+   ├─ ENFORCEMENT_MODEL.md            # Enforcement explanation
+   └─ CHANGELOG.md                    # Change history
 ```
 
 ## Integration
@@ -307,10 +426,23 @@ Layer 5: Hardware controls (disabled USB, air-gap)     ← PHYSICAL security
 
 ## System Requirements
 
-- Python 3.8+
-- Linux (systemd for service mode)
-- psutil library
-- Root/sudo access (for system service)
+- Python 3.9+ (supports 3.9, 3.10, 3.11, 3.12, 3.13)
+- Linux (recommended for full enforcement) or Windows (monitoring mode)
+- psutil, pynacl, cryptography libraries
+- Root/sudo access (for system service and enforcement features)
+
+### Platform Support
+
+| Feature | Linux | Windows |
+|---------|-------|---------|
+| Core Daemon | Yes | Yes |
+| Monitoring | Yes | Yes |
+| Config Encryption | Yes | Yes |
+| Cryptographic Logging | Yes | Yes |
+| Network Enforcement | Yes | No |
+| USB Enforcement | Yes | No |
+| Process Enforcement | Yes | No |
+| Watchdog Service | Yes | No |
 
 ## Installation
 
@@ -362,9 +494,15 @@ python api/boundary_api.py
 
 ## Documentation
 
-- **[specs.md](specs.md)** - Complete technical specification
+- **[SPEC.md](SPEC.md)** - Complete technical specification
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design
 - **[INTEGRATION.md](INTEGRATION.md)** - Integration guide for Agent OS components
-- **[USAGE.md](USAGE.md)** - User guide and common workflows
+- **[USAGE.md](USAGE.md)** - Usage guide and common workflows
+- **[USER_GUIDE.md](USER_GUIDE.md)** - Comprehensive user manual
+- **[SECURITY.md](SECURITY.md)** - Security policies and practices
+- **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** - Security audit findings
+- **[ENFORCEMENT_MODEL.md](ENFORCEMENT_MODEL.md)** - Understanding the enforcement model
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
 
 ## Contributing
 
