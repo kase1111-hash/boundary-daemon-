@@ -1993,6 +1993,22 @@ class BoundaryDaemon:
         # Stop state monitor
         self.state_monitor.stop()
 
+        # Cleanup policy engine callbacks to prevent memory leaks
+        if self.policy_engine:
+            try:
+                self.policy_engine.cleanup()
+                logger.info("Policy engine callbacks cleaned up")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup policy engine: {e}")
+
+        # Cleanup tripwire system callbacks to prevent memory leaks
+        if self.tripwire_system:
+            try:
+                self.tripwire_system.cleanup()
+                logger.info("Tripwire system callbacks cleaned up")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup tripwire system: {e}")
+
         # Stop dreaming status reporter
         if self._dreaming_reporter:
             try:

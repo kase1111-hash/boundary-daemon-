@@ -183,7 +183,11 @@ class EncryptionChecker:
 
             # Check for eCryptfs
             if mount_point and Path(mount_point).exists():
-                mtab_line = [m for m in open('/proc/mounts').readlines() if mount_point in m]
+                try:
+                    with open('/proc/mounts', 'r') as f:
+                        mtab_line = [m for m in f.readlines() if mount_point in m]
+                except IOError:
+                    mtab_line = []
                 if mtab_line and 'ecryptfs' in mtab_line[0]:
                     encryption_type = EncryptionType.ECRYPTFS
                     status = EncryptionStatus.ENCRYPTED
