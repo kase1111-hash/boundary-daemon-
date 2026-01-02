@@ -4,20 +4,35 @@ Ready-to-use integration modules for all Agent OS ecosystem components.
 
 > For detailed integration instructions and code examples, see [INTEGRATION_GUIDE.md](./INTEGRATION_GUIDE.md).
 
+## Security Integration Check
+
+Run the security integration checker to validate attack prevention across all repositories:
+
+```bash
+python integrations/security_integration_check.py
+
+# JSON output
+python integrations/security_integration_check.py --format json
+```
+
+See [SECURITY_INTEGRATION.md](./SECURITY_INTEGRATION.md) for attack vectors prevented.
+
 ## Integration Packages (Alphabetical)
 
-| Package | Language | Key Components |
-|---------|----------|----------------|
-| [agent-os](./agent-os/) | TypeScript | `ToolGate`, `AgentMessageGate`, `SmithBoundaryIntegration` |
-| [boundary-siem](./boundary-siem/) | Python | `EventIngestionPipeline`, `SIEMForwarder` |
-| [finite-intent-executor](./finite-intent-executor/) | Python | `IntentGate`, `AssetGate`, `ExecutionGate` |
-| [ilr-module](./ilr-module/) | TypeScript | `DisputeGate`, `LicenseGate`, `ResolutionGate` |
-| [learning-contracts](./learning-contracts/) | TypeScript | `DaemonConnector`, `ContractEnforcer` |
-| [mediator-node](./mediator-node/) | TypeScript | `MediationGate`, `MiningGate` |
-| [memory-vault](./memory-vault/) | Python | `RecallGate`, `MemoryVaultBoundaryMixin` |
-| [natlangchain](./natlangchain/) | Python | `EntryValidator`, `ChainGate` |
-| [synth-mind](./synth-mind/) | Python | `ReflectionGate`, `CognitiveGate`, `MemoryGate` |
-| [value-ledger](./value-ledger/) | Python | `ValueLedgerBoundaryIntegration`, `InterruptionTracker` |
+| Package | Language | Key Components | Attack Vectors Prevented |
+|---------|----------|----------------|-------------------------|
+| [agent-os](./agent-os/) | TypeScript | `ToolGate`, `AgentMessageGate`, `SmithBoundaryIntegration` | Tool exec, Impersonation, Privilege escalation |
+| [boundary-siem](./boundary-siem/) | Python | `EventIngestionPipeline`, `SIEMForwarder` | Crypto bypass, Clock manipulation |
+| [finite-intent-executor](./finite-intent-executor/) | Python | `IntentGate`, `AssetGate`, `ExecutionGate` | Tool exec, Privilege escalation |
+| [ilr-module](./ilr-module/) | TypeScript | `DisputeGate`, `LicenseGate`, `ResolutionGate` | Crypto bypass, Contract tampering |
+| [intentlog](./intentlog/) | Python | `IntentLogGate`, `AuditTrailValidator` | Contract tampering, Clock manipulation, Crypto bypass |
+| [learning-contracts](./learning-contracts/) | TypeScript | `DaemonConnector`, `ContractEnforcer` | Contract tampering, Privilege escalation |
+| [mediator-node](./mediator-node/) | TypeScript | `MediationGate`, `MiningGate` | Prompt injection, Rate limit bypass |
+| [memory-vault](./memory-vault/) | Python | `RecallGate`, `MemoryVaultBoundaryMixin` | Memory exfiltration, Crypto bypass |
+| [natlangchain](./natlangchain/) | Python | `EntryValidator`, `ChainGate` | Semantic drift, Prompt injection, Crypto bypass |
+| [rra-module](./rra-module/) | Python | `RiskGate`, `RewardGate`, `AnalysisAuditGate` | Privilege escalation, Semantic drift, Crypto bypass |
+| [synth-mind](./synth-mind/) | Python | `ReflectionGate`, `CognitiveGate`, `MemoryGate` | Memory exfiltration, Privilege escalation |
+| [value-ledger](./value-ledger/) | Python | `ValueLedgerBoundaryIntegration`, `InterruptionTracker` | Crypto bypass, Rate limit bypass |
 
 ## Shared Libraries
 
