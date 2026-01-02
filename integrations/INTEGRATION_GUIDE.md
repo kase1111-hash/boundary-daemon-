@@ -376,6 +376,95 @@ integration.interruption_tracker.record_interruption(
 )
 ```
 
+## Advanced Gates (v2.0)
+
+The shared clients include 17 advanced policy gates for comprehensive security enforcement. See [ADVANCED_RULES.md](./ADVANCED_RULES.md) for full specification.
+
+### Cryptographic Verification
+
+```python
+# Verify Merkle proof before memory recall
+decision = client.verify_merkle_proof(
+    root_hash="abc123...",
+    leaf_hash="def456...",
+    proof_path=["hash1", "hash2"],
+    leaf_index=42
+)
+
+# Verify contract hasn't been tampered
+decision = client.verify_contract_signature(
+    contract_id="contract-1",
+    contract_hash="...",
+    issuer_signature="...",
+    issuer_public_key="..."
+)
+```
+
+### Semantic Analysis
+
+```python
+# Classify intent for policy decisions
+classification = client.classify_intent_semantics(
+    text="I want to share my research",
+    context="workplace"
+)
+# Returns: threat_level, category, manipulation_score, etc.
+
+# Detect political activity (hard-coded prohibition)
+result = client.detect_political_activity(
+    intended_action="Fund community garden",
+    check_depth="comprehensive"
+)
+```
+
+### Cognitive State Monitoring
+
+```python
+# Mode-aware reflection limits
+decision = client.check_reflection_intensity(
+    intensity_level=3,
+    reflection_type="meta",
+    depth=2
+)
+
+# Agent capability attestation
+decision = client.check_agent_attestation(
+    agent_id="synth-mind-001",
+    capability="reflect",
+    attestation_token="..."
+)
+```
+
+### Economic Verification
+
+```python
+# Verify stake was burned on-chain
+decision = client.verify_stake_burned(
+    burn_tx_hash="0x...",
+    chain="ethereum",
+    amount=500,
+    burn_address="0x000...dead"
+)
+
+# Verify LLM consensus (2/3 Byzantine tolerance)
+decision = client.verify_llm_consensus(
+    entry_hash="...",
+    model_signatures=[...],
+    agreement_threshold=0.67
+)
+```
+
+### Graduated Permissions
+
+```python
+# Get mode-aware graduated permissions
+perms = client.get_graduated_permission(
+    operation="reflect",
+    params={"depth": 3}
+)
+# Returns permissions for ALL modes, not just current
+```
+
 ## Testing Integration
 
 ### Start Daemon in Test Mode

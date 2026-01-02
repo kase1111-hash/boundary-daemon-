@@ -482,6 +482,433 @@ export class BoundaryClient {
       error: response.error,
     };
   }
+
+  // =========================================================================
+  // ADVANCED GATES (v2.0)
+  // =========================================================================
+
+  /**
+   * Verify a Merkle tree proof for tamper detection.
+   */
+  async verifyMerkleProof(params: {
+    rootHash: string;
+    leafHash: string;
+    proofPath: string[];
+    leafIndex: number;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_merkle_proof', {
+        root_hash: params.rootHash,
+        leaf_hash: params.leafHash,
+        proof_path: params.proofPath,
+        leaf_index: params.leafIndex,
+      });
+      return {
+        permitted: response.valid ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - cannot verify proof' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Verify a cryptographic signature using daemon's HSM/TPM.
+   */
+  async verifyCryptographicSignature(params: {
+    algorithm: 'ed25519' | 'ecdsa-p256' | 'rsa-pss' | 'bls12-381';
+    messageHash: string;
+    signature: string;
+    publicKey: string;
+    requireHardware?: boolean;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_cryptographic_signature', {
+        algorithm: params.algorithm,
+        message_hash: params.messageHash,
+        signature: params.signature,
+        public_key: params.publicKey,
+        require_hardware: params.requireHardware ?? false,
+      });
+      return {
+        permitted: response.valid ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - cannot verify signature' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Classify text intent for policy decisions.
+   */
+  async classifyIntentSemantics(params: {
+    text: string;
+    context?: string;
+    authorId?: string;
+  }): Promise<{
+    threatLevel: number;
+    category: string;
+    manipulationScore: number;
+    coercionScore: number;
+    ambiguityScore: number;
+    politicalContent: boolean;
+    piiDetected: boolean;
+    permitted: boolean;
+  }> {
+    try {
+      const response = await this.sendRequest('classify_intent_semantics', {
+        text: params.text,
+        context: params.context,
+        author_id: params.authorId,
+      });
+      const classification = response.classification || {};
+      return {
+        threatLevel: classification.threat_level ?? 5,
+        category: classification.category || 'unknown',
+        manipulationScore: classification.manipulation_score ?? 1.0,
+        coercionScore: classification.coercion_score ?? 0,
+        ambiguityScore: classification.ambiguity_score ?? 1.0,
+        politicalContent: classification.political_content ?? true,
+        piiDetected: classification.pii_detected ?? true,
+        permitted: classification.permitted ?? false,
+      };
+    } catch (e) {
+      // Fail-closed: assume highest threat
+      return {
+        threatLevel: 5,
+        category: 'unknown',
+        manipulationScore: 1.0,
+        coercionScore: 0,
+        ambiguityScore: 1.0,
+        politicalContent: true,
+        piiDetected: true,
+        permitted: false,
+      };
+    }
+  }
+
+  /**
+   * Check if reflection intensity is permitted in current mode.
+   */
+  async checkReflectionIntensity(params: {
+    intensityLevel: number;
+    reflectionType?: 'meta' | 'self' | 'world';
+    depth?: number;
+    durationSeconds?: number;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('check_reflection_intensity', {
+        intensity_level: params.intensityLevel,
+        reflection_type: params.reflectionType || 'meta',
+        depth: params.depth || 1,
+        duration_seconds: params.durationSeconds || 0,
+      });
+      return {
+        permitted: response.permitted ?? false,
+        reason: response.reason || 'Unknown',
+        requiresCeremony: response.requires_ceremony ?? false,
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - reflection denied' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Verify agent capability attestation for multi-agent operations.
+   */
+  async checkAgentAttestation(params: {
+    agentId: string;
+    capability: string;
+    attestationToken?: string;
+    peerAgentId?: string;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('check_agent_attestation', {
+        agent_id: params.agentId,
+        capability: params.capability,
+        attestation_token: params.attestationToken,
+        peer_agent_id: params.peerAgentId,
+      });
+      return {
+        permitted: response.permitted ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - attestation failed' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Verify learning contract hasn't been tampered.
+   */
+  async verifyContractSignature(params: {
+    contractId: string;
+    contractHash: string;
+    issuerSignature: string;
+    issuerPublicKey: string;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_contract_signature', {
+        contract_id: params.contractId,
+        contract_hash: params.contractHash,
+        issuer_signature: params.issuerSignature,
+        issuer_public_key: params.issuerPublicKey,
+      });
+      return {
+        permitted: response.valid ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - contract unverified' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Check memory against revocation list before allowing recall.
+   */
+  async verifyMemoryNotRevoked(
+    memoryId: string,
+    revocationListHash?: string
+  ): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_memory_not_revoked', {
+        memory_id: memoryId,
+        revocation_list_hash: revocationListHash,
+      });
+      return {
+        permitted: response.not_revoked ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - assuming revoked' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Verify execution confidence meets threshold (Finite-Intent-Executor).
+   */
+  async verifyExecutionConfidence(params: {
+    intentId: string;
+    modelConfidence: number;
+    threshold?: number;
+    modelId?: string;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_execution_confidence', {
+        intent_id: params.intentId,
+        model_confidence: params.modelConfidence,
+        threshold: params.threshold ?? 0.95,
+        model_id: params.modelId,
+      });
+      return {
+        permitted: response.permitted ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - confidence unverified' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Detect political activity in intended actions (hard-coded prohibition).
+   */
+  async detectPoliticalActivity(params: {
+    intendedAction: string;
+    beneficiaries?: string[];
+    checkDepth?: 'basic' | 'comprehensive';
+  }): Promise<{
+    isPolitical: boolean;
+    indicators: string[];
+    confidence: number;
+    reason?: string;
+  }> {
+    try {
+      const response = await this.sendRequest('detect_political_activity', {
+        intended_action: params.intendedAction,
+        beneficiaries: params.beneficiaries,
+        check_depth: params.checkDepth || 'comprehensive',
+      });
+      return {
+        isPolitical: response.is_political ?? true, // Fail-closed
+        indicators: response.political_indicators || [],
+        confidence: response.confidence ?? 0,
+        reason: response.reason,
+      };
+    } catch (e) {
+      return {
+        isPolitical: true, // Fail-closed
+        indicators: [],
+        confidence: 0,
+        reason: 'Daemon unavailable',
+      };
+    }
+  }
+
+  /**
+   * Validate multi-model agreement on intent interpretation.
+   */
+  async verifyLLMConsensus(params: {
+    entryHash: string;
+    modelSignatures: Array<{
+      model: string;
+      interpretationHash: string;
+      signature: string;
+    }>;
+    agreementThreshold?: number;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_llm_consensus', {
+        entry_hash: params.entryHash,
+        model_signatures: params.modelSignatures.map((s) => ({
+          model: s.model,
+          interpretation_hash: s.interpretationHash,
+          signature: s.signature,
+        })),
+        agreement_threshold: params.agreementThreshold ?? 0.67,
+      });
+      return {
+        permitted: response.consensus_reached ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - consensus unverified' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Cryptographic proof that stake was burned on-chain.
+   */
+  async verifyStakeBurned(params: {
+    burnTxHash: string;
+    chain: string;
+    amount: number;
+    burnAddress: string;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('verify_stake_burned', {
+        burn_tx_hash: params.burnTxHash,
+        chain: params.chain,
+        amount: params.amount,
+        burn_address: params.burnAddress,
+      });
+      return {
+        permitted: response.verified ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - burn unverified' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Check per-entity operation rate limit.
+   */
+  async checkEntityRateLimit(params: {
+    entityId: string;
+    entityType: 'agent' | 'mediator' | 'user';
+    operation: string;
+    windowSeconds?: number;
+    maxOperations?: number;
+  }): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('check_entity_rate_limit', {
+        entity_id: params.entityId,
+        entity_type: params.entityType,
+        operation: params.operation,
+        window_seconds: params.windowSeconds ?? 86400,
+        max_operations: params.maxOperations ?? 100,
+      });
+      return {
+        permitted: response.permitted ?? false,
+        reason: response.reason || 'Unknown',
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - rate limit check failed' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Check if current mode allows processing this dispute class.
+   */
+  async checkDisputeClassModeRequirement(
+    disputeClass: number
+  ): Promise<PolicyDecision> {
+    try {
+      const response = await this.sendRequest('check_dispute_class_mode_requirement', {
+        dispute_class: disputeClass,
+      });
+      return {
+        permitted: response.permitted ?? false,
+        reason: response.reason || 'Unknown',
+        mode: response.current_mode as BoundaryMode,
+      };
+    } catch (e) {
+      if (e instanceof DaemonUnavailableError) {
+        return { permitted: false, reason: 'Daemon unavailable - dispute check failed' };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Get mode-aware graduated permissions instead of binary allow/deny.
+   */
+  async getGraduatedPermission(
+    operation: string,
+    params?: Record<string, any>
+  ): Promise<{
+    currentMode: BoundaryMode;
+    currentPermission: { permitted: boolean; ceremony?: boolean; limits?: Record<string, any> };
+    permissions?: Record<string, { permitted: boolean; ceremony?: boolean; limits?: Record<string, any> }>;
+  }> {
+    try {
+      const response = await this.sendRequest('get_graduated_permission', {
+        operation,
+        params: params || {},
+      });
+      return {
+        currentMode: (response.current_mode || 'lockdown') as BoundaryMode,
+        currentPermission: response.current_permission || { permitted: false },
+        permissions: response.permissions,
+      };
+    } catch (e) {
+      return {
+        currentMode: BoundaryMode.LOCKDOWN,
+        currentPermission: { permitted: false },
+      };
+    }
+  }
 }
 
 /**
