@@ -8,6 +8,7 @@ It determines where cognition is allowed to flow and where it must stop.
 """
 
 import os
+import gc
 import signal
 import sys
 import time
@@ -1194,6 +1195,10 @@ class BoundaryDaemon:
         self._shutdown_event = threading.Event()
         self._enforcement_thread: Optional[threading.Thread] = None
 
+        # Cache cleanup state (prevents memory leaks from caches)
+        self._last_cache_cleanup = time.time()
+        self._cache_cleanup_interval = 300.0  # 5 minutes
+
         # Initialize API server for CLI tools
         self.api_server = None
         if API_SERVER_AVAILABLE and BoundaryAPIServer:
@@ -2215,6 +2220,11 @@ class BoundaryDaemon:
                     self._perform_health_check()
                     last_health_check = current_time
 
+                # Periodic cache cleanup (prevents memory leaks)
+                if current_time - self._last_cache_cleanup >= self._cache_cleanup_interval:
+                    self._perform_cache_cleanup()
+                    self._last_cache_cleanup = current_time
+
                 # Check if in lockdown
                 if self.lockdown_manager.is_in_lockdown():
                     # In lockdown: deny all operations
@@ -2273,6 +2283,110 @@ class BoundaryDaemon:
         # Return to watching phase
         if self._dreaming_reporter:
             self._dreaming_reporter.set_phase(DreamPhase.WATCHING)
+
+    def _perform_cache_cleanup(self):
+        """
+        Perform periodic cache cleanup to prevent memory leaks.
+
+        This method clears caches that can be safely reset without losing
+        essential state. It also forces garbage collection to reclaim memory.
+        """
+        if self._dreaming_reporter:
+            self._dreaming_reporter.start_operation("cleanup:caches")
+
+        try:
+            # Get memory before cleanup (if available)
+            mem_before = None
+            try:
+                import psutil
+                process = psutil.Process(os.getpid())
+                mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+            except Exception:
+                pass
+
+            caches_cleared = 0
+
+            # Clear threat intel cache (can be repopulated on demand)
+            if hasattr(self, '_threat_intel') and self._threat_intel:
+                try:
+                    self._threat_intel._threat_cache.clear()
+                    self._threat_intel._cache_timestamps.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Clear identity cache (sessions will re-authenticate)
+            if hasattr(self, '_identity_manager') and self._identity_manager:
+                try:
+                    self._identity_manager._identity_cache.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Clear TPM PCR cache (will be re-read on next check)
+            if hasattr(self, '_tpm_manager') and self._tpm_manager:
+                try:
+                    self._tpm_manager._pcr_cache.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Clear antivirus hash cache (will be re-queried on demand)
+            if hasattr(self, '_antivirus') and self._antivirus:
+                try:
+                    self._antivirus._cache.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Clear LDAP caches (will be re-queried on demand)
+            if hasattr(self, '_ldap_mapper') and self._ldap_mapper:
+                try:
+                    self._ldap_mapper._user_cache.clear()
+                    self._ldap_mapper._group_cache.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Clear OIDC token cache (tokens will be re-validated)
+            if hasattr(self, '_oidc_validator') and self._oidc_validator:
+                try:
+                    self._oidc_validator._token_cache.clear()
+                    caches_cleared += 1
+                except Exception:
+                    pass
+
+            # Force full garbage collection
+            gc.collect(generation=2)  # Full collection
+
+            # Get memory after cleanup
+            mem_after = None
+            mem_freed = 0
+            try:
+                import psutil
+                process = psutil.Process(os.getpid())
+                mem_after = process.memory_info().rss / (1024 * 1024)  # MB
+                if mem_before:
+                    mem_freed = mem_before - mem_after
+            except Exception:
+                pass
+
+            # Log the cleanup
+            log_msg = f"Cache cleanup: cleared {caches_cleared} caches"
+            if mem_before and mem_after:
+                log_msg += f", memory: {mem_before:.1f}MB -> {mem_after:.1f}MB"
+                if mem_freed > 0:
+                    log_msg += f" (freed {mem_freed:.1f}MB)"
+
+            logger.info(log_msg)
+
+            if self._dreaming_reporter:
+                self._dreaming_reporter.complete_operation("cleanup:caches", success=True)
+
+        except Exception as e:
+            logger.error(f"Error during cache cleanup: {e}")
+            if self._dreaming_reporter:
+                self._dreaming_reporter.complete_operation("cleanup:caches", success=False)
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals"""
