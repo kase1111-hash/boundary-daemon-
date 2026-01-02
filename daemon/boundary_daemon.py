@@ -2237,11 +2237,14 @@ class BoundaryDaemon:
         """Perform periodic health check"""
         # Update dreaming phase
         if self._dreaming_reporter:
-            self._dreaming_reporter.start_operation("health_check")
             self._dreaming_reporter.set_phase(DreamPhase.VERIFYING)
 
-        # Check daemon health
+        # Check daemon health (tripwire system)
+        if self._dreaming_reporter:
+            self._dreaming_reporter.start_operation("check:daemon_health")
         daemon_healthy = self.tripwire_system.check_daemon_health()
+        if self._dreaming_reporter:
+            self._dreaming_reporter.complete_operation("check:daemon_health", success=daemon_healthy)
 
         if not daemon_healthy:
             # Daemon health check failed - this is a critical violation
@@ -2253,7 +2256,12 @@ class BoundaryDaemon:
             logger.warning("*** Daemon health check failed ***")
 
         # Verify event log integrity
+        if self._dreaming_reporter:
+            self._dreaming_reporter.start_operation("check:event_log_integrity")
         is_valid, error = self.event_logger.verify_chain()
+        if self._dreaming_reporter:
+            self._dreaming_reporter.complete_operation("check:event_log_integrity", success=is_valid)
+
         if not is_valid:
             logger.critical(f"*** Event log chain integrity violation: {error} ***")
             self.event_logger.log_event(
@@ -2262,9 +2270,8 @@ class BoundaryDaemon:
                 metadata={'healthy': False}
             )
 
-        # Complete health check and return to watching phase
+        # Return to watching phase
         if self._dreaming_reporter:
-            self._dreaming_reporter.complete_operation("health_check", success=daemon_healthy and is_valid)
             self._dreaming_reporter.set_phase(DreamPhase.WATCHING)
 
     def _signal_handler(self, signum, frame):
