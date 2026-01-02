@@ -324,11 +324,19 @@ class DreamingReporter:
 
             parts.append(self._color(phrase, phase_color))
 
-            # Add recent completion if any
+            # Add all recent completions (not just the last one)
             if recent_completions:
-                latest = recent_completions[-1]
-                status_icon = self._color("✓", 'green') if latest['success'] else self._color("✗", 'yellow')
-                parts.append(f"{status_icon} {latest['operation']}")
+                # Group by success/failure and show all unique operations
+                completion_parts = []
+                seen_ops = set()
+                for comp in recent_completions:
+                    op_name = comp['operation']
+                    if op_name not in seen_ops:
+                        seen_ops.add(op_name)
+                        icon = self._color("✓", 'green') if comp['success'] else self._color("✗", 'yellow')
+                        completion_parts.append(f"{icon} {op_name}")
+                if completion_parts:
+                    parts.append(" ".join(completion_parts))
 
             # Add active operations count if any
             if active_count > 0:
