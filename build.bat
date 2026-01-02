@@ -70,7 +70,7 @@ echo %YELLOW%[1/6] Running pre-build checks...%RESET%
 REM Check if Python is available
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo %RED%ERROR: Python is not installed or not in PATH%RESET%
+    echo !RED!ERROR: Python is not installed or not in PATH!RESET!
     echo Please install Python 3.8+ and try again
     goto :build_failed
 )
@@ -81,27 +81,27 @@ echo   Python version: %PYTHON_VERSION%
 REM Check Python version is 3.8+
 python -c "import sys; exit(0 if sys.version_info >= (3, 8) else 1)" 2>nul
 if errorlevel 1 (
-    echo %RED%ERROR: Python 3.8 or higher is required%RESET%
+    echo !RED!ERROR: Python 3.8 or higher is required!RESET!
     goto :build_failed
 )
 
 REM Check if main script exists
 if not exist "%MAIN_SCRIPT%" (
-    echo %RED%ERROR: Main script not found: %MAIN_SCRIPT%%RESET%
+    echo !RED!ERROR: Main script not found: !MAIN_SCRIPT!!RESET!
     goto :build_failed
 )
 echo   Main script: %MAIN_SCRIPT% [OK]
 
 REM Check if daemon package exists
 if not exist "daemon\__init__.py" (
-    echo %RED%ERROR: daemon package not found%RESET%
+    echo !RED!ERROR: daemon package not found!RESET!
     goto :build_failed
 )
 echo   Daemon package: [OK]
 
 REM Check if api package exists
 if not exist "api\__init__.py" (
-    echo %RED%ERROR: api package not found%RESET%
+    echo !RED!ERROR: api package not found!RESET!
     goto :build_failed
 )
 echo   API package: [OK]
@@ -113,15 +113,15 @@ REM Clean build artifacts if requested
 REM ============================================================================
 if %CLEAN_BUILD%==1 (
     echo.
-    echo %YELLOW%[2/6] Cleaning previous build artifacts...%RESET%
+    echo !YELLOW![2/6] Cleaning previous build artifacts...!RESET!
     if exist "build" rmdir /s /q "build" 2>nul && echo   Removed: build/
     if exist "dist" rmdir /s /q "dist" 2>nul && echo   Removed: dist/
-    if exist "%APP_NAME%.spec" del /f /q "%APP_NAME%.spec" 2>nul && echo   Removed: %APP_NAME%.spec
+    if exist "!APP_NAME!.spec" del /f /q "!APP_NAME!.spec" 2>nul && echo   Removed: !APP_NAME!.spec
     for /d %%d in (*__pycache__*) do rmdir /s /q "%%d" 2>nul
-    echo %GREEN%   Clean complete!%RESET%
+    echo !GREEN!   Clean complete!!RESET!
 ) else (
     echo.
-    echo %YELLOW%[2/6] Skipping clean ^(use --clean to enable^)%RESET%
+    echo !YELLOW![2/6] Skipping clean ^(use --clean to enable^)!RESET!
 )
 
 REM ============================================================================
@@ -129,7 +129,7 @@ REM Install dependencies
 REM ============================================================================
 echo.
 if %SKIP_DEPS%==0 (
-    echo %YELLOW%[3/6] Installing dependencies...%RESET%
+    echo !YELLOW![3/6] Installing dependencies...!RESET!
 
     REM Check if PyInstaller is installed
     python -c "import PyInstaller" >nul 2>&1
@@ -137,27 +137,27 @@ if %SKIP_DEPS%==0 (
         echo   Installing PyInstaller...
         pip install pyinstaller --quiet
         if errorlevel 1 (
-            echo %RED%ERROR: Failed to install PyInstaller%RESET%
+            echo !RED!ERROR: Failed to install PyInstaller!RESET!
             goto :build_failed
         )
     )
     for /f "tokens=*" %%a in ('python -c "import PyInstaller; print(PyInstaller.__version__)"') do set PYINSTALLER_VERSION=%%a
-    echo   PyInstaller version: %PYINSTALLER_VERSION%
+    echo   PyInstaller version: !PYINSTALLER_VERSION!
 
     REM Install requirements
     if exist "requirements.txt" (
         echo   Installing project dependencies...
         pip install -r requirements.txt --quiet
         if errorlevel 1 (
-            echo %RED%ERROR: Failed to install dependencies from requirements.txt%RESET%
+            echo !RED!ERROR: Failed to install dependencies from requirements.txt!RESET!
             goto :build_failed
         )
-        echo %GREEN%   Dependencies installed!%RESET%
+        echo !GREEN!   Dependencies installed!!RESET!
     ) else (
-        echo %YELLOW%   Warning: requirements.txt not found%RESET%
+        echo !YELLOW!   Warning: requirements.txt not found!RESET!
     )
 ) else (
-    echo %YELLOW%[3/6] Skipping dependency installation ^(--skip-deps^)%RESET%
+    echo !YELLOW![3/6] Skipping dependency installation ^(--skip-deps^)!RESET!
 )
 
 REM ============================================================================
@@ -171,10 +171,10 @@ if not exist "config" (
     echo   Creating config directory...
     mkdir config
     if errorlevel 1 (
-        echo %RED%   ERROR: Failed to create config directory%RESET%
+        echo !RED!   ERROR: Failed to create config directory!RESET!
         goto :build_failed
     )
-    echo %GREEN%   Created: config\%RESET%
+    echo !GREEN!   Created: config\!RESET!
 ) else (
     echo   Config directory exists: config\
 )
@@ -185,20 +185,20 @@ if not exist "config\signing.key" (
     echo   Generating signing key...
     python -m daemon.security.daemon_integrity generate-key --output config\signing.key 2>nul
     if errorlevel 1 (
-        echo %YELLOW%   Warning: Failed to generate signing key via module%RESET%
+        echo !YELLOW!   Warning: Failed to generate signing key via module!RESET!
         echo   Attempting alternative key generation...
         REM Fallback: Generate key using Python directly
         python -c "import os; open('config/signing.key', 'wb').write(os.urandom(32))" 2>nul
         if errorlevel 1 (
-            echo %RED%   ERROR: Failed to generate signing key%RESET%
+            echo !RED!   ERROR: Failed to generate signing key!RESET!
             echo   The daemon will run in development mode without integrity verification.
         ) else (
             set SIGNING_KEY_GENERATED=1
-            echo %GREEN%   Generated signing key: config\signing.key (fallback method)%RESET%
+            echo !GREEN!   Generated signing key: config\signing.key ^(fallback method^)!RESET!
         )
     ) else (
         set SIGNING_KEY_GENERATED=1
-        echo %GREEN%   Generated signing key: config\signing.key%RESET%
+        echo !GREEN!   Generated signing key: config\signing.key!RESET!
     )
 ) else (
     set SIGNING_KEY_GENERATED=1
@@ -210,21 +210,21 @@ if exist "config\signing.key" (
     echo   Generating integrity manifest...
     python -m daemon.security.daemon_integrity create --manifest config\manifest.json --key config\signing.key --root . 2>nul
     if errorlevel 1 (
-        echo %YELLOW%   Warning: Failed to generate manifest via module%RESET%
+        echo !YELLOW!   Warning: Failed to generate manifest via module!RESET!
         echo   Attempting alternative manifest generation...
         REM Fallback: Create a basic manifest structure
-        python -c "import json, hashlib, os, datetime; files={}; [files.update({os.path.join(r,f).replace('\\\\','/'): {'path': os.path.join(r,f).replace('\\\\','/'), 'hash': hashlib.sha256(open(os.path.join(r,f),'rb').read()).hexdigest(), 'size': os.path.getsize(os.path.join(r,f)), 'mtime': os.path.getmtime(os.path.join(r,f))}} for r,d,fs in os.walk('daemon') for f in fs if f.endswith('.py')]; key=open('config/signing.key','rb').read(); import hmac; data={'version':'1.0','created_at':datetime.datetime.utcnow().isoformat()+'Z','daemon_version':'build','hash_algorithm':'sha256','files':files}; data['signature']=hmac.new(key,json.dumps({k:v for k,v in data.items() if k!='signature'},sort_keys=True,separators=(',',':')).encode(),'sha256').hexdigest(); json.dump(data,open('config/manifest.json','w'),indent=2)" 2>nul
+        python -c "import json, hashlib, os, datetime; files={}; [files.update({os.path.join(r,f).replace('\\','/'): {'path': os.path.join(r,f).replace('\\','/'), 'hash': hashlib.sha256(open(os.path.join(r,f),'rb').read()).hexdigest(), 'size': os.path.getsize(os.path.join(r,f)), 'mtime': os.path.getmtime(os.path.join(r,f))}} for r,d,fs in os.walk('daemon') for f in fs if f.endswith('.py')]; key=open('config/signing.key','rb').read(); import hmac; data={'version':'1.0','created_at':datetime.datetime.utcnow().isoformat()+'Z','daemon_version':'build','hash_algorithm':'sha256','files':files}; data['signature']=hmac.new(key,json.dumps({k:v for k,v in data.items() if k!='signature'},sort_keys=True,separators=(',',':')).encode(),'sha256').hexdigest(); json.dump(data,open('config/manifest.json','w'),indent=2)" 2>nul
         if errorlevel 1 (
-            echo %RED%   ERROR: Failed to generate manifest%RESET%
+            echo !RED!   ERROR: Failed to generate manifest!RESET!
             echo   The daemon will auto-generate a manifest on first run.
         ) else (
-            echo %GREEN%   Generated manifest: config\manifest.json (fallback method)%RESET%
+            echo !GREEN!   Generated manifest: config\manifest.json ^(fallback method^)!RESET!
         )
     ) else (
-        echo %GREEN%   Generated manifest: config\manifest.json%RESET%
+        echo !GREEN!   Generated manifest: config\manifest.json!RESET!
     )
 ) else (
-    echo %YELLOW%   Skipping manifest generation - no signing key available%RESET%
+    echo !YELLOW!   Skipping manifest generation - no signing key available!RESET!
     echo   The daemon will run in development mode.
 )
 
@@ -233,9 +233,9 @@ if exist "config\manifest.json" (
     echo   Verifying manifest...
     python -m daemon.security.daemon_integrity verify --manifest config\manifest.json --key config\signing.key --root . 2>nul
     if errorlevel 1 (
-        echo %YELLOW%   Warning: Manifest verification returned errors (may be expected during build)%RESET%
+        echo !YELLOW!   Warning: Manifest verification returned errors ^(may be expected during build^)!RESET!
     ) else (
-        echo %GREEN%   Manifest verification passed!%RESET%
+        echo !GREEN!   Manifest verification passed!!RESET!
     )
 )
 
@@ -474,9 +474,9 @@ if exist "config" (
     echo   Copying configuration files...
     xcopy /E /I /Y "config" "dist\config" >nul 2>&1
     if errorlevel 1 (
-        echo %YELLOW%   Warning: Some config files may not have copied correctly%RESET%
+        echo !YELLOW!   Warning: Some config files may not have copied correctly!RESET!
     ) else (
-        echo %GREEN%   Configuration files copied to dist\config%RESET%
+        echo !GREEN!   Configuration files copied to dist\config!RESET!
     )
 )
 
@@ -486,25 +486,25 @@ echo %CYAN%Verifying integrity files...%RESET%
 set INTEGRITY_OK=1
 
 if exist "dist\config\signing.key" (
-    echo %GREEN%   [OK] dist\config\signing.key%RESET%
+    echo !GREEN!   [OK] dist\config\signing.key!RESET!
 ) else (
-    echo %RED%   [MISSING] dist\config\signing.key%RESET%
+    echo !RED!   [MISSING] dist\config\signing.key!RESET!
     set INTEGRITY_OK=0
 )
 
 if exist "dist\config\manifest.json" (
-    echo %GREEN%   [OK] dist\config\manifest.json%RESET%
+    echo !GREEN!   [OK] dist\config\manifest.json!RESET!
 ) else (
-    echo %RED%   [MISSING] dist\config\manifest.json%RESET%
+    echo !RED!   [MISSING] dist\config\manifest.json!RESET!
     set INTEGRITY_OK=0
 )
 
-if %INTEGRITY_OK%==0 (
+if !INTEGRITY_OK!==0 (
     echo.
-    echo %YELLOW%   Warning: Integrity files missing. The daemon will run in development mode.%RESET%
-    echo %YELLOW%   To fix: Re-run build.bat or manually generate:%RESET%
-    echo %YELLOW%     python -m daemon.security.daemon_integrity generate-key --output dist\config\signing.key%RESET%
-    echo %YELLOW%     python -m daemon.security.daemon_integrity create --manifest dist\config\manifest.json --key dist\config\signing.key%RESET%
+    echo !YELLOW!   Warning: Integrity files missing. The daemon will run in development mode.!RESET!
+    echo !YELLOW!   To fix: Re-run build.bat or manually generate:!RESET!
+    echo !YELLOW!     python -m daemon.security.daemon_integrity generate-key --output dist\config\signing.key!RESET!
+    echo !YELLOW!     python -m daemon.security.daemon_integrity create --manifest dist\config\manifest.json --key dist\config\signing.key!RESET!
 )
 
 REM Create run script in dist
@@ -548,7 +548,7 @@ if "%BUILD_MODE%"=="onefile" (
             echo   Executable size: unknown
         )
     ) else (
-        echo   %YELLOW%Warning: Executable not found at dist\%APP_NAME%.exe%RESET%
+        echo   !YELLOW!Warning: Executable not found at dist\!APP_NAME!.exe!RESET!
     )
 )
 
