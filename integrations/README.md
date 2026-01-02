@@ -70,6 +70,7 @@ All integrations implement:
 ## Related Documentation
 
 - [INTEGRATION_GUIDE.md](./INTEGRATION_GUIDE.md) - Detailed integration guide with examples
+- [ADVANCED_RULES.md](./ADVANCED_RULES.md) - Advanced policy gates specification (v2.0)
 - [../INTEGRATION.md](../INTEGRATION.md) - Core integration concepts
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - System architecture
 - [../SPEC.md](../SPEC.md) - Full specification

@@ -531,6 +531,545 @@ class BoundaryClient:
             response.get('error'),
         )
 
+    # =========================================================================
+    # ADVANCED GATES (v2.0)
+    # =========================================================================
+
+    def verify_merkle_proof(
+        self,
+        root_hash: str,
+        leaf_hash: str,
+        proof_path: List[str],
+        leaf_index: int,
+    ) -> PolicyDecision:
+        """
+        Verify a Merkle tree proof for tamper detection.
+
+        Args:
+            root_hash: Expected Merkle root
+            leaf_hash: Hash of the leaf being verified
+            proof_path: List of sibling hashes from leaf to root
+            leaf_index: Index of the leaf in the tree
+
+        Returns:
+            PolicyDecision with verification result
+        """
+        params = {
+            'root_hash': root_hash,
+            'leaf_hash': leaf_hash,
+            'proof_path': proof_path,
+            'leaf_index': leaf_index,
+        }
+        try:
+            response = self._send_request('verify_merkle_proof', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - cannot verify proof",
+            )
+        return PolicyDecision(
+            permitted=response.get('valid', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_cryptographic_signature(
+        self,
+        algorithm: str,
+        message_hash: str,
+        signature: str,
+        public_key: str,
+        require_hardware: bool = False,
+    ) -> PolicyDecision:
+        """
+        Verify a cryptographic signature using daemon's HSM/TPM.
+
+        Args:
+            algorithm: Signature algorithm (ed25519, ecdsa-p256, rsa-pss, bls12-381)
+            message_hash: Hash of the signed message
+            signature: The signature to verify
+            public_key: Public key for verification
+            require_hardware: If True, requires TPM-bound key
+
+        Returns:
+            PolicyDecision with verification result
+        """
+        params = {
+            'algorithm': algorithm,
+            'message_hash': message_hash,
+            'signature': signature,
+            'public_key': public_key,
+            'require_hardware': require_hardware,
+        }
+        try:
+            response = self._send_request('verify_cryptographic_signature', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - cannot verify signature",
+            )
+        return PolicyDecision(
+            permitted=response.get('valid', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def classify_intent_semantics(
+        self,
+        text: str,
+        context: Optional[str] = None,
+        author_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Classify text intent for policy decisions.
+
+        Args:
+            text: Text to classify
+            context: Optional context (e.g., 'workplace', 'personal')
+            author_id: Optional author identifier
+
+        Returns:
+            Classification result with threat_level, category, scores
+        """
+        params = {'text': text}
+        if context:
+            params['context'] = context
+        if author_id:
+            params['author_id'] = author_id
+
+        try:
+            response = self._send_request('classify_intent_semantics', params)
+        except DaemonUnavailableError:
+            return {
+                'threat_level': 5,  # Fail-closed: assume highest threat
+                'category': 'unknown',
+                'manipulation_score': 1.0,
+                'permitted': False,
+                'reason': 'Daemon unavailable',
+            }
+        return response.get('classification', {})
+
+    def check_reflection_intensity(
+        self,
+        intensity_level: int,
+        reflection_type: str = 'meta',
+        depth: int = 1,
+        duration_seconds: int = 0,
+    ) -> PolicyDecision:
+        """
+        Check if reflection intensity is permitted in current mode.
+
+        Args:
+            intensity_level: Intensity level (0-5)
+            reflection_type: Type of reflection (meta, self, world)
+            depth: Recursion depth
+            duration_seconds: Expected duration
+
+        Returns:
+            PolicyDecision with mode-aware limits
+        """
+        params = {
+            'intensity_level': intensity_level,
+            'reflection_type': reflection_type,
+            'depth': depth,
+            'duration_seconds': duration_seconds,
+        }
+        try:
+            response = self._send_request('check_reflection_intensity', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - reflection denied",
+            )
+        return PolicyDecision(
+            permitted=response.get('permitted', False),
+            reason=response.get('reason', 'Unknown'),
+            requires_ceremony=response.get('requires_ceremony', False),
+        )
+
+    def check_agent_attestation(
+        self,
+        agent_id: str,
+        capability: str,
+        attestation_token: Optional[str] = None,
+        peer_agent_id: Optional[str] = None,
+    ) -> PolicyDecision:
+        """
+        Verify agent capability attestation for multi-agent operations.
+
+        Args:
+            agent_id: Agent requesting capability
+            capability: Capability being requested (reflect, recall, communicate)
+            attestation_token: Cryptographic attestation token
+            peer_agent_id: For federation, the peer agent
+
+        Returns:
+            PolicyDecision with attestation result
+        """
+        params = {
+            'agent_id': agent_id,
+            'capability': capability,
+        }
+        if attestation_token:
+            params['attestation_token'] = attestation_token
+        if peer_agent_id:
+            params['peer_agent_id'] = peer_agent_id
+
+        try:
+            response = self._send_request('check_agent_attestation', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - attestation failed",
+            )
+        return PolicyDecision(
+            permitted=response.get('permitted', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_contract_signature(
+        self,
+        contract_id: str,
+        contract_hash: str,
+        issuer_signature: str,
+        issuer_public_key: str,
+    ) -> PolicyDecision:
+        """
+        Verify learning contract hasn't been tampered.
+
+        Args:
+            contract_id: Contract identifier
+            contract_hash: Hash of contract content
+            issuer_signature: Issuer's signature
+            issuer_public_key: Issuer's public key
+
+        Returns:
+            PolicyDecision with verification result
+        """
+        params = {
+            'contract_id': contract_id,
+            'contract_hash': contract_hash,
+            'issuer_signature': issuer_signature,
+            'issuer_public_key': issuer_public_key,
+        }
+        try:
+            response = self._send_request('verify_contract_signature', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - contract unverified",
+            )
+        return PolicyDecision(
+            permitted=response.get('valid', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_memory_not_revoked(
+        self,
+        memory_id: str,
+        revocation_list_hash: Optional[str] = None,
+    ) -> PolicyDecision:
+        """
+        Check memory against revocation list before allowing recall.
+
+        Args:
+            memory_id: Memory to check
+            revocation_list_hash: Specific list version to check against
+
+        Returns:
+            PolicyDecision (permitted=True means NOT revoked)
+        """
+        params = {'memory_id': memory_id}
+        if revocation_list_hash:
+            params['revocation_list_hash'] = revocation_list_hash
+
+        try:
+            response = self._send_request('verify_memory_not_revoked', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - assuming revoked",
+            )
+        return PolicyDecision(
+            permitted=response.get('not_revoked', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_execution_confidence(
+        self,
+        intent_id: str,
+        model_confidence: float,
+        threshold: float = 0.95,
+        model_id: Optional[str] = None,
+    ) -> PolicyDecision:
+        """
+        Verify execution confidence meets threshold (Finite-Intent-Executor).
+
+        Args:
+            intent_id: Intent being executed
+            model_confidence: Model's confidence score (0-1)
+            threshold: Required threshold (default 0.95)
+            model_id: Model providing the confidence
+
+        Returns:
+            PolicyDecision with confidence validation
+        """
+        params = {
+            'intent_id': intent_id,
+            'model_confidence': model_confidence,
+            'threshold': threshold,
+        }
+        if model_id:
+            params['model_id'] = model_id
+
+        try:
+            response = self._send_request('verify_execution_confidence', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - confidence unverified",
+            )
+        return PolicyDecision(
+            permitted=response.get('permitted', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def detect_political_activity(
+        self,
+        intended_action: str,
+        beneficiaries: Optional[List[str]] = None,
+        check_depth: str = 'comprehensive',
+    ) -> Dict[str, Any]:
+        """
+        Detect political activity in intended actions (hard-coded prohibition).
+
+        Args:
+            intended_action: Description of intended action
+            beneficiaries: List of beneficiary identifiers
+            check_depth: 'basic' or 'comprehensive'
+
+        Returns:
+            Detection result with is_political, indicators, confidence
+        """
+        params = {
+            'intended_action': intended_action,
+            'check_depth': check_depth,
+        }
+        if beneficiaries:
+            params['beneficiaries'] = beneficiaries
+
+        try:
+            response = self._send_request('detect_political_activity', params)
+        except DaemonUnavailableError:
+            return {
+                'is_political': True,  # Fail-closed: assume political
+                'confidence': 0.0,
+                'reason': 'Daemon unavailable',
+            }
+        return response
+
+    def verify_llm_consensus(
+        self,
+        entry_hash: str,
+        model_signatures: List[Dict[str, str]],
+        agreement_threshold: float = 0.67,
+    ) -> PolicyDecision:
+        """
+        Validate multi-model agreement on intent interpretation.
+
+        Args:
+            entry_hash: Hash of the entry being validated
+            model_signatures: List of {model, interpretation_hash, signature}
+            agreement_threshold: Required agreement ratio (default 2/3)
+
+        Returns:
+            PolicyDecision with consensus validation
+        """
+        params = {
+            'entry_hash': entry_hash,
+            'model_signatures': model_signatures,
+            'agreement_threshold': agreement_threshold,
+        }
+        try:
+            response = self._send_request('verify_llm_consensus', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - consensus unverified",
+            )
+        return PolicyDecision(
+            permitted=response.get('consensus_reached', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_stake_burned(
+        self,
+        burn_tx_hash: str,
+        chain: str,
+        amount: float,
+        burn_address: str,
+    ) -> PolicyDecision:
+        """
+        Cryptographic proof that stake was burned on-chain.
+
+        Args:
+            burn_tx_hash: Transaction hash of the burn
+            chain: Blockchain (ethereum, polygon, etc.)
+            amount: Expected burn amount
+            burn_address: Expected burn address
+
+        Returns:
+            PolicyDecision with burn verification
+        """
+        params = {
+            'burn_tx_hash': burn_tx_hash,
+            'chain': chain,
+            'amount': amount,
+            'burn_address': burn_address,
+        }
+        try:
+            response = self._send_request('verify_stake_burned', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - burn unverified",
+            )
+        return PolicyDecision(
+            permitted=response.get('verified', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def check_entity_rate_limit(
+        self,
+        entity_id: str,
+        entity_type: str,
+        operation: str,
+        window_seconds: int = 86400,
+        max_operations: int = 100,
+    ) -> PolicyDecision:
+        """
+        Check per-entity operation rate limit.
+
+        Args:
+            entity_id: Entity identifier
+            entity_type: Type (agent, mediator, user)
+            operation: Operation being performed
+            window_seconds: Rate limit window
+            max_operations: Maximum operations in window
+
+        Returns:
+            PolicyDecision with rate limit status
+        """
+        params = {
+            'entity_id': entity_id,
+            'entity_type': entity_type,
+            'operation': operation,
+            'window_seconds': window_seconds,
+            'max_operations': max_operations,
+        }
+        try:
+            response = self._send_request('check_entity_rate_limit', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - rate limit check failed",
+            )
+        return PolicyDecision(
+            permitted=response.get('permitted', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def verify_memory_consent(
+        self,
+        memory_id: str,
+        consent_token: str,
+        consent_signature: str,
+        consenter_public_key: str,
+    ) -> PolicyDecision:
+        """
+        Verify human consent was obtained for memory access.
+
+        Args:
+            memory_id: Memory being accessed
+            consent_token: Consent token
+            consent_signature: Cryptographic signature
+            consenter_public_key: Public key of consenter
+
+        Returns:
+            PolicyDecision with consent verification
+        """
+        params = {
+            'memory_id': memory_id,
+            'consent_token': consent_token,
+            'consent_signature': consent_signature,
+            'consenter_public_key': consenter_public_key,
+        }
+        try:
+            response = self._send_request('verify_memory_consent', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - consent unverified",
+            )
+        return PolicyDecision(
+            permitted=response.get('valid', False),
+            reason=response.get('reason', 'Unknown'),
+        )
+
+    def check_dispute_class_mode_requirement(
+        self,
+        dispute_class: int,
+    ) -> PolicyDecision:
+        """
+        Check if current mode allows processing this dispute class.
+
+        Args:
+            dispute_class: Dispute classification (0-5)
+
+        Returns:
+            PolicyDecision with mode-aware authorization
+        """
+        params = {'dispute_class': dispute_class}
+        try:
+            response = self._send_request('check_dispute_class_mode_requirement', params)
+        except DaemonUnavailableError:
+            return PolicyDecision(
+                permitted=False,
+                reason="Daemon unavailable - dispute check failed",
+            )
+        return PolicyDecision(
+            permitted=response.get('permitted', False),
+            reason=response.get('reason', 'Unknown'),
+            mode=BoundaryMode(response['current_mode']) if 'current_mode' in response else None,
+        )
+
+    def get_graduated_permission(
+        self,
+        operation: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get mode-aware graduated permissions instead of binary allow/deny.
+
+        Args:
+            operation: Operation type
+            params: Operation parameters
+
+        Returns:
+            Graduated permissions for all modes and current permission
+        """
+        request_params = {
+            'operation': operation,
+            'params': params or {},
+        }
+        try:
+            response = self._send_request('get_graduated_permission', request_params)
+        except DaemonUnavailableError:
+            # Fail-closed: return most restrictive permissions
+            return {
+                'current_mode': 'LOCKDOWN',
+                'current_permission': {'permitted': False, 'reason': 'Daemon unavailable'},
+            }
+        return response
+
 
 # Decorators for easy integration
 
