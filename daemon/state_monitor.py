@@ -17,6 +17,8 @@ from enum import Enum
 from datetime import datetime
 from collections import deque
 
+from .dreaming import dream_operation_start, dream_operation_complete
+
 logger = logging.getLogger(__name__)
 
 # Platform detection
@@ -440,6 +442,9 @@ class StateMonitor:
         """Main monitoring loop"""
         while self._running:
             try:
+                # Report to dreaming reporter
+                dream_operation_start("check:environment")
+
                 new_state = self._sample_environment()
 
                 with self._state_lock:
@@ -457,9 +462,13 @@ class StateMonitor:
                         except Exception as e:
                             logger.error(f"Error in state change callback: {e}")
 
+                # Report completion to dreaming reporter
+                dream_operation_complete("check:environment", success=True)
+
                 time.sleep(self.poll_interval)
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")
+                dream_operation_complete("check:environment", success=False)
                 time.sleep(self.poll_interval)
 
     def _sample_environment(self) -> EnvironmentState:

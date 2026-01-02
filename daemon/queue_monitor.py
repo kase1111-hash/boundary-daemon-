@@ -23,6 +23,8 @@ from collections import deque
 from queue import Queue, Empty
 import weakref
 
+from .dreaming import dream_operation_start, dream_operation_complete
+
 logger = logging.getLogger(__name__)
 
 
@@ -504,11 +506,19 @@ class QueueMonitor:
         """Main monitoring loop"""
         while self._running:
             try:
+                # Report to dreaming reporter
+                dream_operation_start("check:queues")
+
                 self._sample_count += 1
                 self._check_all_queues()
+
+                # Report completion to dreaming reporter
+                dream_operation_complete("check:queues", success=True)
+
                 time.sleep(self.config.sample_interval)
             except Exception as e:
                 logger.error(f"Error in queue monitor loop: {e}")
+                dream_operation_complete("check:queues", success=False)
                 time.sleep(self.config.sample_interval)
 
     def _check_all_queues(self):

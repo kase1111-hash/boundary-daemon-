@@ -21,6 +21,8 @@ from datetime import datetime
 from enum import Enum
 from collections import deque
 
+from .dreaming import dream_operation_start, dream_operation_complete
+
 logger = logging.getLogger(__name__)
 
 
@@ -298,6 +300,10 @@ class HealthMonitor:
         now = time.time()
         self._last_check = now
 
+        # Report to dreaming reporter
+        dream_operation_start("check:component_health")
+        all_healthy = True
+
         # Check each component
         for name, check_func in self._health_checks.items():
             try:
@@ -316,6 +322,10 @@ class HealthMonitor:
                     metadata=metadata,
                 )
 
+                # Track health status for dreaming reporter
+                if status != ComponentStatus.OK:
+                    all_healthy = False
+
                 # Alert on status change
                 if status != previous_status and self.config.alert_on_degraded:
                     if status in (ComponentStatus.ERROR, ComponentStatus.UNRESPONSIVE):
@@ -325,12 +335,16 @@ class HealthMonitor:
                         self._raise_alert(name, previous_status, status, f"Component recovered: {message}")
 
             except Exception as e:
+                all_healthy = False
                 self._components[name] = ComponentHealth(
                     name=name,
                     status=ComponentStatus.ERROR,
                     last_check=now,
                     message=f"Health check failed: {e}",
                 )
+
+        # Report completion to dreaming reporter
+        dream_operation_complete("check:component_health", success=all_healthy)
 
         # Calculate overall status
         overall = self._calculate_overall_status()
