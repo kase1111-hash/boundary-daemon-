@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, deque
 import urllib.request
 import urllib.error
 
@@ -178,8 +178,8 @@ class ThreatIntelMonitor:
         # SECURITY: Mode getter for network isolation enforcement
         self._get_mode = mode_getter
 
-        # Track blocked API calls for security auditing
-        self._blocked_api_calls: List[Dict] = []
+        # Track blocked API calls for security auditing (bounded to prevent memory leak)
+        self._blocked_api_calls: deque = deque(maxlen=500)
 
         # Threat cache: IP -> ThreatInfo
         self._threat_cache: Dict[str, ThreatInfo] = {}

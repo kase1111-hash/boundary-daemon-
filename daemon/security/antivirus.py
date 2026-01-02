@@ -53,6 +53,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Tuple, Callable
 from datetime import datetime
+from collections import deque
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -428,8 +429,8 @@ class MalwareBazaarClient:
         # SECURITY: Mode getter for network isolation enforcement
         self._get_mode = mode_getter
 
-        # Track blocked API calls for security auditing
-        self._blocked_api_calls: List[Dict] = []
+        # Track blocked API calls for security auditing (bounded to prevent memory leak)
+        self._blocked_api_calls: deque = deque(maxlen=500)
 
     def set_mode_getter(self, getter: Callable[[], str]):
         """Set the mode getter callback."""

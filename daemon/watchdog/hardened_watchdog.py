@@ -44,6 +44,7 @@ import logging
 import threading
 import subprocess
 import ctypes
+from collections import deque
 from ctypes import c_int, c_ulong
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -550,8 +551,8 @@ class HardenedWatchdog:
         self.systemd = SystemdWatchdog()
         self.hardware = HardwareWatchdog()
 
-        # Event log
-        self._events: List[Dict] = []
+        # Event log (bounded to prevent memory leak)
+        self._events: deque = deque(maxlen=1000)
 
     def _log_event(self, event_type: str, details: str):
         """Log a watchdog event"""

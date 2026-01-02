@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Callable
 from enum import Enum
-from collections import defaultdict
+from collections import defaultdict, deque
 import hashlib
 import sys
 
@@ -243,8 +243,8 @@ class DNSSecurityMonitor:
         # SECURITY: Mode getter for network isolation enforcement
         self._get_mode = mode_getter
 
-        # Track blocked operations for security auditing
-        self._blocked_dns_ops: List[Dict] = []
+        # Track blocked operations for security auditing (bounded to prevent memory leak)
+        self._blocked_dns_ops: deque = deque(maxlen=500)
 
         # Query tracking
         self._query_history: List[DNSQueryRecord] = []
