@@ -161,31 +161,82 @@ if %SKIP_DEPS%==0 (
 )
 
 REM ============================================================================
-REM Generate integrity manifest
+REM Initialize config directory and generate integrity manifest
 REM ============================================================================
 echo.
-echo %YELLOW%[4/6] Generating integrity manifest...%RESET%
+echo %YELLOW%[4/6] Initializing config and generating integrity manifest...%RESET%
+
+REM Create config directory if it doesn't exist
+if not exist "config" (
+    echo   Creating config directory...
+    mkdir config
+    if errorlevel 1 (
+        echo %RED%   ERROR: Failed to create config directory%RESET%
+        goto :build_failed
+    )
+    echo %GREEN%   Created: config\%RESET%
+) else (
+    echo   Config directory exists: config\
+)
 
 REM Generate signing key if it doesn't exist
+set SIGNING_KEY_GENERATED=0
 if not exist "config\signing.key" (
     echo   Generating signing key...
-    python -m daemon.security.daemon_integrity generate-key --output config\signing.key
+    python -m daemon.security.daemon_integrity generate-key --output config\signing.key 2>nul
     if errorlevel 1 (
-        echo %YELLOW%   Warning: Failed to generate signing key%RESET%
+        echo %YELLOW%   Warning: Failed to generate signing key via module%RESET%
+        echo   Attempting alternative key generation...
+        REM Fallback: Generate key using Python directly
+        python -c "import os; open('config/signing.key', 'wb').write(os.urandom(32))" 2>nul
+        if errorlevel 1 (
+            echo %RED%   ERROR: Failed to generate signing key%RESET%
+            echo   The daemon will run in development mode without integrity verification.
+        ) else (
+            set SIGNING_KEY_GENERATED=1
+            echo %GREEN%   Generated signing key: config\signing.key (fallback method)%RESET%
+        )
     ) else (
+        set SIGNING_KEY_GENERATED=1
         echo %GREEN%   Generated signing key: config\signing.key%RESET%
     )
 ) else (
+    set SIGNING_KEY_GENERATED=1
     echo   Signing key already exists: config\signing.key
 )
 
-REM Generate manifest
-echo   Generating manifest...
-python -m daemon.security.daemon_integrity create --manifest config\manifest.json --key config\signing.key
-if errorlevel 1 (
-    echo %YELLOW%   Warning: Failed to generate manifest - runtime verification may fail%RESET%
+REM Generate manifest only if signing key exists
+if exist "config\signing.key" (
+    echo   Generating integrity manifest...
+    python -m daemon.security.daemon_integrity create --manifest config\manifest.json --key config\signing.key --root . 2>nul
+    if errorlevel 1 (
+        echo %YELLOW%   Warning: Failed to generate manifest via module%RESET%
+        echo   Attempting alternative manifest generation...
+        REM Fallback: Create a basic manifest structure
+        python -c "import json, hashlib, os, datetime; files={}; [files.update({os.path.join(r,f).replace('\\\\','/'): {'path': os.path.join(r,f).replace('\\\\','/'), 'hash': hashlib.sha256(open(os.path.join(r,f),'rb').read()).hexdigest(), 'size': os.path.getsize(os.path.join(r,f)), 'mtime': os.path.getmtime(os.path.join(r,f))}} for r,d,fs in os.walk('daemon') for f in fs if f.endswith('.py')]; key=open('config/signing.key','rb').read(); import hmac; data={'version':'1.0','created_at':datetime.datetime.utcnow().isoformat()+'Z','daemon_version':'build','hash_algorithm':'sha256','files':files}; data['signature']=hmac.new(key,json.dumps({k:v for k,v in data.items() if k!='signature'},sort_keys=True,separators=(',',':')).encode(),'sha256').hexdigest(); json.dump(data,open('config/manifest.json','w'),indent=2)" 2>nul
+        if errorlevel 1 (
+            echo %RED%   ERROR: Failed to generate manifest%RESET%
+            echo   The daemon will auto-generate a manifest on first run.
+        ) else (
+            echo %GREEN%   Generated manifest: config\manifest.json (fallback method)%RESET%
+        )
+    ) else (
+        echo %GREEN%   Generated manifest: config\manifest.json%RESET%
+    )
 ) else (
-    echo %GREEN%   Generated manifest: config\manifest.json%RESET%
+    echo %YELLOW%   Skipping manifest generation - no signing key available%RESET%
+    echo   The daemon will run in development mode.
+)
+
+REM Verify manifest was created
+if exist "config\manifest.json" (
+    echo   Verifying manifest...
+    python -m daemon.security.daemon_integrity verify --manifest config\manifest.json --key config\signing.key --root . 2>nul
+    if errorlevel 1 (
+        echo %YELLOW%   Warning: Manifest verification returned errors (may be expected during build)%RESET%
+    ) else (
+        echo %GREEN%   Manifest verification passed!%RESET%
+    )
 )
 
 REM ============================================================================
@@ -412,19 +463,79 @@ REM ============================================================================
 echo.
 echo %CYAN%Post-build tasks...%RESET%
 
+REM Ensure dist\config directory exists
+if not exist "dist\config" (
+    echo   Creating dist\config directory...
+    mkdir "dist\config"
+)
+
 REM Copy config files to dist
 if exist "config" (
     echo   Copying configuration files...
     xcopy /E /I /Y "config" "dist\config" >nul 2>&1
-    echo   Configuration files copied to dist\config
+    if errorlevel 1 (
+        echo %YELLOW%   Warning: Some config files may not have copied correctly%RESET%
+    ) else (
+        echo %GREEN%   Configuration files copied to dist\config%RESET%
+    )
+)
+
+REM Verify critical files exist in dist\config
+echo.
+echo %CYAN%Verifying integrity files...%RESET%
+set INTEGRITY_OK=1
+
+if exist "dist\config\signing.key" (
+    echo %GREEN%   [OK] dist\config\signing.key%RESET%
+) else (
+    echo %RED%   [MISSING] dist\config\signing.key%RESET%
+    set INTEGRITY_OK=0
+)
+
+if exist "dist\config\manifest.json" (
+    echo %GREEN%   [OK] dist\config\manifest.json%RESET%
+) else (
+    echo %RED%   [MISSING] dist\config\manifest.json%RESET%
+    set INTEGRITY_OK=0
+)
+
+if %INTEGRITY_OK%==0 (
+    echo.
+    echo %YELLOW%   Warning: Integrity files missing. The daemon will run in development mode.%RESET%
+    echo %YELLOW%   To fix: Re-run build.bat or manually generate:%RESET%
+    echo %YELLOW%     python -m daemon.security.daemon_integrity generate-key --output dist\config\signing.key%RESET%
+    echo %YELLOW%     python -m daemon.security.daemon_integrity create --manifest dist\config\manifest.json --key dist\config\signing.key%RESET%
 )
 
 REM Create run script in dist
+echo.
 echo @echo off > dist\run-daemon.bat
 echo echo Starting Boundary Daemon... >> dist\run-daemon.bat
-echo "%~dp0%APP_NAME%.exe" %%* >> dist\run-daemon.bat
+echo cd /d "%%~dp0" >> dist\run-daemon.bat
+echo "%APP_NAME%.exe" %%* >> dist\run-daemon.bat
 echo pause >> dist\run-daemon.bat
 echo   Created: dist\run-daemon.bat
+
+REM Create a setup script for first-time initialization
+echo @echo off > dist\setup-daemon.bat
+echo echo ============================================= >> dist\setup-daemon.bat
+echo echo  Boundary Daemon - First Time Setup >> dist\setup-daemon.bat
+echo echo ============================================= >> dist\setup-daemon.bat
+echo echo. >> dist\setup-daemon.bat
+echo cd /d "%%~dp0" >> dist\setup-daemon.bat
+echo if not exist "config" mkdir config >> dist\setup-daemon.bat
+echo echo Checking for signing key... >> dist\setup-daemon.bat
+echo if not exist "config\signing.key" ( >> dist\setup-daemon.bat
+echo     echo Generating signing key... >> dist\setup-daemon.bat
+echo     python -c "import os; open('config/signing.key', 'wb').write(os.urandom(32))" >> dist\setup-daemon.bat
+echo     echo Done. >> dist\setup-daemon.bat
+echo ) else ( >> dist\setup-daemon.bat
+echo     echo Signing key already exists. >> dist\setup-daemon.bat
+echo ) >> dist\setup-daemon.bat
+echo echo. >> dist\setup-daemon.bat
+echo echo Setup complete! Run the daemon with: %APP_NAME%.exe >> dist\setup-daemon.bat
+echo pause >> dist\setup-daemon.bat
+echo   Created: dist\setup-daemon.bat
 
 REM Get executable size
 if "%BUILD_MODE%"=="onefile" (
@@ -458,7 +569,13 @@ if "%BUILD_MODE%"=="onefile" (
     echo   Directory: dist\%APP_NAME%\
 )
 echo.
-echo To run the daemon:
+echo   Config:     dist\config\
+echo.
+echo %CYAN%First time setup:%RESET%
+echo   cd dist
+echo   setup-daemon.bat    ^(if integrity files are missing^)
+echo.
+echo %CYAN%To run the daemon:%RESET%
 echo   cd dist
 echo   %APP_NAME%.exe
 echo.
