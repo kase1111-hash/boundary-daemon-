@@ -10,6 +10,8 @@ like thoughts passing through a sleeping mind.
 
 import logging
 import random  # nosec B311 - used for UI phrase variety, not security
+import re
+import shutil
 import threading
 import time
 from collections import deque
@@ -184,6 +186,53 @@ class DreamingReporter:
             return text
         return f"{self.COLORS.get(color, '')}{text}{self.COLORS['reset']}"
 
+    def _get_terminal_width(self) -> int:
+        """Get terminal width, with fallback for non-terminal environments."""
+        try:
+            return shutil.get_terminal_size().columns
+        except Exception:
+            return 80  # Default fallback
+
+    def _visible_length(self, text: str) -> int:
+        """Calculate visible length of text, excluding ANSI escape codes."""
+        # Remove ANSI escape sequences
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+        return len(ansi_escape.sub('', text))
+
+    def _truncate_to_width(self, text: str, max_width: int) -> str:
+        """Truncate text to fit within max_width, preserving ANSI codes."""
+        if self._visible_length(text) <= max_width:
+            return text
+
+        # Pattern to match ANSI escape codes
+        ansi_escape = re.compile(r'(\x1b\[[0-9;]*m)')
+        parts = ansi_escape.split(text)
+
+        result = []
+        visible_len = 0
+        for part in parts:
+            if ansi_escape.match(part):
+                # This is an ANSI code, add it without counting
+                result.append(part)
+            else:
+                # This is visible text
+                remaining = max_width - visible_len - 1  # -1 for ellipsis
+                if remaining <= 0:
+                    break
+                if len(part) > remaining:
+                    result.append(part[:remaining] + "…")
+                    visible_len += remaining + 1
+                    break
+                else:
+                    result.append(part)
+                    visible_len += len(part)
+
+        # Add reset code at end to ensure colors don't bleed
+        if self.use_colors:
+            result.append(self.COLORS['reset'])
+
+        return ''.join(result)
+
     def register_state_callback(self, name: str, callback: Callable) -> None:
         """Register a callback to get daemon state for reporting."""
         with self._lock:
@@ -354,7 +403,11 @@ class DreamingReporter:
                     pass  # Silent fail - don't interrupt dreaming
 
             self._last_print_time = now
-            return " ".join(parts)
+            status_line = " ".join(parts)
+
+            # Truncate to terminal width to prevent wrapping
+            term_width = self._get_terminal_width()
+            return self._truncate_to_width(status_line, term_width - 1)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get current statistics."""
