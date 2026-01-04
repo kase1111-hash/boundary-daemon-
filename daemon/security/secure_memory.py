@@ -34,14 +34,30 @@ except ImportError:
     MLOCK_AVAILABLE = False
 
 # Check for ctypes memset
-try:
-    _libc = ctypes.CDLL(None)
-    _memset = _libc.memset
-    _memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
-    _memset.restype = ctypes.c_void_p
-    CTYPES_MEMSET_AVAILABLE = True
-except (OSError, AttributeError):
-    CTYPES_MEMSET_AVAILABLE = False
+import sys
+CTYPES_MEMSET_AVAILABLE = False
+_memset = None
+
+if sys.platform == 'win32':
+    # Windows: use msvcrt
+    try:
+        _msvcrt = ctypes.CDLL('msvcrt')
+        _memset = _msvcrt.memset
+        _memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+        _memset.restype = ctypes.c_void_p
+        CTYPES_MEMSET_AVAILABLE = True
+    except (OSError, AttributeError, TypeError):
+        CTYPES_MEMSET_AVAILABLE = False
+else:
+    # Unix/Linux: use libc
+    try:
+        _libc = ctypes.CDLL(None)
+        _memset = _libc.memset
+        _memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+        _memset.restype = ctypes.c_void_p
+        CTYPES_MEMSET_AVAILABLE = True
+    except (OSError, AttributeError, TypeError):
+        CTYPES_MEMSET_AVAILABLE = False
 
 
 def secure_zero_memory(data: Union[bytearray, memoryview]) -> bool:

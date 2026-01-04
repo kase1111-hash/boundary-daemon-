@@ -26,7 +26,6 @@ Keyboard Shortcuts:
     [?] Help
 """
 
-import curses
 import json
 import logging
 import os
@@ -35,6 +34,16 @@ import socket
 import sys
 import threading
 import time
+
+# Handle curses import for Windows compatibility
+try:
+    import curses
+except ImportError:
+    if sys.platform == 'win32':
+        print("Error: curses library not available on Windows.")
+        print("Please install windows-curses: pip install windows-curses")
+        sys.exit(1)
+    raise
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
