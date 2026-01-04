@@ -17,7 +17,23 @@ from datetime import datetime
 from typing import Optional, Tuple
 import logging
 
-logger = logging.getLogger(__name__)
+# Import enhanced logging configuration
+try:
+    from .logging_config import (
+        setup_logging, get_logger as get_enhanced_logger,
+        set_verbose, set_trace, is_verbose, is_trace,
+        FeatureArea, configure_from_environment
+    )
+    ENHANCED_LOGGING_AVAILABLE = True
+except ImportError:
+    ENHANCED_LOGGING_AVAILABLE = False
+    get_enhanced_logger = None
+
+# Use enhanced logger if available, otherwise standard
+if ENHANCED_LOGGING_AVAILABLE and get_enhanced_logger:
+    logger = get_enhanced_logger(__name__)
+else:
+    logger = logging.getLogger(__name__)
 
 # Cross-platform detection
 IS_WINDOWS = sys.platform == 'win32'

@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""
+Boundary Daemon Pipeline Test Runner CLI.
+
+This tool tests each feature pipeline of the Boundary Daemon to ensure
+all components are working correctly.
+
+Usage:
+    ./test_pipelines --all --verbose
+    ./test_pipelines --pipeline state_monitor --trace
+    ./test_pipelines --list
+    ./test_pipelines --comprehensive --verbose
+
+Features tested:
+- State Monitor: Network, hardware, USB detection
+- Policy Engine: Mode management, policy decisions
+- Tripwires: Violation detection, auto-lockdown
+- Event Logger: Hash chain, tamper detection
+- Security: DNS, ARP, prompt injection, file integrity
+- Enforcement: Network, USB, process control
+- Sandbox: Namespace, seccomp, cgroups
+- Auth: API auth, ceremonies, biometrics
+- Health: Component monitoring, heartbeats
+- Integration: External system connections
+"""
+
+import os
+import sys
+import json
+import argparse
+from pathlib import Path
+from datetime import datetime
+
+# Ensure the project root is in the path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+
+def setup_environment():
+    """Setup the test environment."""
+    # Set environment variables for testing
+    os.environ.setdefault('BOUNDARY_TEST_MODE', '1')
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Boundary Daemon Pipeline Test Runner',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  ./test_pipelines --all                    Run all pipeline tests
+  ./test_pipelines --all --verbose          Run with verbose logging
+  ./test_pipelines --all --trace            Run with trace logging (ultra-verbose)
+  ./test_pipelines --pipeline state_monitor Run specific pipeline
+  ./test_pipelines --comprehensive          Run comprehensive tests
+  ./test_pipelines --list                   List available pipelines
+  ./test_pipelines --report test_results.json  Export results to JSON
+        """
+    )
+
+    # Test selection
+    parser.add_argument(
+        '--all', '-a',
+        action='store_true',
+        help='Run all pipeline tests'
+    )
+    parser.add_argument(
+        '--pipeline', '-p',
+        type=str,
+        help='Run specific pipeline (use --list to see options)'
+    )
+    parser.add_argument(
+        '--comprehensive', '-c',
+        action='store_true',
+        help='Run comprehensive pipeline tests with detailed verification'
+    )
+    parser.add_argument(
+        '--list', '-l',
+        action='store_true',
+        help='List available pipelines'
+    )
+
+    # Logging options
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+    parser.add_argument(
+        '--trace', '-t',
+        action='store_true',
+        help='Enable trace logging (ultra-verbose)'
+    )
+    parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Minimal output (errors only)'
+    )
+
+    # Output options
+    parser.add_argument(
+        '--report', '-r',
+        type=str,
+        help='Export results to JSON file'
+    )
+    parser.add_argument(
+        '--parallel',
+        action='store_true',
+        help='Run pipelines in parallel'
+    )
+    parser.add_argument(
+        '--no-color',
+        action='store_true',
+        help='Disable colored output'
+    )
+
+    args = parser.parse_args()
+
+    # Setup environment
+    setup_environment()
+
+    # Import after environment setup
+    try:
+        from daemon.logging_config import setup_logging
+        from tests.tools.feature_test_runner import (
+            FeatureTestRunner,
+            run_all_pipelines,
+            run_pipeline,
+            TestStatus,
+        )
+        from tests.tools.pipeline_tests.test_all_pipelines import run_comprehensive_tests
+    except ImportError as e:
+        print(f"Error importing test modules: {e}")
+        print("Make sure you're running from the project root directory")
+        sys.exit(1)
+
+    # Handle --list
+    if args.list:
+        print("Available pipelines:")
+        print("-" * 40)
+        for name in FeatureTestRunner.PIPELINES:
+            print(f"  - {name}")
+        print()
+        print("Use --pipeline <name> to run a specific pipeline")
+        print("Use --all to run all pipelines")
+        print("Use --comprehensive for in-depth testing")
+        return
+
+    # Setup logging
+    if not args.quiet:
+        setup_logging(
+            verbose=args.verbose,
+            trace=args.trace,
+            console=True
+        )
+
+    # Print header
+    if not args.quiet:
+        print()
+        print("=" * 70)
+        print("  BOUNDARY DAEMON PIPELINE TEST RUNNER")
+        print("=" * 70)
+        print(f"  Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  Verbose: {args.verbose}, Trace: {args.trace}")
+        print("=" * 70)
+        print()
+
+    results = []
+
+    # Run tests based on arguments
+    if args.comprehensive:
+        if not args.quiet:
+            print("Running COMPREHENSIVE pipeline tests...")
+            print()
+
+        results = run_comprehensive_tests(
+            verbose=args.verbose,
+            trace=args.trace
+        )
+
+    elif args.all:
+        if not args.quiet:
+            print("Running ALL pipeline tests...")
+            print()
+
+        results = run_all_pipelines(
+            verbose=args.verbose,
+            trace=args.trace,
+            parallel=args.parallel
+        )
+
+    elif args.pipeline:
+        if not args.quiet:
+            print(f"Running pipeline: {args.pipeline}")
+            print()
+
+        try:
+            result = run_pipeline(
+                args.pipeline,
+                verbose=args.verbose,
+                trace=args.trace
+            )
+            results = [result]
+        except ValueError as e:
+            print(f"Error: {e}")
+            print("Use --list to see available pipelines")
+            sys.exit(1)
+
+    else:
+        parser.print_help()
+        return
+
+    # Calculate summary
+    if hasattr(results[0], 'passed'):
+        # Comprehensive test results
+        total_passed = sum(r.passed for r in results)
+        total_failed = sum(r.failed for r in results)
+        total_skipped = sum(r.skipped for r in results)
+        total_duration = sum(r.duration_ms for r in results)
+    else:
+        # Standard pipeline results
+        total_passed = sum(r.summary.get('passed', 0) for r in results)
+        total_failed = sum(r.summary.get('failed', 0) for r in results)
+        total_skipped = sum(r.summary.get('skipped', 0) for r in results)
+        total_duration = sum(r.duration_ms for r in results)
+
+    # Print summary
+    if not args.quiet:
+        print()
+        print("=" * 70)
+        print("  TEST SUMMARY")
+        print("=" * 70)
+
+        for r in results:
+            if hasattr(r, 'passed'):
+                status = "PASS" if r.failed == 0 else "FAIL"
+                print(f"  [{status}] {r.name:25} ({r.passed}/{r.passed + r.failed + r.skipped} passed)")
+            else:
+                status = "PASS" if r.status == TestStatus.PASSED else "FAIL"
+                print(f"  [{status}] {r.pipeline_name:25} ({r.summary['passed']}/{r.summary['total']} passed)")
+
+        print()
+        print("-" * 40)
+        print(f"  Total Tests:  {total_passed + total_failed + total_skipped}")
+        print(f"  Passed:       {total_passed}")
+        print(f"  Failed:       {total_failed}")
+        print(f"  Skipped:      {total_skipped}")
+        print(f"  Duration:     {total_duration:.0f}ms")
+        print()
+
+        if total_failed == 0:
+            print("  STATUS: ALL PIPELINES PASSED")
+        else:
+            print("  STATUS: SOME PIPELINES FAILED")
+
+        print("=" * 70)
+        print()
+
+    # Export results if requested
+    if args.report:
+        report_data = {
+            'timestamp': datetime.now().isoformat(),
+            'summary': {
+                'total': total_passed + total_failed + total_skipped,
+                'passed': total_passed,
+                'failed': total_failed,
+                'skipped': total_skipped,
+                'duration_ms': total_duration,
+            },
+            'pipelines': []
+        }
+
+        for r in results:
+            if hasattr(r, 'passed'):
+                report_data['pipelines'].append({
+                    'name': r.name,
+                    'passed': r.passed,
+                    'failed': r.failed,
+                    'skipped': r.skipped,
+                    'duration_ms': r.duration_ms,
+                    'errors': r.errors,
+                    'details': r.details,
+                })
+            else:
+                report_data['pipelines'].append(r.to_dict())
+
+        with open(args.report, 'w') as f:
+            json.dump(report_data, f, indent=2)
+
+        if not args.quiet:
+            print(f"Results exported to: {args.report}")
+
+    # Exit with appropriate code
+    sys.exit(1 if total_failed > 0 else 0)
+
+
+if __name__ == '__main__':
+    main()
