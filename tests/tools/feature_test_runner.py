@@ -633,8 +633,8 @@ class SecurityPipeline(PipelineTest):
         # Test 6: Threat Intelligence
         def test_threat_intel():
             try:
-                from daemon.security.threat_intel import ThreatIntelligence
-                intel = ThreatIntelligence()
+                from daemon.security.threat_intel import ThreatIntelMonitor
+                intel = ThreatIntelMonitor()
                 return intel is not None
             except ImportError:
                 return True
@@ -783,8 +783,8 @@ class SandboxPipeline(PipelineTest):
         # Test 4: CGroups
         def test_cgroups():
             try:
-                from daemon.sandbox.cgroups import CGroupManager
-                manager = CGroupManager()
+                from daemon.sandbox.cgroups import CgroupManager
+                manager = CgroupManager()
                 return manager is not None
             except ImportError:
                 return True
@@ -797,8 +797,8 @@ class SandboxPipeline(PipelineTest):
         # Test 5: Profile Config
         def test_profile_config():
             try:
-                from daemon.sandbox.profile_config import SandboxProfile
-                profile = SandboxProfile(name="test")
+                from daemon.sandbox.profile_config import SandboxProfileConfig
+                profile = SandboxProfileConfig(name="test")
                 return profile is not None
             except ImportError:
                 return True
@@ -813,12 +813,12 @@ class AuthPipeline(PipelineTest):
     feature_area = FeatureArea.AUTH
 
     def _run_tests(self) -> None:
-        # Test 1: API Auth
+        # Test 1: API Auth (TokenManager)
         def test_api_auth():
             try:
-                from daemon.auth.api_auth import APIAuthenticator
-                auth = APIAuthenticator()
-                return auth is not None
+                from daemon.auth.api_auth import TokenManager
+                manager = TokenManager()
+                return manager is not None
             except ImportError:
                 return True
 

@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+Boundary Daemon TUI Launcher.
+
+Usage:
+    boundary_tui              # Start TUI (demo mode if daemon not running)
+    boundary_tui --connect    # Connect to running daemon
+    boundary_tui --start      # Start daemon and launch TUI
+    boundary_tui --demo       # Run in demo mode (no daemon)
+"""
+
+import sys
+import os
+import argparse
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent))
+
+
+def check_dependencies() -> bool:
+    """Check if required dependencies are installed."""
+    try:
+        import textual
+        return True
+    except ImportError:
+        print("ERROR: textual is not installed.")
+        print("Install with: pip install textual")
+        return False
+
+
+def start_daemon():
+    """Start the boundary daemon."""
+    try:
+        from daemon.boundary_daemon import BoundaryDaemon
+        from daemon.policy_engine import BoundaryMode
+
+        # Use temp directory for logs
+        import tempfile
+        log_dir = tempfile.mkdtemp(prefix="boundary_tui_")
+
+        daemon = BoundaryDaemon(
+            log_dir=log_dir,
+            initial_mode=BoundaryMode.OPEN,
+            skip_integrity_check=True
+        )
+
+        return daemon
+
+    except Exception as e:
+        print(f"ERROR: Failed to start daemon: {e}")
+        return None
+
+
+def connect_to_daemon():
+    """Connect to a running daemon via socket."""
+    # TODO: Implement socket connection to running daemon
+    print("Socket connection not yet implemented.")
+    print("Starting embedded daemon instead...")
+    return start_daemon()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Boundary Daemon TUI - Terminal Management Console",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Keyboard Shortcuts:
+  d - Dashboard
+  m - Mode Control
+  e - Event Log
+  t - Tripwire Monitor
+  s - Settings
+  q - Quit
+
+Examples:
+  boundary_tui              Start TUI with embedded daemon
+  boundary_tui --demo       Run in demo mode (no daemon)
+  boundary_tui --connect    Connect to running daemon (WIP)
+        """
+    )
+
+    parser.add_argument(
+        '--demo',
+        action='store_true',
+        help='Run in demo mode without daemon'
+    )
+
+    parser.add_argument(
+        '--connect',
+        action='store_true',
+        help='Connect to running daemon via socket'
+    )
+
+    parser.add_argument(
+        '--start',
+        action='store_true',
+        help='Start embedded daemon and launch TUI'
+    )
+
+    parser.add_argument(
+        '--log-dir',
+        type=str,
+        default=None,
+        help='Directory for daemon logs'
+    )
+
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['OPEN', 'RESTRICTED', 'TRUSTED', 'AIRGAP', 'COLDROOM', 'LOCKDOWN'],
+        default='OPEN',
+        help='Initial boundary mode'
+    )
+
+    args = parser.parse_args()
+
+    # Check dependencies
+    if not check_dependencies():
+        sys.exit(1)
+
+    # Import TUI
+    from tui.app import BoundaryDaemonTUI, run_tui
+
+    daemon = None
+
+    if args.demo:
+        print("Starting in demo mode...")
+        daemon = None
+
+    elif args.connect:
+        print("Connecting to daemon...")
+        daemon = connect_to_daemon()
+
+    else:
+        print("Starting Boundary Daemon TUI...")
+        print("Initializing daemon...")
+        daemon = start_daemon()
+
+        if daemon:
+            print(f"Daemon started in {args.mode} mode")
+        else:
+            print("Running without daemon (demo mode)")
+
+    # Launch TUI
+    print("Launching TUI...")
+    print()
+
+    try:
+        app = BoundaryDaemonTUI(daemon=daemon)
+        app.run()
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        print("Boundary Daemon TUI closed.")
+
+
+if __name__ == "__main__":
+    main()
