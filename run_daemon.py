@@ -65,8 +65,39 @@ def main():
                         help='Enable system tray icon (minimizes to tray on Windows)')
     parser.add_argument('--no-auto-hide', action='store_true',
                         help='Do not auto-hide console when using --tray')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Enable verbose logging')
+    parser.add_argument('--trace', '-t', action='store_true',
+                        help='Enable trace logging (ultra-verbose)')
+    parser.add_argument('--log-json', action='store_true',
+                        help='Output logs in JSON format')
+    parser.add_argument('--log-file', type=str,
+                        help='Additional log file path for detailed logging')
 
     args = parser.parse_args()
+
+    # Setup enhanced logging if available
+    try:
+        from daemon.logging_config import setup_logging, set_verbose, set_trace
+        setup_logging(
+            verbose=args.verbose,
+            trace=args.trace,
+            log_file=args.log_file,
+            console=True,
+            json_format=args.log_json,
+        )
+        if args.verbose:
+            print("Verbose logging enabled")
+        if args.trace:
+            print("Trace logging enabled (ultra-verbose)")
+    except ImportError:
+        # Enhanced logging not available, use basic setup
+        import logging
+        level = logging.DEBUG if args.verbose or args.trace else logging.INFO
+        logging.basicConfig(
+            level=level,
+            format='%(asctime)s %(levelname)s [%(name)s] %(message)s'
+        )
 
     # Parse mode
     mode_map = {
