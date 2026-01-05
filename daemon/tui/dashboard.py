@@ -157,39 +157,72 @@ class Colors:
 
 
 class MatrixRain:
-    """Digital rain effect from The Matrix."""
+    """Digital rain effect from The Matrix with depth simulation."""
 
-    # Characters used in the Matrix digital rain (mix of half-width katakana and symbols)
-    MATRIX_CHARS = (
-        "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "+-*/<>=$#@&"
-    )
+    # 5 depth layers - each with different character sets (simple=far, complex=near)
+    # Layer 0: Farthest - simple dots and lines
+    # Layer 4: Nearest - full katakana and symbols
+    DEPTH_CHARS = [
+        ".-·:;",  # Layer 0: Farthest - minimal
+        ".|!:;+-=",  # Layer 1: Simple ASCII
+        "0123456789+-*/<>=$#",  # Layer 2: Numbers and symbols
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",  # Layer 3: Alphanumeric
+        "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789$#@&",  # Layer 4: Nearest - full
+    ]
+
+    # Speed ranges for each depth layer (min, max) - farther = slower, nearer = faster
+    DEPTH_SPEEDS = [
+        (0.3, 0.5),   # Layer 0: Slowest (farthest)
+        (0.5, 0.8),   # Layer 1
+        (0.8, 1.2),   # Layer 2: Medium
+        (1.2, 1.8),   # Layer 3
+        (1.8, 2.5),   # Layer 4: Fastest (nearest)
+    ]
+
+    # Tail lengths for each depth (shorter = farther, longer = nearer)
+    DEPTH_LENGTHS = [
+        (3, 6),    # Layer 0
+        (4, 8),    # Layer 1
+        (6, 12),   # Layer 2
+        (8, 16),   # Layer 3
+        (12, 20),  # Layer 4
+    ]
+
+    # Distribution of drops across layers (more in middle layers for balance)
+    DEPTH_WEIGHTS = [0.10, 0.15, 0.30, 0.25, 0.20]
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
         self.drops: List[Dict] = []
-        self._target_drops = max(3, width // 15)
+        self._target_drops = max(5, width // 10)  # More drops overall
         self._init_drops()
 
     def _init_drops(self):
-        """Initialize rain drops at random positions."""
+        """Initialize rain drops at random positions across all depth layers."""
         self.drops = []
         for _ in range(self._target_drops):
             self._add_drop()
 
-    def _add_drop(self):
-        """Add a new rain drop."""
+    def _add_drop(self, depth: Optional[int] = None):
+        """Add a new rain drop at a random or specified depth layer."""
         if self.width <= 0:
             return
+
+        # Choose depth layer based on weights if not specified
+        if depth is None:
+            depth = random.choices(range(5), weights=self.DEPTH_WEIGHTS)[0]
+
+        speed_min, speed_max = self.DEPTH_SPEEDS[depth]
+        len_min, len_max = self.DEPTH_LENGTHS[depth]
+
         self.drops.append({
             'x': random.randint(0, self.width - 1),
             'y': random.randint(-self.height, 0),
-            'speed': random.uniform(0.4, 1.2),
-            'length': random.randint(5, min(16, self.height // 2)),
-            'char_offset': random.randint(0, len(self.MATRIX_CHARS) - 1),
+            'speed': random.uniform(speed_min, speed_max),
+            'length': random.randint(len_min, min(len_max, self.height // 2)),
+            'char_offset': random.randint(0, len(self.DEPTH_CHARS[depth]) - 1),
+            'depth': depth,
             'phase': 0.0,
         })
 
@@ -200,8 +233,9 @@ class MatrixRain:
             drop['phase'] += drop['speed']
             drop['y'] = int(drop['phase'])
 
-            # Roll through characters as the drop falls
-            drop['char_offset'] = (drop['char_offset'] + 1) % len(self.MATRIX_CHARS)
+            # Roll through characters as the drop falls (faster roll for nearer drops)
+            roll_speed = 1 + drop['depth']  # Layers 0-4 roll at speeds 1-5
+            drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(self.DEPTH_CHARS[drop['depth']])
 
             # Keep drop if still on screen
             if drop['y'] - drop['length'] < self.height:
@@ -218,63 +252,99 @@ class MatrixRain:
         old_width = self.width
         self.width = width
         self.height = height
-        self._target_drops = max(3, width // 15)
+        self._target_drops = max(5, width // 10)
 
         # Remove drops that are now out of bounds
         self.drops = [d for d in self.drops if d['x'] < width]
 
         # Add more drops if window got bigger
         if width > old_width:
-            for _ in range(max(1, (width - old_width) // 15)):
+            for _ in range(max(1, (width - old_width) // 10)):
                 self._add_drop()
 
     def render(self, screen):
-        """Render rain drops to screen."""
-        for drop in self.drops:
+        """Render rain drops with depth-based visual effects."""
+        # Sort drops by depth so farther ones render first (get overwritten by nearer)
+        sorted_drops = sorted(self.drops, key=lambda d: d['depth'])
+
+        for drop in sorted_drops:
+            depth = drop['depth']
+            chars = self.DEPTH_CHARS[depth]
+
             for i in range(drop['length']):
                 y = drop['y'] - i
                 if 0 <= y < self.height and 0 <= drop['x'] < self.width:
                     # Character rolls through the charset as it falls
-                    char_idx = (drop['char_offset'] + i * 3) % len(self.MATRIX_CHARS)
-                    char = self.MATRIX_CHARS[char_idx]
+                    char_idx = (drop['char_offset'] + i * 2) % len(chars)
+                    char = chars[char_idx]
 
-                    # Randomly mutate some characters for extra flicker
-                    if random.random() < 0.05:
-                        char = random.choice(self.MATRIX_CHARS)
+                    # More flicker for nearer drops
+                    if random.random() < 0.02 * (depth + 1):
+                        char = random.choice(chars)
 
                     try:
-                        if i == 0:
-                            # Bright white head of the drop
-                            screen.attron(curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD)
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD)
-                        elif i == 1:
-                            # Bright green just after head
-                            screen.attron(curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD)
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD)
-                        elif i < 4:
-                            # Normal green
-                            screen.attron(curses.color_pair(Colors.MATRIX_DIM))
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_DIM))
-                        elif i < 7:
-                            # Fading green (using DIM attribute)
-                            screen.attron(curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM)
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM)
-                        elif i < 10:
-                            # More faded
-                            screen.attron(curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM)
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM)
-                        else:
-                            # Nearly invisible tail
-                            screen.attron(curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM)
-                            screen.addstr(y, drop['x'], char)
-                            screen.attroff(curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM)
+                        self._render_char(screen, y, drop['x'], char, i, depth)
                     except curses.error:
                         pass
+
+    def _render_char(self, screen, y: int, x: int, char: str, pos: int, depth: int):
+        """Render a single character with depth-appropriate styling."""
+        # Depth 0 = farthest/dimmest, Depth 4 = nearest/brightest
+
+        if depth == 0:
+            # Farthest layer - very dim, no head highlight
+            if pos < 2:
+                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+            else:
+                attr = curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM
+        elif depth == 1:
+            # Far layer - dim
+            if pos == 0:
+                attr = curses.color_pair(Colors.MATRIX_FADE1)
+            elif pos < 3:
+                attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+            else:
+                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+        elif depth == 2:
+            # Middle layer - normal
+            if pos == 0:
+                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+            elif pos < 3:
+                attr = curses.color_pair(Colors.MATRIX_DIM)
+            elif pos < 6:
+                attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+            else:
+                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+        elif depth == 3:
+            # Near layer - bright
+            if pos == 0:
+                attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+            elif pos == 1:
+                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+            elif pos < 5:
+                attr = curses.color_pair(Colors.MATRIX_DIM)
+            elif pos < 9:
+                attr = curses.color_pair(Colors.MATRIX_FADE1)
+            else:
+                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+        else:  # depth == 4
+            # Nearest layer - brightest, boldest
+            if pos == 0:
+                attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+            elif pos == 1:
+                attr = curses.color_pair(Colors.MATRIX_BRIGHT)
+            elif pos < 4:
+                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+            elif pos < 8:
+                attr = curses.color_pair(Colors.MATRIX_DIM)
+            elif pos < 12:
+                attr = curses.color_pair(Colors.MATRIX_FADE1)
+            else:
+                attr = curses.color_pair(Colors.MATRIX_FADE2)
+
+        screen.attron(attr)
+        screen.addstr(y, x, char)
+        screen.attroff(attr)
 
 
 class DashboardClient:
