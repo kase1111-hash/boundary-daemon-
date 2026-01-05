@@ -385,18 +385,80 @@ class Dashboard:
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
             if sys.platform == 'win32':
+                # Try to auto-launch with Python 3.12 if available
+                if self._try_relaunch_with_py312():
+                    return  # Successfully relaunched
                 print("Error: curses library not available on Windows.")
                 print("")
                 print("Try: pip install windows-curses")
                 print("")
-                print("If that fails (e.g., Python 3.14+), use Python 3.12:")
-                print("  1. Install Python 3.12 from python.org")
-                print("  2. py -3.12 -m pip install windows-curses")
-                print("  3. py -3.12 -m daemon.tui.dashboard --matrix")
+                print("If that fails (e.g., Python 3.14+), install Python 3.12:")
+                print("  1. Download from https://www.python.org/downloads/release/python-3120/")
+                print("  2. Run: py -3.12 -m pip install windows-curses")
+                print("  3. Re-run this command (it will auto-detect Python 3.12)")
             else:
                 print("Error: curses library not available.")
             sys.exit(1)
         curses.wrapper(self._main_loop)
+
+    def _try_relaunch_with_py312(self) -> bool:
+        """Try to relaunch the dashboard with Python 3.12 on Windows."""
+        import subprocess
+
+        # Check if we're already being relaunched (prevent infinite loop)
+        if os.environ.get('_BOUNDARY_PY312_RELAUNCH'):
+            return False
+
+        # Try to find Python 3.12
+        try:
+            result = subprocess.run(
+                ['py', '-3.12', '--version'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0:
+                return False
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+        # Check if windows-curses is installed for Python 3.12
+        try:
+            result = subprocess.run(
+                ['py', '-3.12', '-c', 'import curses'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0:
+                # Try to install windows-curses automatically
+                print("Found Python 3.12, installing windows-curses...")
+                install_result = subprocess.run(
+                    ['py', '-3.12', '-m', 'pip', 'install', '-q', 'windows-curses'],
+                    capture_output=True, text=True, timeout=60
+                )
+                if install_result.returncode != 0:
+                    print("Failed to install windows-curses for Python 3.12")
+                    return False
+                print("Successfully installed windows-curses!")
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+        # Relaunch with Python 3.12
+        print("Relaunching with Python 3.12...")
+        env = os.environ.copy()
+        env['_BOUNDARY_PY312_RELAUNCH'] = '1'
+
+        # Rebuild the command line arguments
+        args = ['py', '-3.12', '-m', 'daemon.tui.dashboard']
+        if self.matrix_mode:
+            args.append('--matrix')
+        if self.refresh_interval != 2.0:
+            args.extend(['--refresh', str(self.refresh_interval)])
+
+        try:
+            result = subprocess.run(args, env=env)
+            sys.exit(result.returncode)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+        return True
 
     def _main_loop(self, screen):
         """Main curses loop."""
