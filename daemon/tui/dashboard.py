@@ -143,6 +143,7 @@ class Colors:
     SAND_FADE = 29       # Faded sand
     FOG_BRIGHT = 30      # Bright fog (white)
     FOG_DIM = 31         # Dim fog (gray)
+    MATRIX_DARK = 32     # Dark green for rain tails
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -177,6 +178,17 @@ class Colors:
         curses.init_pair(Colors.MATRIX_FADE1, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(Colors.MATRIX_FADE2, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(Colors.MATRIX_FADE3, curses.COLOR_BLACK, curses.COLOR_BLACK)
+        # Dark green for rain tails - try to use custom dark green if terminal supports it
+        try:
+            if curses.can_change_color() and curses.COLORS >= 256:
+                # Define a custom dark green color (RGB values scaled 0-1000)
+                curses.init_color(100, 0, 300, 0)  # Dark green
+                curses.init_pair(Colors.MATRIX_DARK, 100, curses.COLOR_BLACK)
+            else:
+                # Fallback: use normal green, will apply A_DIM when rendering
+                curses.init_pair(Colors.MATRIX_DARK, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        except:
+            curses.init_pair(Colors.MATRIX_DARK, curses.COLOR_GREEN, curses.COLOR_BLACK)
         # Lightning flash - inverted bright white on green
         curses.init_pair(Colors.LIGHTNING, curses.COLOR_BLACK, curses.COLOR_WHITE)
         # Alley scene colors - muted blue and grey
@@ -330,11 +342,11 @@ class MatrixRain:
 
     # Tail lengths for each depth (tiny rain = very short, big drops = long trails)
     DEPTH_LENGTHS = [
-        (2, 5),    # Layer 0: Short streaks
-        (4, 8),    # Layer 1: Medium-short
-        (8, 14),   # Layer 2: Medium
-        (14, 22),  # Layer 3: Long
-        (20, 35),  # Layer 4: Very long trails
+        (1, 3),    # Layer 0: Very short drops - single chars and short streaks
+        (2, 6),    # Layer 1: Short
+        (6, 12),   # Layer 2: Medium
+        (12, 20),  # Layer 3: Long
+        (18, 30),  # Layer 4: Very long trails
     ]
 
     # Distribution - massive tiny rain!
@@ -412,12 +424,17 @@ class MatrixRain:
         # Create fog as clustered patches, not random scatter
         num_patch_centers = max(5, self.width // 20)
 
+        # Character sets by size - assigned once, not randomized per frame
+        small_chars = ['·', '.', ':', '∴']
+        medium_chars = ['░', '▒']
+        big_chars = ['▓', '█', '▒']
+
         for _ in range(num_patch_centers):
             # Each patch has a center point
             center_x = random.uniform(0, self.width)
             center_y = random.uniform(0, self.height)
-            patch_dx = random.uniform(-0.2, 0.2)  # Whole patch drifts together
-            patch_dy = random.uniform(-0.05, 0.05)
+            patch_dx = random.uniform(-0.15, 0.15)  # Whole patch drifts together
+            patch_dy = random.uniform(-0.04, 0.04)
 
             # Create particles clustered around the center
             patch_size = random.randint(8, 20)
@@ -425,14 +442,26 @@ class MatrixRain:
                 # Particles spread around center with gaussian-like distribution
                 offset_x = random.gauss(0, 4)
                 offset_y = random.gauss(0, 3)
+                size = random.choice([1, 1, 1, 2, 2, 3])
+
+                # Assign stable character based on size
+                if size >= 3:
+                    char = random.choice(big_chars)
+                elif size >= 2:
+                    char = random.choice(medium_chars)
+                else:
+                    char = random.choice(small_chars)
+
                 self._fog_particles.append({
                     'x': center_x + offset_x,
                     'y': center_y + offset_y,
-                    'dx': patch_dx + random.uniform(-0.05, 0.05),  # Slight individual variation
-                    'dy': patch_dy + random.uniform(-0.02, 0.02),
-                    'char': random.choice(['░', '▒', '▓', '·', '.', ':', '∴']),
-                    'opacity': random.uniform(0.4, 1.0),
-                    'size': random.choice([1, 1, 1, 2, 2, 3]),  # 1=small, 2=medium, 3=big
+                    'dx': patch_dx + random.uniform(-0.03, 0.03),  # Slight individual variation
+                    'dy': patch_dy + random.uniform(-0.015, 0.015),
+                    'char': char,  # Stable character
+                    'base_opacity': random.uniform(0.5, 1.0),  # Base opacity
+                    'opacity': random.uniform(0.5, 1.0),  # Current opacity (affected by density)
+                    'size': size,
+                    'neighbor_count': 0,  # Track nearby particles for density
                 })
 
     def _init_sand_gusts(self):
@@ -725,11 +754,48 @@ class MatrixRain:
             })
 
     def _update_fog(self):
-        """Update fog particle positions."""
-        for particle in self._fog_particles:
-            # Drift slowly
-            particle['x'] += particle['dx']
-            particle['y'] += particle['dy']
+        """Update fog particle positions with magnetic clumping."""
+        # First pass: calculate neighbor counts and attraction forces
+        attraction_radius = 8.0  # How far particles attract each other
+        attraction_strength = 0.02  # How strong the attraction is
+
+        for i, particle in enumerate(self._fog_particles):
+            neighbor_count = 0
+            attract_x = 0.0
+            attract_y = 0.0
+
+            # Find nearby particles and calculate attraction
+            for j, other in enumerate(self._fog_particles):
+                if i == j:
+                    continue
+
+                dx = other['x'] - particle['x']
+                dy = other['y'] - particle['y']
+
+                # Handle wrapping for distance calculation
+                if abs(dx) > self.width / 2:
+                    dx = dx - self.width if dx > 0 else dx + self.width
+                if abs(dy) > self.height / 2:
+                    dy = dy - self.height if dy > 0 else dy + self.height
+
+                dist = math.sqrt(dx * dx + dy * dy)
+
+                if dist < attraction_radius and dist > 0.5:
+                    neighbor_count += 1
+                    # Weak magnetic attraction - pull towards neighbors
+                    pull = attraction_strength * (1.0 - dist / attraction_radius)
+                    attract_x += (dx / dist) * pull
+                    attract_y += (dy / dist) * pull
+
+            particle['neighbor_count'] = neighbor_count
+
+            # Apply attraction force (clamped to prevent wild movement)
+            attract_x = max(-0.1, min(0.1, attract_x))
+            attract_y = max(-0.05, min(0.05, attract_y))
+
+            # Drift slowly with attraction
+            particle['x'] += particle['dx'] + attract_x
+            particle['y'] += particle['dy'] + attract_y
 
             # Wrap around screen edges
             if particle['x'] < 0:
@@ -741,14 +807,19 @@ class MatrixRain:
             elif particle['y'] >= self.height:
                 particle['y'] = 0
 
-            # Slowly change opacity
-            particle['opacity'] += random.uniform(-0.05, 0.05)
+            # Opacity based on neighbor density - brighter when clumped, dimmer when spread
+            base = particle.get('base_opacity', 0.7)
+            density_factor = min(1.0, neighbor_count / 5.0)  # Max out at 5 neighbors
+            # Lerp between dim (0.3) when alone and bright (base) when clumped
+            target_opacity = 0.3 + (base - 0.3) * density_factor
+            # Smooth transition to target opacity (no flicker)
+            particle['opacity'] += (target_opacity - particle['opacity']) * 0.1
             particle['opacity'] = max(0.2, min(1.0, particle['opacity']))
 
-            # Occasionally change drift direction
-            if random.random() < 0.01:
-                particle['dx'] = random.uniform(-0.3, 0.3)
-                particle['dy'] = random.uniform(-0.1, 0.1)
+            # Very occasionally change drift direction (rare)
+            if random.random() < 0.003:
+                particle['dx'] = random.uniform(-0.2, 0.2)
+                particle['dy'] = random.uniform(-0.08, 0.08)
 
     def resize(self, width: int, height: int):
         """Handle terminal resize."""
@@ -875,31 +946,30 @@ class MatrixRain:
                     pass
 
     def _render_fog(self, screen):
-        """Render fog particles with size-based rendering."""
+        """Render fog particles with size-based rendering and stable characters."""
         for particle in self._fog_particles:
             try:
                 x = int(particle['x'])
                 y = int(particle['y'])
                 size = particle.get('size', 1)
+                opacity = particle.get('opacity', 0.5)
+                neighbor_count = particle.get('neighbor_count', 0)
 
                 if 0 <= x < self.width - 1 and 0 <= y < self.height - 1:
-                    # Bigger particles are more prominent
-                    if size >= 3 or particle['opacity'] > 0.7:
+                    # Brightness based on opacity (which is affected by neighbor density)
+                    # Clumped fog (high opacity) is bright, spread fog (low opacity) is dim
+                    if opacity > 0.7 or neighbor_count >= 4:
                         attr = curses.color_pair(Colors.FOG_BRIGHT) | curses.A_BOLD
-                    elif size >= 2 or particle['opacity'] > 0.4:
+                    elif opacity > 0.5 or neighbor_count >= 2:
+                        attr = curses.color_pair(Colors.FOG_BRIGHT)
+                    elif opacity > 0.35:
                         attr = curses.color_pair(Colors.FOG_DIM)
                     else:
                         attr = curses.color_pair(Colors.FOG_DIM) | curses.A_DIM
 
                     screen.attron(attr)
-                    # Big particles render as larger characters
-                    if size >= 3:
-                        char = random.choice(['▓', '█', '▒'])
-                    elif size >= 2:
-                        char = random.choice(['▒', '░', '▓'])
-                    else:
-                        char = particle['char']
-                    screen.addstr(y, x, char)
+                    # Use the stable pre-assigned character (no flickering)
+                    screen.addstr(y, x, particle['char'])
                     screen.attroff(attr)
             except curses.error:
                 pass
@@ -910,14 +980,18 @@ class MatrixRain:
         # Get weather-appropriate colors
         bright, dim, fade1, fade2 = self._get_weather_colors()
 
+        # Use dark green for Matrix rain tails
+        is_matrix = self.weather_mode == WeatherMode.MATRIX
+        dark_tail = Colors.MATRIX_DARK if is_matrix else fade2
+
         if depth == 0:
             # Farthest layer - very dim, no head highlight
             if pos < 2:
-                attr = curses.color_pair(fade2) | curses.A_DIM
+                attr = curses.color_pair(dark_tail) | curses.A_DIM
             else:
-                # Use fade2 with more dimming for Matrix, just dim for others
-                if self.weather_mode == WeatherMode.MATRIX:
-                    attr = curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM
+                # Use dark green for Matrix tails, fade2 for others
+                if is_matrix:
+                    attr = curses.color_pair(Colors.MATRIX_DARK) | curses.A_DIM
                 else:
                     attr = curses.color_pair(fade2) | curses.A_DIM
         elif depth == 1:
@@ -927,7 +1001,7 @@ class MatrixRain:
             elif pos < 3:
                 attr = curses.color_pair(fade1) | curses.A_DIM
             else:
-                attr = curses.color_pair(fade2) | curses.A_DIM
+                attr = curses.color_pair(dark_tail) | curses.A_DIM
         elif depth == 2:
             # Middle layer - normal
             if pos == 0:
@@ -937,7 +1011,7 @@ class MatrixRain:
             elif pos < 6:
                 attr = curses.color_pair(fade1) | curses.A_DIM
             else:
-                attr = curses.color_pair(fade2) | curses.A_DIM
+                attr = curses.color_pair(dark_tail) | curses.A_DIM
         elif depth == 3:
             # Near layer - bright
             if pos == 0:
@@ -949,7 +1023,7 @@ class MatrixRain:
             elif pos < 9:
                 attr = curses.color_pair(fade1)
             else:
-                attr = curses.color_pair(fade2) | curses.A_DIM
+                attr = curses.color_pair(dark_tail) | curses.A_DIM
         else:  # depth == 4
             # Nearest layer - brightest, boldest
             if pos == 0:
@@ -963,7 +1037,7 @@ class MatrixRain:
             elif pos < 12:
                 attr = curses.color_pair(fade1)
             else:
-                attr = curses.color_pair(fade2)
+                attr = curses.color_pair(dark_tail)
 
         screen.attron(attr)
         screen.addstr(y, x, char)
@@ -972,17 +1046,28 @@ class MatrixRain:
 
 class AlleyScene:
     """
-    Procedurally generated back alley scene for Matrix background.
-    Creates a perspective view of a dark alley with buildings, windows,
-    fire escapes, and urban details. Uses ASCII-safe characters for
-    better terminal compatibility.
+    Simple alley scene with dumpster and box for Matrix background.
     """
+
+    # Dumpster ASCII art (6 wide x 4 tall)
+    DUMPSTER = [
+        " ____ ",
+        "|####|",
+        "|####|",
+        "|____|",
+    ]
+
+    # Cardboard box ASCII art (5 wide x 3 tall)
+    BOX = [
+        " ___ ",
+        "|   |",
+        "|___|",
+    ]
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.scene: List[List[Tuple[str, int]]] = []  # (char, color_id)
-        self._seed = 42  # Fixed seed for consistent scene
+        self.scene: List[List[Tuple[str, int]]] = []
         self._generate_scene()
 
     def resize(self, width: int, height: int):
@@ -992,182 +1077,33 @@ class AlleyScene:
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate the alley scene."""
+        """Generate scene with dumpster and box."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
-
-        # Use fixed seed for deterministic scene (no flickering)
-        rng = random.Random(self._seed)
 
         # Initialize with empty space
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
 
-        # Calculate perspective points
-        center_x = self.width // 2
-        horizon_y = self.height // 3  # Vanishing point
-        ground_y = self.height - 1
+        # Place dumpster in lower-left area
+        dumpster_x = 3
+        dumpster_y = self.height - len(self.DUMPSTER) - 2
+        self._draw_sprite(self.DUMPSTER, dumpster_x, dumpster_y, Colors.ALLEY_MID)
 
-        # Draw buildings on left side
-        self._draw_building_left(0, center_x // 3, horizon_y, ground_y, rng)
+        # Place box to the right of dumpster
+        box_x = dumpster_x + len(self.DUMPSTER[0]) + 4
+        box_y = self.height - len(self.BOX) - 2
+        self._draw_sprite(self.BOX, box_x, box_y, Colors.SAND_DIM)
 
-        # Draw buildings on right side
-        self._draw_building_right(self.width - center_x // 3, self.width, horizon_y, ground_y, rng)
-
-        # Draw alley floor with perspective lines
-        self._draw_floor(center_x, horizon_y, ground_y)
-
-        # Add some atmospheric details
-        self._add_details(center_x, horizon_y, ground_y, rng)
-
-    def _draw_building_left(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
-        """Draw left building with windows and fire escape."""
-        if x_end <= x_start:
-            return
-
-        for y in range(y_top, min(y_bottom + 1, self.height)):
-            # Building edge gets closer to center as we go up (perspective)
-            progress = (y - y_top) / max(1, (y_bottom - y_top))
-            edge_x = int(x_start + (x_end - x_start) * (0.3 + 0.7 * progress))
-
-            for x in range(x_start, min(edge_x, self.width)):
-                if x >= self.width:
-                    continue
-
-                # Building wall - use simple ASCII
-                if x == edge_x - 1:
-                    # Building edge
-                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
-                elif (y - y_top) % 4 == 0 and x > x_start + 1:
-                    # Horizontal lines (floors)
-                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
-                elif (y - y_top) % 4 == 2 and (x - x_start) % 6 in [2, 3]:
-                    # Windows - use hash for consistency
-                    window_lit = ((x * 7 + y * 13) % 10) < 3  # Deterministic "random"
-                    if window_lit:
-                        # Lit window (blue)
-                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
-                    else:
-                        # Dark window
-                        self.scene[y][x] = ('[', Colors.ALLEY_DARK)
-                elif x == edge_x - 2 and (y - y_top) % 2 == 0:
-                    # Fire escape
-                    self.scene[y][x] = ('+', Colors.ALLEY_MID)
-                else:
-                    # Brick texture
-                    if (y + x) % 3 == 0:
-                        self.scene[y][x] = ('.', Colors.ALLEY_DARK)
-
-    def _draw_building_right(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
-        """Draw right building with windows."""
-        if x_end <= x_start or x_start >= self.width:
-            return
-
-        for y in range(y_top, min(y_bottom + 1, self.height)):
-            # Building edge gets closer to center as we go up (perspective)
-            progress = (y - y_top) / max(1, (y_bottom - y_top))
-            edge_x = int(x_end - (x_end - x_start) * (0.3 + 0.7 * progress))
-
-            for x in range(max(0, edge_x), min(x_end, self.width)):
-                if x >= self.width:
-                    continue
-
-                # Building wall - use simple ASCII
-                if x == edge_x:
-                    # Building edge
-                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
-                elif (y - y_top) % 4 == 0 and x < x_end - 2:
-                    # Horizontal lines (floors)
-                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
-                elif (y - y_top) % 4 == 2 and (x_end - x) % 5 in [2, 3]:
-                    # Windows
-                    window_lit = ((x * 11 + y * 17) % 10) < 2  # Deterministic "random"
-                    if window_lit:
-                        # Lit window (blue)
-                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
-                    else:
-                        # Dark window
-                        self.scene[y][x] = (']', Colors.ALLEY_DARK)
-                elif x == edge_x + 1 and (y - y_top) % 3 == 0:
-                    # Pipes
-                    self.scene[y][x] = ('I', Colors.ALLEY_MID)
-                else:
-                    # Brick texture
-                    if (y + x) % 4 == 0:
-                        self.scene[y][x] = (':', Colors.ALLEY_DARK)
-
-    def _draw_floor(self, center_x: int, horizon_y: int, ground_y: int):
-        """Draw alley floor with perspective."""
-        for y in range(horizon_y, min(ground_y + 1, self.height)):
-            # Width of visible floor increases as we go down
-            progress = (y - horizon_y) / max(1, (ground_y - horizon_y))
-            floor_half_width = int(progress * (self.width // 4))
-
-            left_x = max(0, center_x - floor_half_width)
-            right_x = min(self.width - 1, center_x + floor_half_width)
-
-            for x in range(left_x, right_x + 1):
-                if x >= self.width:
-                    continue
-
-                # Perspective lines pointing to vanishing point
-                dist_from_center = abs(x - center_x)
-                if dist_from_center <= 1:
-                    # Center line (wet reflection)
-                    if y % 2 == 0:
-                        self.scene[y][x] = (':', Colors.ALLEY_BLUE)
-                elif (x + y) % 7 == 0:
-                    # Cobblestone pattern
-                    self.scene[y][x] = ('.', Colors.ALLEY_MID)
-                elif (x - center_x + y) % 5 == 0:
-                    # Perspective lines
-                    self.scene[y][x] = ('.', Colors.ALLEY_DARK)
-
-    def _add_details(self, center_x: int, horizon_y: int, ground_y: int, rng):
-        """Add urban details like dumpsters, signs, etc."""
-        # Dumpster on left side near bottom - simple ASCII box
-        dumpster_y = ground_y - 2
-        dumpster_x = center_x // 4
-
-        if dumpster_y > horizon_y and dumpster_x + 5 < center_x:
-            if dumpster_y < self.height and dumpster_x + 4 < self.width:
-                # Dumpster body - simple ASCII
-                for dx in range(4):
-                    if dumpster_x + dx < self.width:
-                        self.scene[dumpster_y][dumpster_x + dx] = ('=', Colors.ALLEY_MID)
-                        if dumpster_y + 1 < self.height:
-                            self.scene[dumpster_y + 1][dumpster_x + dx] = ('#', Colors.ALLEY_DARK)
-
-        # Neon sign on right building
-        sign_y = horizon_y + 2
-        sign_x = self.width - self.width // 5
-
-        if sign_y < self.height - 2 and sign_x + 3 < self.width:
-            # Simple neon effect
-            if sign_x < self.width:
-                self.scene[sign_y][sign_x] = ('*', Colors.ALLEY_BLUE)
-            if sign_x + 1 < self.width:
-                self.scene[sign_y][sign_x + 1] = ('*', Colors.ALLEY_BLUE)
-
-        # Steam vent - deterministic
-        if ground_y - 1 < self.height and center_x - 5 >= 0:
-            steam_x = center_x - 5
-            if steam_x < self.width:
-                for dy in range(min(3, ground_y - horizon_y)):
-                    y_pos = ground_y - 1 - dy
-                    if 0 <= y_pos < self.height:
-                        # Deterministic steam pattern
-                        if (dy + steam_x) % 2 == 0:
-                            self.scene[y_pos][steam_x] = ('~', Colors.ALLEY_MID)
-
-        # Distant vanishing point details
-        if horizon_y > 0 and horizon_y < self.height:
-            # Hint of street at end of alley
-            for dx in range(-2, 3):
-                x = center_x + dx
-                if 0 <= x < self.width:
-                    self.scene[horizon_y][x] = ('=', Colors.ALLEY_BLUE)
+    def _draw_sprite(self, sprite: List[str], x: int, y: int, color: int):
+        """Draw an ASCII sprite at the given position."""
+        for row_idx, row in enumerate(sprite):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    self.scene[py][px] = (char, color)
 
     def render(self, screen):
         """Render the alley scene to the screen."""
@@ -1290,8 +1226,14 @@ class AlleyRat:
             ["~,., ", "``  "],  # Frame 2: running left (shifted)
         ],
         'idle': [
-            ["<O.O>", " vvv "],  # Sitting rat, alert
-            ["<o.o>", " vvv "],  # Sitting rat, relaxed
+            ["<O.O>", " vvv "],  # Sitting rat, alert - looking forward
+            ["<o.o>", " vvv "],  # Sitting rat, relaxed - looking forward
+        ],
+        'look_left': [
+            ["<O.O ", " vvv "],  # Looking left
+        ],
+        'look_right': [
+            [" O.O>", " vvv "],  # Looking right
         ],
     }
 
@@ -1317,6 +1259,11 @@ class AlleyRat:
         # Behavior state
         self._hiding = True
         self._flee_timer = 0
+
+        # Hopping state - discrete jumps instead of continuous movement
+        self._hop_cooldown = 0
+        self._look_timer = 0
+        self._look_direction = 'idle'
 
     def resize(self, width: int, height: int):
         """Handle terminal resize."""
@@ -1351,20 +1298,23 @@ class AlleyRat:
         # Stay in the lower third of the screen, edges
         floor_y = self.height * 2 // 3
 
-        if random.random() < 0.3:
-            # Sometimes pause (idle)
+        if random.random() < 0.7:
+            # Most of the time, stay still and look around
             self.target_x = self.x
             self.target_y = self.y
-            self.pause_counter = random.randint(10, 30)
+            self.pause_counter = random.randint(40, 100)  # Longer pauses
             self.speed = 0
             self.direction = 'idle'
+            self._look_timer = random.randint(15, 35)  # Start looking around
         else:
-            # Scurry to a new spot
+            # Occasionally hop to a new spot
             self.target_x = float(random.randint(1, max(2, self.width // 3)))
             self.target_y = float(random.randint(floor_y, self.height - 2))
-            self.speed = random.uniform(0.5, 1.2)
+            # Use hopping - will move in discrete jumps
+            self.speed = 0  # Don't move continuously
+            self._hop_cooldown = 0  # Ready to hop
 
-            # Set direction based on movement
+            # Set direction based on target
             if self.target_x > self.x:
                 self.direction = 'right'
             else:
@@ -1377,43 +1327,82 @@ class AlleyRat:
 
         self.frame_counter += 1
 
-        # Animate every few frames
-        if self.frame_counter % 4 == 0:
-            frames = self.RAT_FRAMES.get(self.direction, self.RAT_FRAMES['idle'])
-            self.frame = (self.frame + 1) % len(frames)
+        # Handle looking around while idle - slow animation
+        if self.direction == 'idle' and self.pause_counter > 0:
+            self._look_timer -= 1
+            if self._look_timer <= 0:
+                # Switch look direction
+                look_choice = random.random()
+                if look_choice < 0.3:
+                    self._look_direction = 'look_left'
+                elif look_choice < 0.6:
+                    self._look_direction = 'look_right'
+                else:
+                    self._look_direction = 'idle'
+                self._look_timer = random.randint(20, 50)
 
-        # Handle pause
+            # Slow blink animation for idle (every 20 frames)
+            if self.frame_counter % 20 == 0:
+                frames = self.RAT_FRAMES.get(self._look_direction, self.RAT_FRAMES['idle'])
+                self.frame = (self.frame + 1) % len(frames)
+        elif self.direction in ('left', 'right'):
+            # Moving animation - cycle frames while hopping
+            if self._hop_cooldown <= 3:  # Only animate during hop
+                if self.frame_counter % 3 == 0:
+                    frames = self.RAT_FRAMES.get(self.direction, self.RAT_FRAMES['idle'])
+                    self.frame = (self.frame + 1) % len(frames)
+
+        # Handle pause (idle state)
         if self.pause_counter > 0:
             self.pause_counter -= 1
             if self.pause_counter == 0:
                 self._pick_new_target()
             return
 
-        # Move towards target
-        if self.speed > 0:
+        # Handle fleeing (continuous fast movement)
+        if self._hiding and self.speed > 0:
             dx = self.target_x - self.x
             dy = self.target_y - self.y
             dist = math.sqrt(dx * dx + dy * dy)
-
-            if dist < 0.5:
-                # Reached target
-                if self._hiding and self.x < 0:
-                    # Fully hidden, deactivate
-                    self.active = False
-                    self.visible = False
-                else:
-                    self._pick_new_target()
+            if dist < 0.5 or self.x < 0:
+                self.active = False
+                self.visible = False
             else:
-                # Move towards target
                 self.x += (dx / dist) * self.speed
                 self.y += (dy / dist) * self.speed
+            return
+
+        # Hopping movement - discrete jumps with pauses between
+        if self.direction in ('left', 'right'):
+            self._hop_cooldown -= 1
+            if self._hop_cooldown <= 0:
+                # Make a hop towards target
+                dx = self.target_x - self.x
+                dy = self.target_y - self.y
+                dist = math.sqrt(dx * dx + dy * dy)
+
+                if dist < 1.5:
+                    # Reached target, pause and pick new target
+                    self._pick_new_target()
+                else:
+                    # Hop a fixed distance (1-2 units)
+                    hop_dist = min(dist, random.uniform(1.0, 2.0))
+                    self.x += (dx / dist) * hop_dist
+                    self.y += (dy / dist) * hop_dist
+                    # Pause between hops
+                    self._hop_cooldown = random.randint(8, 20)
 
     def render(self, screen):
         """Render the rat."""
         if not self.visible or not self.active:
             return
 
-        frames = self.RAT_FRAMES.get(self.direction, self.RAT_FRAMES['idle'])
+        # Use look direction when idle
+        render_direction = self.direction
+        if self.direction == 'idle':
+            render_direction = self._look_direction if self._look_direction else 'idle'
+
+        frames = self.RAT_FRAMES.get(render_direction, self.RAT_FRAMES['idle'])
         frame = frames[self.frame % len(frames)]
 
         ix = int(self.x)
@@ -2633,9 +2622,9 @@ class Dashboard:
     def _draw_panels(self):
         """Draw the main panels in a 2x2 grid."""
         # Calculate panel dimensions for 2x2 grid
-        # Leave 1 row for header at top
-        available_height = self.height - 1
-        available_width = self.width
+        # Leave 1 row for header at top, 1 row at bottom to avoid curses errors
+        available_height = self.height - 2
+        available_width = self.width - 1  # Avoid last column curses error
 
         # Each panel gets half the width and half the height
         panel_width = available_width // 2
