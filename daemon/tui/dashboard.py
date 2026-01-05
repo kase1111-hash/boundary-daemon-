@@ -1551,22 +1551,22 @@ class AlleyScene:
     ]
 
     # Static cityscape backdrop (drawn behind main buildings in the gap)
-    # 100 chars wide, various building heights
+    # 140 chars wide, dense city skyline with various building heights
     CITYSCAPE = [
-        "                              |~|                              T                              ",  # Row 0 - antenna tips
-        "            ___               |=|      ___                    /|\\                 ___         ",  # Row 1
-        "    ___    |   |    ___      .|=|.    |   |     ___     ___  |=|=|    ___        |   |   ___  ",  # Row 2
-        "   |   |   |   |   |   |   .:|=|:.   |   |    |   |   |   | |=|=|   |   |  ___  |   |  |   | ",  # Row 3
-        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |   | |[ ]|  |[ ]| ",  # Row 4
-        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 5
-        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 6
-        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 7
-        "   |___|   |___|   |___|   |:|=|:|   |___|    |___|   |___| |=|=|   |___| |[ ]| |___|  |___| ",  # Row 8
-        "                           |:|=|:|                          |=|=|         |[ ]|              ",  # Row 9
-        "                           |:|=|:|                          |=|=|         |___|              ",  # Row 10
-        "                           |:|=|:|                          |=|=|                            ",  # Row 11
-        "                           |:|=|:|                          |___|                            ",  # Row 12
-        "                           |_|=|_|                                                           ",  # Row 13
+        "         T                    |~|                 T              T                    |~|              T           ",  # Row 0
+        "   ___  /|\\        ___       |=|    ___         /|\\   ___      /|\\        ___       |=|    ___      /|\\   ___    ",  # Row 1
+        "  |   | |=|  ___  |   |  ___ |=|   |   |  ___  |=|=| |   | ___ |=|  ___  |   |  ___ |=|   |   | ___ |=|=| |   |   ",  # Row 2
+        "  |[ ]| |=| |   | |[ ]| |   ||=|   |[ ]| |   | |=|=| |[ ]||   ||=| |   | |[ ]| |   ||=|   |[ ]||   ||=|=| |[ ]|   ",  # Row 3
+        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 4
+        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 5
+        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 6
+        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 7
+        "  |___| |=| |___| |___| |___||=|   |___| |___| |=|=| |___||___||=| |___| |___| |___||=|   |___||___||=|=| |___|   ",  # Row 8
+        "        |=|              |   ||=|              |=|=|      |   ||=|              |   ||=|        |  ||=|=|         ",  # Row 9
+        "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 10
+        "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 11
+        "        |=|              |___||=|              |___|      |___||=|              |___||=|        |___||___|         ",  # Row 12
+        "        |_|                  |_|                              |_|                  |_|                            ",  # Row 13
     ]
 
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, two doors with stoops
@@ -1712,7 +1712,13 @@ class AlleyScene:
         self._street_light_flicker = [1.0, 1.0]  # Brightness per light (0-1)
         self._flicker_timer = 0
         # Window people - list of active silhouettes {window_idx, building, direction, progress}
-        self._window_people: List[Dict] = []
+        # Pre-spawn some people so windows aren't empty at start
+        self._window_people: List[Dict] = [
+            {'building': 1, 'window_idx': 2, 'direction': 1, 'progress': 0.5, 'state': 'staring', 'state_timer': 0, 'stare_duration': 200, 'wave_count': 0, 'wave_frame': 0},
+            {'building': 1, 'window_idx': 8, 'direction': -1, 'progress': 0.3, 'state': 'walking', 'state_timer': 0, 'stare_duration': 150, 'wave_count': 0, 'wave_frame': 0},
+            {'building': 2, 'window_idx': 5, 'direction': 1, 'progress': 0.6, 'state': 'staring', 'state_timer': 0, 'stare_duration': 180, 'wave_count': 0, 'wave_frame': 0},
+            {'building': 2, 'window_idx': 12, 'direction': -1, 'progress': 0.4, 'state': 'walking', 'state_timer': 0, 'stare_duration': 160, 'wave_count': 0, 'wave_frame': 0},
+        ]
         self._window_spawn_timer = 0
         # Window positions for layering (filled during _draw_building)
         self._window_interior_positions: List[Tuple[int, int]] = []
@@ -2549,18 +2555,27 @@ class AlleyScene:
                     if drain_x + i < self.width - 1:
                         self.scene[curb_y][drain_x + i] = (char, Colors.ALLEY_DARK)
 
-        # Place trees - one on left side, two on right side (in the gap before building 2)
+        # Place trees - spread across the gap between buildings
         self._tree_positions = []
         tree_height = len(self.TREE)
         tree_width = len(self.TREE[0])
-        # Tree 1: left side in the gap (past building 1)
-        tree1_x = building1_right + 15
-        # Tree 2 and 3: right side in the gap (before building 2)
         building2_left = self._building2_x if self._building2_x > 0 else self.width
-        tree2_x = building2_left - tree_width - 8   # 8 chars before building 2
-        tree3_x = building2_left - tree_width - 22  # 22 chars before building 2
+        gap_width = building2_left - building1_right
+
+        # Tree 1: left side of gap
+        tree1_x = building1_right + 8
+        # Tree 2: middle-right of gap
+        tree2_x = building1_right + gap_width // 2 + 20
+        # Tree 3: right side of gap (before building 2)
+        tree3_x = building2_left - tree_width - 12
+
         for tree_x in [tree1_x, tree2_x, tree3_x]:
-            if tree_x > building1_right and tree_x + tree_width < building2_left:
+            # Check tree fits in gap and doesn't overlap with cafe
+            cafe_left = getattr(self, 'cafe_x', 0)
+            cafe_right = cafe_left + len(self.CAFE[0]) if hasattr(self, 'cafe_x') else 0
+            overlaps_cafe = cafe_left - 5 < tree_x < cafe_right + 5
+
+            if tree_x > building1_right + 2 and tree_x + tree_width < building2_left - 2 and not overlaps_cafe:
                 tree_y = ground_y - tree_height + 1
                 self._tree_positions.append((tree_x, tree_y))
                 self._draw_tree(tree_x, tree_y)
@@ -2910,25 +2925,25 @@ class AlleyScene:
                             inside_cafe = True
 
                     if char != ' ':
-                        # Use warm yellow/white for the cafe (well-lit)
+                        # Use neutral colors for cafe structure, warm for interior
                         if char in 'SHELLCAFE' or char in 'OPEN':
-                            color = Colors.RAT_YELLOW  # Bright yellow text
+                            color = Colors.ALLEY_LIGHT  # Text - neutral white
                         elif char in '[]=' or char == '~':
-                            color = Colors.RAT_YELLOW  # Windows glow
+                            color = Colors.ALLEY_MID  # Windows - gray, no glow
                         elif char == 'O' and inside_cafe:
-                            color = Colors.CAFE_WARM  # People silhouettes
-                        elif char in '/\\|':
-                            color = Colors.CAFE_WARM  # People arms/body
+                            color = Colors.ALLEY_DARK  # People silhouettes - dark
+                        elif char in '/\\':
+                            color = Colors.ALLEY_DARK  # People arms - dark
                         elif char == '|':
-                            color = Colors.ALLEY_LIGHT  # Walls
+                            color = Colors.ALLEY_MID  # Walls - gray
                         elif char in '_.-':
-                            color = Colors.ALLEY_LIGHT  # Structure
+                            color = Colors.ALLEY_MID  # Structure - gray
                         else:
-                            color = Colors.ALLEY_LIGHT  # Structure
+                            color = Colors.ALLEY_MID  # Structure - gray
                         self.scene[py][px] = (char, color)
                     elif inside_cafe:
-                        # Fill empty interior space with warm blocks
-                        self.scene[py][px] = ('▓', Colors.CAFE_WARM)
+                        # Fill empty interior space with dark blocks (no warm glow)
+                        self.scene[py][px] = ('▓', Colors.ALLEY_DARK)
 
     def is_valid_snow_position(self, x: int, y: int) -> bool:
         """Check if a position is valid for snow to collect.
@@ -3229,10 +3244,10 @@ class AlleyScene:
         """Update people walking by windows with walk/stare/wave animations."""
         self._window_spawn_timer += 1
 
-        # Spawn people more frequently (about every 150-400 frames)
-        if self._window_spawn_timer >= random.randint(150, 400):
+        # Spawn people frequently (about every 60-150 frames) for more activity
+        if self._window_spawn_timer >= random.randint(60, 150):
             self._window_spawn_timer = 0
-            if len(self._window_people) < 4:  # Max 4 window people at once
+            if len(self._window_people) < 8:  # Allow up to 8 window people at once
                 # Pick a random window from either building
                 building = random.choice([1, 2])
                 if building == 1:
@@ -4208,9 +4223,9 @@ class AlleyScene:
                 else:
                     silhouette = ['\\O', '█']  # Hand up left
 
-            # Draw silhouette (2 chars tall)
+            # Draw silhouette (2 chars tall) - use light color so visible against dark windows
             try:
-                attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_BOLD
+                attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
                 screen.attron(attr)
                 for i, char in enumerate(silhouette):
                     y = window_y + i
