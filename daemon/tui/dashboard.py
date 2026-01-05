@@ -2602,7 +2602,6 @@ class Dashboard:
         else:
             self._draw_header()
             self._draw_panels()
-            self._draw_footer()
 
         self.screen.refresh()
 
@@ -2629,27 +2628,31 @@ class Dashboard:
         self.screen.attroff(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
 
     def _draw_panels(self):
-        """Draw the main panels."""
-        # Calculate panel dimensions
-        panel_height = self.height - 4  # Header + Footer + Borders
-        left_width = self.width // 2
-        right_width = self.width - left_width
+        """Draw the main panels in a 2x2 grid."""
+        # Calculate panel dimensions for 2x2 grid
+        # Leave 1 row for header at top
+        available_height = self.height - 1
+        available_width = self.width
 
-        # Left column: Status + Events
-        status_height = 8
-        events_height = panel_height - status_height
+        # Each panel gets half the width and half the height
+        panel_width = available_width // 2
+        panel_height = available_height // 2
 
-        self._draw_status_panel(2, 0, left_width, status_height)
-        self._draw_events_panel(2 + status_height, 0, left_width, events_height)
+        # Adjust for odd dimensions
+        right_width = available_width - panel_width
+        bottom_height = available_height - panel_height
 
-        # Right column: Alerts + Sandboxes + SIEM
-        alerts_height = panel_height // 3
-        sandbox_height = panel_height // 3
-        siem_height = panel_height - alerts_height - sandbox_height
+        # Top row starts at y=1 (after header)
+        # Bottom row starts at y=1+panel_height
+        top_y = 1
+        bottom_y = 1 + panel_height
 
-        self._draw_alerts_panel(2, left_width, right_width, alerts_height)
-        self._draw_sandbox_panel(2 + alerts_height, left_width, right_width, sandbox_height)
-        self._draw_siem_panel(2 + alerts_height + sandbox_height, left_width, right_width, siem_height)
+        # Draw 2x2 grid: STATUS | ALERTS
+        #                EVENTS | SIEM
+        self._draw_status_panel(top_y, 0, panel_width, panel_height)
+        self._draw_alerts_panel(top_y, panel_width, right_width, panel_height)
+        self._draw_events_panel(bottom_y, 0, panel_width, bottom_height)
+        self._draw_siem_panel(bottom_y, panel_width, right_width, bottom_height)
 
     def _draw_status_panel(self, y: int, x: int, width: int, height: int):
         """Draw the status panel."""
@@ -2700,16 +2703,17 @@ class Dashboard:
         self._addstr(row, col, f"Violations: {violations}", v_color)
 
     def _draw_events_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the events panel."""
+        """Draw the events panel with footer shortcuts at bottom."""
         self._draw_box(y, x, width, height, f"EVENTS (last {len(self.events)})")
 
         row = y + 1
         col = x + 2
-        max_rows = height - 2
+        # Reserve 1 row for shortcuts at bottom (inside the box)
+        max_rows = height - 3
         display_width = width - 4
 
         for i, event in enumerate(self.events[:max_rows]):
-            if row >= y + height - 1:
+            if row >= y + height - 2:  # Leave room for shortcuts
                 break
 
             # Time
@@ -2729,6 +2733,17 @@ class Dashboard:
             self._addstr(row, detail_col, details, Colors.NORMAL)
 
             row += 1
+
+        # Draw shortcuts at bottom of events panel (inside the box)
+        shortcut_row = y + height - 2
+        if self.matrix_mode:
+            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+        else:
+            shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
+
+        # Center the shortcuts
+        shortcuts = shortcuts[:display_width]
+        self._addstr(shortcut_row, col, shortcuts, Colors.MUTED)
 
     def _draw_alerts_panel(self, y: int, x: int, width: int, height: int):
         """Draw the alerts panel."""
