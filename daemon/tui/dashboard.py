@@ -1190,12 +1190,12 @@ class AlleyScene:
         "|=====|",
     ]
 
-    # Cardboard box ASCII art (5 wide x 4 tall) - filled with hashtags, white label
+    # Cardboard box ASCII art (5 wide x 4 tall) - solid blocks, no outline
     BOX = [
-        " ___ ",
-        "|###|",
-        "|#X#|",
-        "|___|",
+        "▓▓▓▓▓",
+        "▓▓▓▓▓",
+        "▓▒X▒▓",
+        "▓▓▓▓▓",
     ]
 
     # Blue street mailbox (6 wide x 5 tall)
@@ -1275,6 +1275,35 @@ class AlleyScene:
         [" ~~  ", "~~~~ ", " ~~~~"],
         ["~~   ", " ~~~ ", "~~~~ "],
     ]
+
+    # Tree sprites for windy city effect
+    TREE = [
+        "   (@@)   ",
+        "  (@@@@@) ",
+        " (@@@@@@@@)",
+        "  (@@@@@) ",
+        "    ||    ",
+        "    ||    ",
+        "   _||_   ",
+    ]
+
+    TREE_WINDY = [
+        "    (@@)  ",
+        "   (@@@@@)",
+        "  (@@@@@@@)",
+        "   (@@@@) ",
+        "    ||    ",
+        "    ||    ",
+        "   _||_   ",
+    ]
+
+    # Debris sprites for windy weather
+    DEBRIS_NEWSPAPER = ['▪', '▫', '□', '▢']
+    DEBRIS_TRASH = ['~', '°', '·', '∘']
+    DEBRIS_LEAVES = ['*', '✦', '✧', '⁕']
+
+    # Wind wisp characters
+    WIND_WISPS = ['~', '≈', '≋', '～', '-', '=']
 
     # Person walking animation frames (arm swinging) - basic person
     # Pedestrian sprites with leg animation (4 frames for walking cycle)
@@ -1447,9 +1476,9 @@ class AlleyScene:
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, two doors with stoops
     BUILDING = [
         "                        _____                                  ",
-        "                       |     |                                 ",
-        "        _O_            |     |  [===]          _O_             ",
-        "       (/ \\)           |_____|  [===]         (/ \\)            ",
+        "       __O__           |     |                  __O__          ",
+        "      / === \\          |     |  [===]          / === \\         ",
+        "     (==//\\==)         |_____|  [===]         (==//\\==)        ",
         ".--------------------------------------------------------------.",
         "                                                                ",
         "   [========]    [====]  [====]    [========]    [====]         ",
@@ -1493,9 +1522,9 @@ class AlleyScene:
     # Second building (right side) - 2X TALL, 2X WIDE with two doors with stoops
     BUILDING2 = [
         "              _____                                  ___   ",
-        "             |     |                                |   |  ",
-        "      [===]  |     |    _O_                  _O_    |   |  ",
-        "      [===]  |_____|   (/ \\)                (/ \\)   |___|  ",
+        "             |     |     __O__              __O__   |   |  ",
+        "      [===]  |     |    / === \\            / === \\  |   |  ",
+        "      [===]  |_____|   (==//\\==)          (==//\\==) |___|  ",
         ".----------------------------------------------------------.",
         "                                                            ",
         "     [========]    [====]    [========]    [====]           ",
@@ -1597,6 +1626,14 @@ class AlleyScene:
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
         self._steam_effects: List[Dict] = []  # {x, y, frame, timer, duration}
         self._steam_spawn_timer = 0
+        # Windy city weather - debris, leaves, wind wisps
+        self._debris: List[Dict] = []  # {x, y, char, type, speed}
+        self._leaves: List[Dict] = []  # {x, y, char, speed, wobble}
+        self._wind_wisps: List[Dict] = []  # {x, y, chars, speed}
+        self._debris_spawn_timer = 0
+        self._wind_wisp_timer = 0
+        self._tree_positions: List[Tuple[int, int]] = []  # (x, y) for trees
+        self._tree_sway_frame = 0
         # Woman in Red event - rare Matrix scene
         self._woman_red_active = False
         self._woman_red_state = 'idle'  # idle, neo_morpheus_enter, woman_enters, woman_passes, woman_waves, woman_pauses, transform, chase, cooldown
@@ -1794,6 +1831,88 @@ class AlleyScene:
                 self._woman_red_active = False
                 self._woman_red_cooldown = 3000  # Long cooldown before next event
 
+    def _update_wind(self):
+        """Update windy city weather - debris, leaves, and wind wisps."""
+        curb_y = self.height - 4
+        street_y = self.height - 3
+
+        # Update tree sway animation
+        self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
+
+        # Spawn debris (newspapers, trash) on streets
+        self._debris_spawn_timer += 1
+        if self._debris_spawn_timer >= random.randint(15, 40):
+            self._debris_spawn_timer = 0
+            if len(self._debris) < 8:
+                debris_type = random.choice(['newspaper', 'trash'])
+                chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
+                self._debris.append({
+                    'x': float(self.width + 5) if random.random() < 0.5 else -5.0,
+                    'y': float(random.choice([curb_y, street_y, street_y - 1])),
+                    'char': random.choice(chars),
+                    'type': debris_type,
+                    'speed': random.uniform(0.8, 2.0),
+                    'wobble': random.uniform(0, 6.28),
+                })
+
+        # Spawn wind wisps in sky
+        self._wind_wisp_timer += 1
+        if self._wind_wisp_timer >= random.randint(30, 60):
+            self._wind_wisp_timer = 0
+            if len(self._wind_wisps) < 5:
+                wisp_length = random.randint(3, 8)
+                wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
+                self._wind_wisps.append({
+                    'x': float(self.width + 5),
+                    'y': float(random.randint(3, self.height // 3)),
+                    'chars': wisp_chars,
+                    'speed': random.uniform(1.0, 2.5),
+                })
+
+        # Spawn leaves from trees
+        for tree_x, tree_y in self._tree_positions:
+            if random.random() < 0.03:  # 3% chance per tree per frame
+                if len(self._leaves) < 15:
+                    self._leaves.append({
+                        'x': float(tree_x + random.randint(2, 7)),
+                        'y': float(tree_y + random.randint(0, 3)),
+                        'char': random.choice(self.DEBRIS_LEAVES),
+                        'speed': random.uniform(0.5, 1.5),
+                        'fall_speed': random.uniform(0.1, 0.3),
+                        'wobble': random.uniform(0, 6.28),
+                    })
+
+        # Update debris positions
+        new_debris = []
+        for d in self._debris:
+            d['x'] -= d['speed']  # Blow left
+            d['wobble'] += 0.3
+            d['y'] += math.sin(d['wobble']) * 0.2  # Wobble up/down
+            # Keep on screen
+            if d['x'] > -10:
+                new_debris.append(d)
+        self._debris = new_debris
+
+        # Update wind wisps
+        new_wisps = []
+        for w in self._wind_wisps:
+            w['x'] -= w['speed']
+            if w['x'] > -len(w['chars']) - 5:
+                new_wisps.append(w)
+        self._wind_wisps = new_wisps
+
+        # Update leaves
+        new_leaves = []
+        for leaf in self._leaves:
+            leaf['x'] -= leaf['speed']  # Blow left
+            leaf['y'] += leaf['fall_speed']  # Fall down
+            leaf['wobble'] += 0.2
+            leaf['x'] += math.sin(leaf['wobble']) * 0.3  # Wobble
+            # Keep if on screen and above street
+            if leaf['x'] > -5 and leaf['y'] < street_y + 2:
+                new_leaves.append(leaf)
+        self._leaves = new_leaves
+
     def _render_clouds(self, screen):
         """Render cloud layer."""
         for cloud in self._clouds:
@@ -1857,7 +1976,7 @@ class AlleyScene:
         # Calculate cafe position early for overlap avoidance
         gap_center = (building1_right + self._building2_x) // 2
         cafe_width = len(self.CAFE[0])
-        cafe_left = gap_center - cafe_width // 2 - 8
+        cafe_left = gap_center - cafe_width // 2 - 11
         cafe_right = cafe_left + cafe_width
 
         # Draw distant buildings FIRST (furthest back) - only in gap between buildings
@@ -1890,17 +2009,19 @@ class AlleyScene:
         for x in range(self.width - 1):
             self.scene[curb_y][x] = ('▄', Colors.ALLEY_MID)
 
-        # Draw street with lane markings at the very bottom row
+        # Draw street surface (two rows)
         for x in range(self.width - 1):
-            # Street surface
             self.scene[street_y][x] = ('▓', Colors.ALLEY_DARK)
+            if street_y + 1 < self.height:
+                self.scene[street_y + 1][x] = ('▓', Colors.ALLEY_DARK)
 
-        # Add dashed lane markings if width allows (every 4 chars, 2 on 2 off)
+        # Add dashed lane markings on bottom street row (every 4 chars, 2 on 2 off)
         if self.width > 30:
+            lane_y = street_y + 1 if street_y + 1 < self.height else street_y
             for x in range(0, self.width - 1, 4):
                 if x + 1 < self.width - 1:
-                    self.scene[street_y][x] = ('=', Colors.RAT_YELLOW)
-                    self.scene[street_y][x + 1] = ('=', Colors.RAT_YELLOW)
+                    self.scene[lane_y][x] = ('=', Colors.RAT_YELLOW)
+                    self.scene[lane_y][x + 1] = ('=', Colors.RAT_YELLOW)
 
         # Add manholes to the street (every ~30 chars)
         self._manhole_positions = []
@@ -1924,6 +2045,18 @@ class AlleyScene:
                     if drain_x + i < self.width - 1:
                         self.scene[curb_y][drain_x + i] = (char, Colors.ALLEY_DARK)
 
+        # Place trees in the gap between buildings
+        self._tree_positions = []
+        tree_height = len(self.TREE)
+        # Place two trees - one on each side of the gap
+        tree1_x = building1_right + 15
+        tree2_x = self._building2_x - 20
+        for tree_x in [tree1_x, tree2_x]:
+            if building1_right < tree_x < self._building2_x - len(self.TREE[0]):
+                tree_y = ground_y - tree_height + 1
+                self._tree_positions.append((tree_x, tree_y))
+                self._draw_tree(tree_x, tree_y)
+
         # Place dumpster to the LEFT of building 1 (above curb)
         self.dumpster_x = 2
         self.dumpster_y = ground_y - len(self.DUMPSTER) + 1
@@ -1942,8 +2075,8 @@ class AlleyScene:
         self.mailbox_y = ground_y - len(self.MAILBOX) + 1
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
-        # Calculate cafe position first (shifted 8 chars left)
-        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 8
+        # Calculate cafe position first (shifted 11 chars left)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 11
         self.cafe_y = ground_y - len(self.CAFE) + 1
 
         # Place well-lit Cafe between buildings (center of gap)
@@ -1951,8 +2084,9 @@ class AlleyScene:
 
         # Draw crosswalk between cafe and right building
         cafe_right = self.cafe_x + len(self.CAFE[0])
-        crosswalk_x = cafe_right + 1
-        self._draw_crosswalk(crosswalk_x, curb_y, street_y)
+        self._crosswalk_x = cafe_right + 1
+        self._crosswalk_width = 32  # Store for car occlusion
+        self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
@@ -2108,6 +2242,28 @@ class AlleyScene:
                     px = pos_x + col_idx
                     py = by + row_idx
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        self.scene[py][px] = (char, Colors.ALLEY_MID)
+
+    def _draw_tree(self, x: int, y: int):
+        """Draw a tree at the given position."""
+        # Use the windy tree sprite (animated during render based on sway frame)
+        tree_sprite = self.TREE
+        for row_idx, row in enumerate(tree_sprite):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Use different colors for different parts
+                    if char == '@':
+                        # Leaves - green
+                        self.scene[py][px] = (char, Colors.MATRIX_DIM)
+                    elif char in '()|':
+                        # Trunk and outline - brown/dark
+                        self.scene[py][px] = (char, Colors.SAND_DIM)
+                    elif char == '_':
+                        # Base
+                        self.scene[py][px] = (char, Colors.ALLEY_MID)
+                    else:
                         self.scene[py][px] = (char, Colors.ALLEY_MID)
 
     def _draw_cafe(self, x: int, y: int):
@@ -2283,6 +2439,9 @@ class AlleyScene:
 
         # Update woman in red event
         self._update_woman_red()
+
+        # Update windy weather effects
+        self._update_wind()
 
     def _update_cars(self):
         """Update car positions and spawn new cars."""
@@ -2587,9 +2746,12 @@ class AlleyScene:
                             self.scene[row_y][px] = ('=', Colors.RAT_YELLOW)
                         else:
                             self.scene[row_y][px] = ('▓', Colors.ALLEY_DARK)
-                    elif abs(offset) == half_width:
-                        # Edge lines (white)
-                        self.scene[row_y][px] = ('|', Colors.ALLEY_MID)
+                    elif offset == -half_width:
+                        # Left edge line (use backslash for perspective)
+                        self.scene[row_y][px] = ('\\', Colors.ALLEY_MID)
+                    elif offset == half_width:
+                        # Right edge line (use forward slash for perspective)
+                        self.scene[row_y][px] = ('/', Colors.ALLEY_MID)
                     else:
                         # Street surface
                         self.scene[row_y][px] = ('▓', Colors.ALLEY_DARK)
@@ -2746,6 +2908,9 @@ class AlleyScene:
         # Render steam effects from manholes/drains
         self._render_steam(screen)
 
+        # Render wind effects (debris, leaves, wisps)
+        self._render_wind(screen)
+
         # Render pedestrians on the sidewalk
         self._render_pedestrians(screen)
 
@@ -2794,6 +2959,52 @@ class AlleyScene:
                             screen.attroff(attr)
                         except curses.error:
                             pass
+
+    def _render_wind(self, screen):
+        """Render wind effects - debris, leaves, and wisps."""
+        # Render debris (newspapers, trash) on streets
+        for d in self._debris:
+            px = int(d['x'])
+            py = int(d['y'])
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    if d['type'] == 'newspaper':
+                        attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                    else:
+                        attr = curses.color_pair(Colors.ALLEY_MID)
+                    screen.attron(attr)
+                    screen.addstr(py, px, d['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+        # Render wind wisps in sky
+        for w in self._wind_wisps:
+            px = int(w['x'])
+            py = int(w['y'])
+            for i, char in enumerate(w['chars']):
+                cx = px + i
+                if 0 <= cx < self.width - 1 and 0 <= py < self.height:
+                    try:
+                        attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+                        screen.attron(attr)
+                        screen.addstr(py, cx, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render leaves blowing from trees
+        for leaf in self._leaves:
+            px = int(leaf['x'])
+            py = int(leaf['y'])
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                    screen.attron(attr)
+                    screen.addstr(py, px, leaf['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
 
     def _render_woman_red(self, screen):
         """Render the Woman in Red event characters."""
@@ -3020,12 +3231,23 @@ class AlleyScene:
         street_y = self.height - 3 - y_offset
         sprite_height = len(sprite)
 
+        # Calculate vanishing street bounds for occlusion
+        curb_y = self.height - 4
+        vanish_end_y = self.height - (self.height // 5)
+        crosswalk_center = getattr(self, '_crosswalk_x', 0) + getattr(self, '_crosswalk_width', 32) // 2
+
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
                 py = street_y - (sprite_height - 1 - row_idx)
 
                 if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Check if this pixel is in the vanishing street area (car goes behind)
+                    if vanish_end_y <= py < curb_y - 1:
+                        progress = (curb_y - 1 - py) / max(1, curb_y - 1 - vanish_end_y)
+                        half_width = int(16 * (1.0 - progress * 0.7))
+                        if abs(px - crosswalk_center) <= half_width:
+                            continue  # Skip - car is behind vanishing street
                     try:
                         # Close-up car in bright white
                         attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
