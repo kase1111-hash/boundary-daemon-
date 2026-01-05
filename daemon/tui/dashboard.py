@@ -1700,6 +1700,44 @@ class AlleyScene:
                     'length': random.randint(3, 8),
                 })
 
+        # Create HUGE foreground clouds - biggest, fastest, rendered on top
+        num_foreground = max(1, self.width // 100)
+        for i in range(num_foreground):
+            self._clouds.append({
+                'x': random.uniform(0, self.width),
+                'y': random.randint(2, 10),  # Can go higher on screen
+                'speed': random.uniform(0.4, 0.7),  # Very fast movement
+                'type': 'foreground',
+                'chars': random.choice([
+                    # Massive storm cloud
+                    ['          .--~~~~~~~--.          ',
+                     '       .~~             ~~.       ',
+                     '     .~                   ~.     ',
+                     '   .~    ~~~~~~~~~~~        ~.   ',
+                     '  (    ~~           ~~        )  ',
+                     ' (   ~                 ~       ) ',
+                     '(  (      ~~~~~~~       )      ) ',
+                     ' (   ~               ~        )  ',
+                     '  ~~                        ~~   ',
+                     '    ~~~~~~~~~~~~~~~~~~~~~~~~~    '],
+                    # Wide fluffy cloud
+                    ['       .--~~~~~~~---.       ',
+                     '    .~~             ~~.    ',
+                     '  .~                   ~.  ',
+                     ' (      ~~~~~~~~~~       ) ',
+                     '(                         )',
+                     ' ~~~~~~~~~~~~~~~~~~~~~~~~~ '],
+                    # Giant cumulus
+                    ['        .~~~~.        ',
+                     '     .~~      ~~.     ',
+                     '   .~            ~.   ',
+                     '  (    ~~~~~~~~    )  ',
+                     ' (                  ) ',
+                     '(      ~~~~~~        )',
+                     ' ~~~~~~~~~~~~~~~~~~~~ '],
+                ]),
+            })
+
     def _update_clouds(self):
         """Update cloud positions - drift in wind direction."""
         for cloud in self._clouds:
@@ -1708,7 +1746,7 @@ class AlleyScene:
             cloud['x'] += cloud['speed'] * self._wind_direction
 
             # Wrap around based on wind direction
-            if cloud['type'] in ['main', 'cumulus']:
+            if cloud['type'] in ['main', 'cumulus', 'foreground']:
                 cloud_width = len(cloud['chars'][0]) if cloud['chars'] else 5
                 if self._wind_direction > 0:
                     # Wind blowing right - wrap from left
@@ -2284,7 +2322,7 @@ class AlleyScene:
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             # Green bold for SHELL CAFE
-                            attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                            attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
@@ -2305,22 +2343,22 @@ class AlleyScene:
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             if self._open_sign_phase == 0:
-                                # All off - dim gray
-                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                                # All off - white/unlit
+                                attr = curses.color_pair(Colors.ALLEY_MID)
                             elif self._open_sign_phase <= 4:
                                 # Lighting up one by one
                                 if i < self._open_sign_phase:
                                     # This letter is lit - bright yellow
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                                 else:
-                                    # Not lit yet - dim
-                                    attr = curses.color_pair(Colors.ALLEY_DARK)
+                                    # Not lit yet - white/unlit
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
                             else:
                                 # Flashing phase (5-9) - alternate on/off
                                 if self._open_sign_phase % 2 == 1:
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                                 else:
-                                    attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_DIM
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
                             screen.attron(attr)
                             screen.addstr(py, px, letter)
                             screen.attroff(attr)
@@ -2343,8 +2381,8 @@ class AlleyScene:
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
                             if char == '@':
-                                # Leaves - bright green
-                                attr = curses.color_pair(Colors.MATRIX_BRIGHT)
+                                # Leaves - green
+                                attr = curses.color_pair(Colors.MATRIX_DIM)
                             elif char in '()|':
                                 # Trunk - brown/dark
                                 attr = curses.color_pair(Colors.SAND_DIM)
@@ -2391,6 +2429,25 @@ class AlleyScene:
                             screen.attroff(attr)
                         except curses.error:
                             pass
+
+    def _render_foreground_clouds(self, screen):
+        """Render large foreground clouds on top of the scene."""
+        for cloud in self._clouds:
+            if cloud['type'] == 'foreground':
+                # Render huge foreground cloud - brightest, on top
+                for row_idx, row in enumerate(cloud['chars']):
+                    for col_idx, char in enumerate(row):
+                        px = int(cloud['x']) + col_idx
+                        py = cloud['y'] + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                            try:
+                                # Foreground clouds are brightest white
+                                attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
 
     def _generate_scene(self):
         """Generate scene with buildings, dumpster, box, curb, street, and street lights."""
@@ -2495,27 +2552,28 @@ class AlleyScene:
                     if drain_x + i < self.width - 1:
                         self.scene[curb_y][drain_x + i] = (char, Colors.ALLEY_DARK)
 
-        # Place trees - spread across the gap between buildings
+        # Place trees - one on left, two in front of right building
         self._tree_positions = []
         tree_height = len(self.TREE)
         tree_width = len(self.TREE[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
-        gap_width = building2_left - building1_right
+        building2_width = len(self.BUILDING2[0]) if self.BUILDING2 else 60
 
-        # Tree 1: left side of gap
+        # Tree 1: left side of gap (near left building)
         tree1_x = building1_right + 8
-        # Tree 2: middle-right of gap (shifted 40 right)
-        tree2_x = building1_right + gap_width // 2 + 60
-        # Tree 3: right side of gap (before building 2, shifted 40 right)
-        tree3_x = building2_left - tree_width + 28
+        # Tree 2: in front of right building (center-left of building2)
+        tree2_x = building2_left + building2_width // 3
+        # Tree 3: in front of right building (center-right of building2)
+        tree3_x = building2_left + 2 * building2_width // 3
 
         for tree_x in [tree1_x, tree2_x, tree3_x]:
-            # Check tree fits in gap and doesn't overlap with cafe
+            # Check tree fits and doesn't overlap with cafe
             cafe_left = getattr(self, 'cafe_x', 0)
             cafe_right = cafe_left + len(self.CAFE[0]) if hasattr(self, 'cafe_x') else 0
             overlaps_cafe = cafe_left - 5 < tree_x < cafe_right + 5
 
-            if tree_x > building1_right + 2 and tree_x + tree_width < building2_left - 2 and not overlaps_cafe:
+            # Allow trees in front of building2 (not just in the gap)
+            if tree_x > building1_right + 2 and tree_x + tree_width < self.width - 2 and not overlaps_cafe:
                 tree_y = ground_y - tree_height + 1
                 self._tree_positions.append((tree_x, tree_y))
                 self._draw_tree(tree_x, tree_y)
@@ -2672,7 +2730,7 @@ class AlleyScene:
         # Draw the static cityscape
         for row_idx, row in enumerate(self.CITYSCAPE):
             py = cityscape_y + row_idx
-            if py < 2 or py >= self.height:
+            if py < 0 or py >= self.height:
                 continue
 
             for col_idx, char in enumerate(row):
@@ -3620,6 +3678,9 @@ class AlleyScene:
 
         # Render horizontal cars on the street LAST (on top of everything)
         self._render_cars(screen)
+
+        # Render foreground clouds (big, fast, on top of scene)
+        self._render_foreground_clouds(screen)
 
         # Render QTE event (meteors, missiles, explosions, NPC) on top of everything
         self._render_qte(screen)
