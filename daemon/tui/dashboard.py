@@ -509,8 +509,9 @@ class Dashboard:
         else:
             screen.timeout(int(self.refresh_interval * 1000))
 
-        # Handle terminal resize
-        signal.signal(signal.SIGWINCH, lambda *_: self._handle_resize())
+        # Handle terminal resize (Unix only - Windows doesn't have SIGWINCH)
+        if hasattr(signal, 'SIGWINCH'):
+            signal.signal(signal.SIGWINCH, lambda *_: self._handle_resize())
 
         # Initial data fetch
         self._refresh_data()
