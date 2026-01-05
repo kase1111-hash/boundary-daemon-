@@ -28,6 +28,7 @@ Keyboard Shortcuts:
 
 import json
 import logging
+import math
 import os
 import random
 import signal
@@ -120,6 +121,7 @@ class Colors:
     MATRIX_FADE1 = 10
     MATRIX_FADE2 = 11
     MATRIX_FADE3 = 12
+    LIGHTNING = 13  # Inverted flash for lightning bolt
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -154,6 +156,8 @@ class Colors:
         curses.init_pair(Colors.MATRIX_FADE1, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(Colors.MATRIX_FADE2, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(Colors.MATRIX_FADE3, curses.COLOR_BLACK, curses.COLOR_BLACK)
+        # Lightning flash - inverted bright white on green
+        curses.init_pair(Colors.LIGHTNING, curses.COLOR_BLACK, curses.COLOR_WHITE)
 
 
 class MatrixRain:
@@ -198,6 +202,11 @@ class MatrixRain:
         self._target_drops = max(5, width // 10)  # More drops overall
         self._init_drops()
 
+        # Flicker state
+        self._frame_count = 0
+        self._global_flicker = 0.0  # 0-1 intensity of global flicker
+        self._intermittent_flicker = False  # Major flicker event active
+
     def _init_drops(self):
         """Initialize rain drops at random positions across all depth layers."""
         self.drops = []
@@ -227,7 +236,19 @@ class MatrixRain:
         })
 
     def update(self):
-        """Update rain drop positions."""
+        """Update rain drop positions and flicker state."""
+        self._frame_count += 1
+
+        # Update flicker states
+        # Rapid low-level flicker - subtle constant shimmer (sine wave oscillation)
+        self._global_flicker = 0.15 + 0.1 * math.sin(self._frame_count * 0.3)
+
+        # Intermittent major flicker - brief stutter every few seconds (2-8% chance per frame)
+        if random.random() < 0.003:
+            self._intermittent_flicker = True
+        elif self._intermittent_flicker and random.random() < 0.3:
+            self._intermittent_flicker = False
+
         new_drops = []
         for drop in self.drops:
             drop['phase'] += drop['speed']
@@ -263,7 +284,7 @@ class MatrixRain:
                 self._add_drop()
 
     def render(self, screen):
-        """Render rain drops with depth-based visual effects."""
+        """Render rain drops with depth-based visual effects and flicker."""
         # Sort drops by depth so farther ones render first (get overwritten by nearer)
         sorted_drops = sorted(self.drops, key=lambda d: d['depth'])
 
@@ -271,15 +292,27 @@ class MatrixRain:
             depth = drop['depth']
             chars = self.DEPTH_CHARS[depth]
 
+            # During intermittent flicker, skip rendering some drops randomly
+            if self._intermittent_flicker and random.random() < 0.4:
+                continue
+
             for i in range(drop['length']):
                 y = drop['y'] - i
                 if 0 <= y < self.height and 0 <= drop['x'] < self.width:
+                    # Rapid low-level flicker - randomly skip some chars
+                    if random.random() < self._global_flicker * 0.3:
+                        continue
+
                     # Character rolls through the charset as it falls
                     char_idx = (drop['char_offset'] + i * 2) % len(chars)
                     char = chars[char_idx]
 
-                    # More flicker for nearer drops
+                    # More character mutation flicker for nearer drops
                     if random.random() < 0.02 * (depth + 1):
+                        char = random.choice(chars)
+
+                    # Rapid flicker can also swap characters briefly
+                    if random.random() < self._global_flicker * 0.15:
                         char = random.choice(chars)
 
                     try:
@@ -345,6 +378,90 @@ class MatrixRain:
         screen.attron(attr)
         screen.addstr(y, x, char)
         screen.attroff(attr)
+
+
+class LightningBolt:
+    """
+    Generates and renders dramatic lightning bolt across the screen.
+
+    Creates a jagged lightning bolt path from top to bottom with
+    screen flash and rapid flicker effect.
+    """
+
+    # Lightning bolt segment characters
+    BOLT_CHARS = ['/', '\\', '|', '⚡', '╲', '╱', '│', '┃']
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.path: List[Tuple[int, int]] = []  # (y, x) coordinates
+        self._generate_bolt()
+
+    def _generate_bolt(self):
+        """Generate a jagged lightning bolt path from top to bottom."""
+        self.path = []
+        if self.width <= 0 or self.height <= 0:
+            return
+
+        # Start from random position in top third
+        x = random.randint(self.width // 4, 3 * self.width // 4)
+        y = 0
+
+        while y < self.height:
+            self.path.append((y, x))
+
+            # Move down 1-3 rows
+            y += random.randint(1, 3)
+
+            # Jag left or right randomly
+            direction = random.choice([-2, -1, -1, 0, 1, 1, 2])
+            x = max(1, min(self.width - 2, x + direction))
+
+            # Occasionally add a branch
+            if random.random() < 0.15 and len(self.path) > 3:
+                branch_x = x + random.choice([-3, -2, 2, 3])
+                branch_y = y
+                for _ in range(random.randint(2, 5)):
+                    if 0 <= branch_x < self.width and branch_y < self.height:
+                        self.path.append((branch_y, branch_x))
+                        branch_y += 1
+                        branch_x += random.choice([-1, 0, 1])
+
+    def render(self, screen, flash_intensity: float = 1.0):
+        """
+        Render the lightning bolt with optional flash intensity.
+
+        Args:
+            screen: curses screen object
+            flash_intensity: 0.0-1.0, controls visibility (for flicker effect)
+        """
+        if flash_intensity < 0.3:
+            return  # Don't render during dim phase
+
+        for y, x in self.path:
+            if 0 <= y < self.height and 0 <= x < self.width:
+                try:
+                    char = random.choice(self.BOLT_CHARS)
+                    attr = curses.color_pair(Colors.LIGHTNING) | curses.A_BOLD
+                    if flash_intensity < 0.7:
+                        attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                    screen.attron(attr)
+                    screen.addstr(y, x, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    @staticmethod
+    def flash_screen(screen, width: int, height: int):
+        """Flash the entire screen white briefly."""
+        attr = curses.color_pair(Colors.LIGHTNING)
+        try:
+            for y in range(height):
+                screen.attron(attr)
+                screen.addstr(y, 0, ' ' * (width - 1))
+                screen.attroff(attr)
+        except curses.error:
+            pass
 
 
 class DashboardClient:
@@ -767,6 +884,13 @@ class Dashboard:
         self.height = 0
         self.width = 0
 
+        # Lightning effect state (for matrix mode)
+        self._lightning_next_time = 0.0  # When to trigger next lightning
+        self._lightning_active = False
+        self._lightning_bolt: Optional[LightningBolt] = None
+        self._lightning_flickers_remaining = 0
+        self._lightning_flash_phase = 0
+
     def run(self):
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
@@ -892,6 +1016,8 @@ class Dashboard:
             screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
             self._update_dimensions()
             self.matrix_rain = MatrixRain(self.width, self.height)
+            # Schedule first lightning strike (5-30 minutes from now)
+            self._lightning_next_time = time.time() + random.uniform(300, 1800)
         else:
             screen.timeout(int(self.refresh_interval * 1000))
 
@@ -912,6 +1038,9 @@ class Dashboard:
                     if self.width != old_width or self.height != old_height:
                         self.matrix_rain.resize(self.width, self.height)
                     self.matrix_rain.update()
+
+                    # Check for lightning strike
+                    self._update_lightning()
 
                 self._draw()
 
@@ -939,6 +1068,51 @@ class Dashboard:
     def _update_dimensions(self):
         """Update terminal dimensions."""
         self.height, self.width = self.screen.getmaxyx()
+
+    def _update_lightning(self):
+        """Check and update lightning strike state."""
+        current_time = time.time()
+
+        # Check if it's time for a lightning strike
+        if not self._lightning_active and current_time >= self._lightning_next_time:
+            # Start lightning strike!
+            self._lightning_active = True
+            self._lightning_bolt = LightningBolt(self.width, self.height)
+            self._lightning_flickers_remaining = random.randint(3, 5)
+            self._lightning_flash_phase = 0
+
+        # Update active lightning
+        if self._lightning_active:
+            self._lightning_flash_phase += 1
+
+            # Each flicker cycle: bright(2) -> dim(1) -> off(1) = 4 frames per flicker
+            # At 100ms per frame, 4 frames = 400ms, so 3-5 flickers = 1.2-2 seconds total
+            # But we want 3-5 flickers in ~0.5 second, so faster: 2 frames per flicker
+            cycle_length = 2
+            cycles_done = self._lightning_flash_phase // cycle_length
+
+            if cycles_done >= self._lightning_flickers_remaining:
+                # Lightning is done
+                self._lightning_active = False
+                self._lightning_bolt = None
+                # Schedule next lightning (5-30 minutes from now)
+                self._lightning_next_time = current_time + random.uniform(300, 1800)
+
+    def _render_lightning(self):
+        """Render the lightning bolt with flicker effect."""
+        if not self._lightning_bolt:
+            return
+
+        # Calculate flash intensity based on phase
+        # Alternate between bright and dim for flicker effect
+        cycle_pos = self._lightning_flash_phase % 2
+        if cycle_pos == 0:
+            # Bright flash
+            LightningBolt.flash_screen(self.screen, self.width, self.height)
+            self._lightning_bolt.render(self.screen, 1.0)
+        else:
+            # Dim phase - just show the bolt, no full screen flash
+            self._lightning_bolt.render(self.screen, 0.5)
 
     def _refresh_data(self):
         """Refresh all data from daemon."""
@@ -989,6 +1163,10 @@ class Dashboard:
         # Render matrix rain in background first
         if self.matrix_mode and self.matrix_rain:
             self.matrix_rain.render(self.screen)
+
+            # Render lightning bolt if active
+            if self._lightning_active and self._lightning_bolt:
+                self._render_lightning()
 
         if self.show_help:
             self._draw_help()
