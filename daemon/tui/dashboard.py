@@ -2385,7 +2385,15 @@ class Dashboard:
         self.screen.refresh()
 
     def _draw_header(self):
-        """Draw the header bar."""
+        """Draw the header bar with solid background."""
+        # First, fill rows 0-1 with spaces to block rain effect
+        try:
+            blank_line = ' ' * (self.width - 1)
+            self.screen.addstr(0, 0, blank_line)
+            self.screen.addstr(1, 0, blank_line)
+        except curses.error:
+            pass
+
         header = " BOUNDARY DAEMON"
         if self.client.is_demo_mode():
             header += " [DEMO]"
@@ -2613,7 +2621,15 @@ class Dashboard:
         self._addstr(row, col, f"Shipped today: {shipped:,}", Colors.MUTED)
 
     def _draw_footer(self):
-        """Draw the footer bar."""
+        """Draw the footer bar with solid background."""
+        # First, fill footer rows (height-2 and height-1) to block rain effect
+        try:
+            blank_line = ' ' * (self.width - 1)
+            self.screen.addstr(self.height - 2, 0, blank_line)
+            self.screen.addstr(self.height - 1, 0, blank_line)
+        except curses.error:
+            pass
+
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
             shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
