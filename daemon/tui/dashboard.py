@@ -748,16 +748,16 @@ class MatrixRain:
 
 class AlleyScene:
     """
-    Sparse city silhouette for Matrix background.
-    Draws minimal building outlines on the edges so rain falls through.
-    Creates a "rainy night in the city" atmosphere.
+    City backdrop for Matrix mode.
+    Draws building silhouettes and lit windows scattered across the screen
+    that show through the rain and between UI elements.
     """
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.scene: List[List[Tuple[str, int]]] = []  # (char, color_id)
-        self._seed = 42  # Fixed seed for consistent scene
+        self.scene: List[List[Tuple[str, int]]] = []
+        self._seed = 42
         self._generate_scene()
 
     def resize(self, width: int, height: int):
@@ -767,104 +767,64 @@ class AlleyScene:
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate sparse city silhouette."""
+        """Generate city backdrop with scattered elements."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
 
-        # Initialize empty - rain will show through
+        # Initialize empty
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
 
-        # Draw building silhouettes on left edge only (sparse)
-        self._draw_left_buildings()
-
-        # Draw building silhouettes on right edge only (sparse)
-        self._draw_right_buildings()
-
-        # Add scattered lit windows across the scene
-        self._add_city_lights()
-
-    def _draw_left_buildings(self):
-        """Draw sparse left building edges."""
-        # Multiple building heights for skyline effect
-        buildings = [
-            (0, 3, 0.7),   # x_start, width, height_ratio
-            (2, 2, 0.5),
-            (3, 4, 0.85),
-        ]
-
-        for x_start, bwidth, height_ratio in buildings:
-            building_top = int(self.height * (1 - height_ratio))
-
-            for y in range(building_top, self.height):
-                # Right edge of building (vertical line)
-                edge_x = x_start + bwidth
-                if edge_x < self.width:
-                    self.scene[y][edge_x] = ('|', Colors.ALLEY_MID)
-
-                # Top edge (horizontal line)
-                if y == building_top:
-                    for x in range(x_start, min(edge_x + 1, self.width)):
-                        self.scene[y][x] = ('_', Colors.ALLEY_MID)
-
-    def _draw_right_buildings(self):
-        """Draw sparse right building edges."""
-        buildings = [
-            (self.width - 4, 3, 0.6),
-            (self.width - 7, 3, 0.8),
-            (self.width - 9, 2, 0.45),
-        ]
-
-        for x_start, bwidth, height_ratio in buildings:
-            if x_start < 0:
-                continue
-            building_top = int(self.height * (1 - height_ratio))
-
-            for y in range(building_top, self.height):
-                # Left edge of building (vertical line)
-                if 0 <= x_start < self.width:
-                    self.scene[y][x_start] = ('|', Colors.ALLEY_MID)
-
-                # Top edge (horizontal line)
-                if y == building_top:
-                    for x in range(max(0, x_start), min(x_start + bwidth + 1, self.width)):
-                        self.scene[y][x] = ('_', Colors.ALLEY_MID)
-
-    def _add_city_lights(self):
-        """Add sparse lit windows scattered across scene."""
-        # Deterministic window positions based on seed
         rng = random.Random(self._seed)
 
-        # Left side windows (inside left buildings area)
-        for _ in range(8):
-            x = rng.randint(0, min(7, self.width - 1))
-            y = rng.randint(self.height // 3, self.height - 2)
+        # Scattered lit windows throughout the screen
+        # These will show through wherever rain/UI doesn't cover them
+        num_windows = (self.width * self.height) // 80  # ~1.25% coverage
+        for _ in range(num_windows):
+            x = rng.randint(0, self.width - 1)
+            y = rng.randint(0, self.height - 1)
             if 0 <= x < self.width and 0 <= y < self.height:
-                if self.scene[y][x][0] == ' ':  # Don't overwrite edges
-                    # Randomly choose window color
-                    color = rng.choice([Colors.ALLEY_BLUE, Colors.ALLEY_BLUE, Colors.MATRIX_BRIGHT])
-                    self.scene[y][x] = ('#', color)
+                char = rng.choice(['#', '*', '.'])
+                color = rng.choice([Colors.ALLEY_BLUE, Colors.MATRIX_DIM, Colors.ALLEY_MID])
+                self.scene[y][x] = (char, color)
 
-        # Right side windows
-        for _ in range(8):
-            x = rng.randint(max(0, self.width - 10), self.width - 1)
-            y = rng.randint(self.height // 3, self.height - 2)
-            if 0 <= x < self.width and 0 <= y < self.height:
-                if self.scene[y][x][0] == ' ':
-                    color = rng.choice([Colors.ALLEY_BLUE, Colors.ALLEY_BLUE, Colors.MATRIX_BRIGHT])
-                    self.scene[y][x] = ('#', color)
+        # Skyline at the top (row 1, between header and panels)
+        if self.height > 3:
+            self._draw_skyline(1, rng)
 
-        # A few distant lights in the middle (far away in the alley)
-        center_x = self.width // 2
-        for _ in range(3):
-            x = center_x + rng.randint(-5, 5)
-            y = rng.randint(2, self.height // 4)
-            if 0 <= x < self.width and 0 <= y < self.height:
-                self.scene[y][x] = ('.', Colors.ALLEY_BLUE)
+        # Ground details near bottom
+        if self.height > 5:
+            self._draw_ground(self.height - 2, rng)
+
+    def _draw_skyline(self, row: int, rng):
+        """Draw a simple building skyline on a single row."""
+        if row >= self.height:
+            return
+
+        x = 0
+        while x < self.width - 1:
+            # Random building width
+            bwidth = rng.randint(3, 8)
+            # Draw rooftop
+            for i in range(bwidth):
+                if x + i < self.width:
+                    self.scene[row][x + i] = ('_', Colors.ALLEY_MID)
+            # Gap between buildings
+            x += bwidth + rng.randint(2, 6)
+
+    def _draw_ground(self, row: int, rng):
+        """Draw ground/street details."""
+        if row >= self.height:
+            return
+
+        for x in range(self.width - 1):
+            if rng.random() < 0.3:
+                char = rng.choice(['.', '-', '=', '_'])
+                self.scene[row][x] = (char, Colors.ALLEY_DARK)
 
     def render(self, screen):
-        """Render the sparse city scene to screen."""
+        """Render scene to screen."""
         for y, row in enumerate(self.scene):
             if y >= self.height:
                 break
