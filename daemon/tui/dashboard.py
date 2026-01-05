@@ -147,6 +147,7 @@ class Colors:
     BRICK_RED = 33       # Red brick color for upper building
     GREY_BLOCK = 34      # Grey block color for lower building
     DOOR_KNOB_GOLD = 35  # Gold door knob color
+    CAFE_WARM = 36       # Warm yellow/orange for cafe interior
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -224,6 +225,8 @@ class Colors:
         curses.init_pair(Colors.GREY_BLOCK, curses.COLOR_WHITE, curses.COLOR_BLACK)
         # Door knob - gold/yellow
         curses.init_pair(Colors.DOOR_KNOB_GOLD, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Cafe warm interior color
+        curses.init_pair(Colors.CAFE_WARM, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -2883,25 +2886,49 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.ALLEY_MID)
 
     def _draw_cafe(self, x: int, y: int):
-        """Draw a well-lit cafe storefront."""
+        """Draw a well-lit cafe storefront filled with warm color."""
         # Store cafe position
         self.cafe_x = x
         self.cafe_y = y
 
-        # Draw the cafe with warm lighting colors (no exterior glow)
+        total_rows = len(self.CAFE)
+        total_cols = len(self.CAFE[0]) if self.CAFE else 0
+
+        # Draw the cafe with warm lighting colors and fill empty space
         for row_idx, row in enumerate(self.CAFE):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
                 py = y + row_idx
-                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
-                    # Use warm yellow/white for the cafe (well-lit)
-                    if char in 'CAFE' or char in 'OPEN':
-                        color = Colors.RAT_YELLOW  # Bright yellow text
-                    elif char in '[]=' or char == '~':
-                        color = Colors.RAT_YELLOW  # Windows glow
-                    else:
-                        color = Colors.ALLEY_LIGHT  # Structure
-                    self.scene[py][px] = (char, color)
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Check if we're inside the cafe walls (between the | characters)
+                    inside_cafe = False
+                    if row_idx >= 1 and row_idx < total_rows - 1:
+                        # Find wall positions in this row
+                        left_wall = row.find('|')
+                        right_wall = row.rfind('|')
+                        if left_wall != -1 and right_wall != -1 and left_wall < col_idx < right_wall:
+                            inside_cafe = True
+
+                    if char != ' ':
+                        # Use warm yellow/white for the cafe (well-lit)
+                        if char in 'SHELLCAFE' or char in 'OPEN':
+                            color = Colors.RAT_YELLOW  # Bright yellow text
+                        elif char in '[]=' or char == '~':
+                            color = Colors.RAT_YELLOW  # Windows glow
+                        elif char == 'O' and inside_cafe:
+                            color = Colors.CAFE_WARM  # People silhouettes
+                        elif char in '/\\|':
+                            color = Colors.CAFE_WARM  # People arms/body
+                        elif char == '|':
+                            color = Colors.ALLEY_LIGHT  # Walls
+                        elif char in '_.-':
+                            color = Colors.ALLEY_LIGHT  # Structure
+                        else:
+                            color = Colors.ALLEY_LIGHT  # Structure
+                        self.scene[py][px] = (char, color)
+                    elif inside_cafe:
+                        # Fill empty interior space with warm blocks
+                        self.scene[py][px] = ('▓', Colors.CAFE_WARM)
 
     def is_valid_snow_position(self, x: int, y: int) -> bool:
         """Check if a position is valid for snow to collect.
