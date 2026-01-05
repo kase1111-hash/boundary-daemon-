@@ -386,8 +386,12 @@ class MatrixRain:
 
         # Snow-specific state: stuck snowflakes that fade over time
         self._stuck_snow: List[Dict] = []
+        # Roof/sill snow - lasts 10x longer and doesn't count towards max
+        self._roof_sill_snow: List[Dict] = []
         # Snow filter callback - returns True if position is valid for snow collection
         self._snow_filter: Optional[callable] = None
+        # Roof/sill checker callback - returns True if position is on roof or window sill
+        self._roof_sill_checker: Optional[callable] = None
 
         # Snow wind gusts - temporary bursts of sideways movement
         self._snow_gusts: List[Dict] = []
@@ -407,6 +411,7 @@ class MatrixRain:
             self.splats = []
             self._fog_particles = []
             self._stuck_snow = []
+            self._roof_sill_snow = []
             self._snow_gusts = []
             self._sand_gusts = []
             self._init_drops()
@@ -423,6 +428,13 @@ class MatrixRain:
         The function should accept (x, y) and return True if snow can collect there.
         """
         self._snow_filter = filter_func
+
+    def set_roof_sill_checker(self, checker_func: callable):
+        """Set a callback function that checks if a position is on roof or window sill.
+
+        Snow on these positions lasts 10x longer and doesn't count towards max.
+        """
+        self._roof_sill_checker = checker_func
 
     def cycle_weather(self) -> WeatherMode:
         """Cycle to the next weather mode and return the new mode."""
@@ -713,25 +725,48 @@ class MatrixRain:
         if self._snow_filter and not self._snow_filter(x, y):
             return  # Position is not valid for snow collection
 
-        # Limit total stuck snow to prevent memory issues (4x accumulation)
-        if len(self._stuck_snow) < 800:
-            self._stuck_snow.append({
+        # Check if this is roof/sill snow (lasts 10x longer, no max count)
+        is_roof_sill = self._roof_sill_checker and self._roof_sill_checker(x, y)
+
+        if is_roof_sill:
+            # Roof/sill snow: lasts 10x longer (1600-4800), no limit
+            self._roof_sill_snow.append({
                 'x': x,
                 'y': y,
                 'depth': depth,
                 'char': char,
-                'life': random.randint(160, 480),  # Longer melt time (4x)
-                'max_life': 480,
+                'life': random.randint(1600, 4800),  # 10x longer melt time
+                'max_life': 4800,
             })
+        else:
+            # Regular stuck snow: limit to 800
+            if len(self._stuck_snow) < 800:
+                self._stuck_snow.append({
+                    'x': x,
+                    'y': y,
+                    'depth': depth,
+                    'char': char,
+                    'life': random.randint(160, 480),
+                    'max_life': 480,
+                })
 
     def _update_stuck_snow(self):
         """Update stuck snow - slowly fade/melt away."""
+        # Update regular stuck snow
         new_stuck = []
         for snow in self._stuck_snow:
             snow['life'] -= 1
             if snow['life'] > 0:
                 new_stuck.append(snow)
         self._stuck_snow = new_stuck
+
+        # Update roof/sill snow (separate list)
+        new_roof_sill = []
+        for snow in self._roof_sill_snow:
+            snow['life'] -= 1
+            if snow['life'] > 0:
+                new_roof_sill.append(snow)
+        self._roof_sill_snow = new_roof_sill
 
     def _update_sand_gusts(self):
         """Update sand gust columns - they shift position over time."""
@@ -939,7 +974,27 @@ class MatrixRain:
 
         # Render stuck snow (melting snowflakes)
         if self.weather_mode == WeatherMode.SNOW:
+            # Render regular stuck snow
             for snow in self._stuck_snow:
+                try:
+                    if 0 <= snow['x'] < self.width - 1 and 0 <= snow['y'] < self.height:
+                        # Fade based on remaining life (melting effect)
+                        life_ratio = snow['life'] / snow['max_life']
+                        if life_ratio > 0.6:
+                            attr = curses.color_pair(Colors.SNOW_BRIGHT) | curses.A_BOLD
+                        elif life_ratio > 0.3:
+                            attr = curses.color_pair(Colors.SNOW_DIM)
+                        else:
+                            attr = curses.color_pair(Colors.SNOW_FADE) | curses.A_DIM
+
+                        screen.attron(attr)
+                        screen.addstr(snow['y'], snow['x'], snow['char'])
+                        screen.attroff(attr)
+                except curses.error:
+                    pass
+
+            # Render roof/sill snow (lasts longer)
+            for snow in self._roof_sill_snow:
                 try:
                     if 0 <= snow['x'] < self.width - 1 and 0 <= snow['y'] < self.height:
                         # Fade based on remaining life (melting effect)
@@ -1074,6 +1129,26 @@ class AlleyScene:
         " ___ ",
         "|###|",
         "|___|",
+    ]
+
+    # Blue street mailbox (4 wide x 5 tall)
+    MAILBOX = [
+        " __ ",
+        "|==|",
+        "|US|",
+        "|__|",
+        " || ",
+    ]
+
+    # Cafe storefront (well-lit, between buildings)
+    CAFE = [
+        "  _______________  ",
+        " |   C A F E    | ",
+        " |  [=]    [=]  | ",
+        " |   .-~~-.     | ",
+        " |  |OPEN |     | ",
+        " |   '----'     | ",
+        " |______[]______| ",
     ]
 
     # Traffic light showing two sides (corner view) - compact head, tall pole
@@ -1381,15 +1456,28 @@ class AlleyScene:
                     self.scene[street_y][x] = ('=', Colors.RAT_YELLOW)
                     self.scene[street_y][x + 1] = ('=', Colors.RAT_YELLOW)
 
-        # Place dumpster in lower-left area (above curb) - drawn AFTER buildings (in front)
-        self.dumpster_x = 8
+        # Place dumpster to the LEFT of building 1 (above curb)
+        self.dumpster_x = 2
         self.dumpster_y = ground_y - len(self.DUMPSTER) + 1
         self._draw_sprite(self.DUMPSTER, self.dumpster_x, self.dumpster_y, Colors.ALLEY_MID)
 
-        # Place box to the right of dumpster (above curb) - drawn AFTER buildings (in front)
-        self.box_x = self.dumpster_x + len(self.DUMPSTER[0]) + 6
+        # Place box in the alley between buildings
+        building1_right = self._building_x + len(self.BUILDING[0])
+        building2_left = self._building2_x if self._building2_x > 0 else self.width
+        gap_center = (building1_right + building2_left) // 2
+        self.box_x = gap_center - 20
         self.box_y = ground_y - len(self.BOX) + 1
         self._draw_sprite(self.BOX, self.box_x, self.box_y, Colors.SAND_DIM)
+
+        # Place blue mailbox near building 1
+        self.mailbox_x = self._building_x + len(self.BUILDING[0]) + 3
+        self.mailbox_y = ground_y - len(self.MAILBOX) + 1
+        self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
+
+        # Place well-lit Cafe between buildings (center of gap)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2
+        self.cafe_y = ground_y - len(self.CAFE) + 1
+        self._draw_cafe(self.cafe_x, self.cafe_y)
 
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
@@ -1410,6 +1498,40 @@ class AlleyScene:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
                 # Store position for flicker effect (center of light head)
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
+
+    def _draw_cafe(self, x: int, y: int):
+        """Draw a well-lit cafe storefront with warm lighting effect."""
+        # Store cafe position for lighting effect
+        self.cafe_x = x
+        self.cafe_y = y
+
+        # Draw the cafe with warm lighting colors
+        for row_idx, row in enumerate(self.CAFE):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Use warm yellow/white for the cafe (well-lit)
+                    if char in 'CAFE' or char in 'OPEN':
+                        color = Colors.RAT_YELLOW  # Bright yellow text
+                    elif char in '[]=' or char == '~':
+                        color = Colors.RAT_YELLOW  # Windows glow
+                    else:
+                        color = Colors.ALLEY_LIGHT  # Structure
+                    self.scene[py][px] = (char, color)
+
+        # Add warm glow around the cafe (light spill)
+        for dy in range(-1, len(self.CAFE) + 2):
+            for dx in range(-2, len(self.CAFE[0]) + 2):
+                px = x + dx
+                py = y + dy
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Only add glow to empty spaces
+                    if self.scene[py][px][0] == ' ':
+                        # Closer to cafe = brighter glow
+                        dist = min(abs(dx), abs(dy), abs(dx - len(self.CAFE[0])), abs(dy - len(self.CAFE)))
+                        if dist <= 1 and random.random() < 0.3:
+                            self.scene[py][px] = ('░', Colors.RAT_YELLOW)
 
     def is_valid_snow_position(self, x: int, y: int) -> bool:
         """Check if a position is valid for snow to collect.
@@ -1455,6 +1577,38 @@ class AlleyScene:
 
         # Outside buildings, allow snow
         return True
+
+    def is_roof_or_sill(self, x: int, y: int) -> bool:
+        """Check if a position is specifically on a roof or window sill.
+
+        Used to determine if snow should last 10x longer.
+        """
+        # Check if position is on roof (within 2 rows of building top)
+        if self._building_y > 0 and y <= self._building_y + 1:
+            if self._building_x <= x < self._building_x + len(self.BUILDING[0]):
+                return True
+        if self._building2_y > 0 and y <= self._building2_y + 1:
+            if self._building2_x <= x < self._building2_x + len(self.BUILDING2[0]):
+                return True
+
+        # Check if position is on a window sill
+        building_sill_offsets = [7, 13, 19, 25, 31]
+
+        # Check building 1
+        if self._building_x <= x < self._building_x + len(self.BUILDING[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+
+        # Check building 2
+        if self._building2_x > 0 and self._building2_x <= x < self._building2_x + len(self.BUILDING2[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building2_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+
+        return False
 
     def _spawn_car(self):
         """Spawn a new car on the street."""
@@ -3253,6 +3407,13 @@ class Dashboard:
         # Weather mode (for matrix mode)
         self._current_weather: WeatherMode = WeatherMode.MATRIX
 
+        # Moon state (arcs across sky every 15 minutes)
+        self._moon_active = False
+        self._moon_x = 0.0
+        self._moon_start_time = 0.0
+        self._moon_next_time = 0.0  # When to start next moon arc
+        self._moon_duration = 900.0  # 15 minutes (900 seconds) to cross screen
+
     def run(self):
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
@@ -3381,12 +3542,16 @@ class Dashboard:
             self.matrix_rain = MatrixRain(self.width, self.height)
             # Connect snow filter so snow only collects on roofs/sills, not building faces
             self.matrix_rain.set_snow_filter(self.alley_scene.is_valid_snow_position)
+            # Connect roof/sill checker so snow on roofs/sills lasts 10x longer
+            self.matrix_rain.set_roof_sill_checker(self.alley_scene.is_roof_or_sill)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
             self.alley_rat.set_hiding_spots(self.alley_scene)
             self.lurking_shadow = LurkingShadow(self.width, self.height)
             # Schedule first lightning strike (5-30 minutes from now)
             self._lightning_next_time = time.time() + random.uniform(300, 1800)
+            # Schedule first moon arc (start immediately, then every 15 minutes)
+            self._moon_next_time = time.time() + 5.0  # Start in 5 seconds
         else:
             screen.timeout(int(self.refresh_interval * 1000))
 
@@ -3424,6 +3589,9 @@ class Dashboard:
 
                     # Check for lightning strike
                     self._update_lightning()
+
+                    # Update moon arc
+                    self._update_moon()
 
                 self._draw()
 
@@ -3488,6 +3656,74 @@ class Dashboard:
                 self._lightning_bolt = None
                 # Schedule next lightning (5-30 minutes from now)
                 self._lightning_next_time = current_time + random.uniform(300, 1800)
+
+    def _update_moon(self):
+        """Update moon arc across the sky (15 minute cycle)."""
+        current_time = time.time()
+
+        # Check if it's time to start a new moon arc
+        if not self._moon_active and current_time >= self._moon_next_time:
+            self._moon_active = True
+            self._moon_start_time = current_time
+            self._moon_x = 0.0
+
+        # Update active moon
+        if self._moon_active:
+            elapsed = current_time - self._moon_start_time
+            progress = elapsed / self._moon_duration  # 0.0 to 1.0
+
+            if progress >= 1.0:
+                # Moon has crossed the sky
+                self._moon_active = False
+                # Schedule next moon arc (15 minutes from now)
+                self._moon_next_time = current_time + 900.0  # 15 minutes
+            else:
+                # Update moon x position
+                self._moon_x = progress * self.width
+
+    def _render_moon(self, screen):
+        """Render the moon in a high arc across the sky."""
+        if not self._moon_active:
+            return
+
+        # Calculate moon position in arc
+        progress = (self._moon_x / self.width) if self.width > 0 else 0
+
+        # High arc: y = height at edges, low (near top) in middle
+        # Using parabola: y = a * (x - 0.5)^2 + min_y
+        # At edges (x=0 or 1): y = a * 0.25 + min_y = max_y
+        # At center (x=0.5): y = min_y
+        min_y = 2  # Highest point (near top of screen)
+        max_y = self.height // 3  # Lowest point of arc (at edges)
+        arc_height = max_y - min_y
+
+        # Parabola centered at 0.5
+        x_centered = progress - 0.5
+        moon_y = int(min_y + arc_height * 4 * (x_centered ** 2))
+        moon_x = int(self._moon_x)
+
+        # Moon ASCII art (simple crescent)
+        moon_chars = [
+            " @@@ ",
+            "@   @",
+            "@    ",
+            "@   @",
+            " @@@ ",
+        ]
+
+        # Render moon
+        for row_idx, row in enumerate(moon_chars):
+            for col_idx, char in enumerate(row):
+                px = moon_x + col_idx - 2  # Center the moon
+                py = moon_y + row_idx - 2
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
 
     def _update_creatures(self):
         """Update creature state based on alerts."""
@@ -3617,6 +3853,9 @@ class Dashboard:
                 self.alley_rat.render(self.screen)
             if self.lurking_shadow:
                 self.lurking_shadow.render(self.screen)
+
+            # Render moon (behind other effects)
+            self._render_moon(self.screen)
 
             # Render lightning bolt if active
             if self._lightning_active and self._lightning_bolt:
