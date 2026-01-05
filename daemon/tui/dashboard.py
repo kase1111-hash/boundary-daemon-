@@ -1520,12 +1520,14 @@ class AlleyScene:
         self.mailbox_y = ground_y - len(self.MAILBOX) + 1
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
+        # Calculate cafe position first
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2
+        self.cafe_y = ground_y - len(self.CAFE) + 1
+
         # Draw distant buildings above cafe (behind everything, small, dark grey)
         self._draw_distant_buildings(gap_center, self.cafe_y)
 
         # Place well-lit Cafe between buildings (center of gap)
-        self.cafe_x = gap_center - len(self.CAFE[0]) // 2
-        self.cafe_y = ground_y - len(self.CAFE) + 1
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
     def _draw_street_lights(self, ground_y: int):
@@ -3586,6 +3588,10 @@ class Dashboard:
         # Weather mode (for matrix mode)
         self._current_weather: WeatherMode = WeatherMode.MATRIX
 
+        # Framerate options (for matrix mode)
+        self._framerate_options = [100, 50, 25, 15]  # ms
+        self._framerate_index = 1  # Start at 50ms
+
         # Moon state (arcs across sky every 15 minutes)
         self._moon_active = False
         self._moon_x = 0.0
@@ -3714,7 +3720,7 @@ class Dashboard:
 
         # Matrix mode: faster refresh for smooth animation, black background
         if self.matrix_mode:
-            screen.timeout(50)  # 50ms for smooth rain animation (doubled framerate)
+            screen.timeout(self._framerate_options[self._framerate_index])  # Use selected framerate
             screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
@@ -4021,6 +4027,13 @@ class Dashboard:
                 new_mode = self.matrix_rain.cycle_weather()
                 # Store for header display
                 self._current_weather = new_mode
+        elif key == ord('f') or key == ord('F'):
+            # Cycle framerate (only in matrix mode)
+            if self.matrix_mode:
+                self._framerate_index = (self._framerate_index + 1) % len(self._framerate_options)
+                # Apply new framerate immediately
+                if self.screen:
+                    self.screen.timeout(self._framerate_options[self._framerate_index])
 
     def _draw(self):
         """Draw the dashboard."""
@@ -4061,9 +4074,10 @@ class Dashboard:
         header = " BOUNDARY DAEMON"
         if self.client.is_demo_mode():
             header += " [DEMO]"
-        # Show weather mode in matrix mode
+        # Show weather mode and framerate in matrix mode
         if self.matrix_mode:
             header += f" [{self._current_weather.display_name}]"
+            header += f" [{self._framerate_options[self._framerate_index]}ms]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
