@@ -164,42 +164,49 @@ class MatrixRain:
     """Digital rain effect from The Matrix with depth simulation."""
 
     # 5 depth layers - each with different character sets (simple=far, complex=near)
-    # Layer 0: Farthest - simple dots and lines
-    # Layer 4: Nearest - full katakana and symbols
+    # Layer 0: Farthest - tiny fast raindrops falling from sky
+    # Layer 4: Nearest - big slow drops sliding down window
     DEPTH_CHARS = [
-        ".-·:;",  # Layer 0: Farthest - minimal
+        ".-·:;'`",  # Layer 0: Tiny rain - minimal dots
         ".|!:;+-=",  # Layer 1: Simple ASCII
         "0123456789+-*/<>=$#",  # Layer 2: Numbers and symbols
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",  # Layer 3: Alphanumeric
         "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789$#@&",  # Layer 4: Nearest - full
     ]
 
-    # Speed ranges for each depth layer (min, max) - farther = slower, nearer = faster
+    # Speed ranges - REVERSED: tiny rain (layer 0) is FASTEST like falling from sky
+    # Big drops (layer 4) are SLOWEST like sliding down a window
     DEPTH_SPEEDS = [
-        (0.3, 0.5),   # Layer 0: Slowest (farthest)
-        (0.5, 0.8),   # Layer 1
-        (0.8, 1.2),   # Layer 2: Medium
-        (1.2, 1.8),   # Layer 3
-        (1.8, 2.5),   # Layer 4: Fastest (nearest)
+        (3.5, 5.0),   # Layer 0: FASTEST - tiny rain falling from sky
+        (2.0, 3.0),   # Layer 1: Fast
+        (1.0, 1.5),   # Layer 2: Medium
+        (0.5, 0.8),   # Layer 3: Slow
+        (0.2, 0.4),   # Layer 4: SLOWEST - sliding down window
     ]
 
-    # Tail lengths for each depth (shorter = farther, longer = nearer)
+    # Tail lengths for each depth (tiny rain = very short, big drops = long trails)
     DEPTH_LENGTHS = [
-        (3, 6),    # Layer 0
-        (4, 8),    # Layer 1
-        (6, 12),   # Layer 2
-        (8, 16),   # Layer 3
-        (12, 20),  # Layer 4
+        (1, 3),    # Layer 0: Tiny streaks
+        (2, 4),    # Layer 1: Short
+        (4, 8),    # Layer 2: Medium
+        (8, 14),   # Layer 3: Long
+        (12, 22),  # Layer 4: Very long trails
     ]
 
-    # Distribution of drops across layers (more in middle layers for balance)
-    DEPTH_WEIGHTS = [0.10, 0.15, 0.30, 0.25, 0.20]
+    # Distribution - 500% more tiny rain! Layer 0 dominates
+    # Old was [0.10, 0.15, 0.30, 0.25, 0.20] - layer 0 was 10%
+    # New: layer 0 is 60% (6x more = 500% increase relative to others)
+    DEPTH_WEIGHTS = [0.60, 0.15, 0.12, 0.08, 0.05]
+
+    # Splat characters for when tiny rain hits
+    SPLAT_CHARS = ['+', '*', '×', '·']
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
         self.drops: List[Dict] = []
-        self._target_drops = max(8, width * 3 // 20)  # 50% more rain!
+        self.splats: List[Dict] = []  # Splat effects when tiny rain hits
+        self._target_drops = max(12, width * 3 // 10)  # Even more drops for the tiny rain
         self._init_drops()
 
         # Flicker state
@@ -235,6 +242,16 @@ class MatrixRain:
             'phase': 0.0,
         })
 
+    def _add_splat(self, x: int, y: int):
+        """Add a splat effect at the given position."""
+        if 0 <= x < self.width and self.height // 2 <= y < self.height:
+            self.splats.append({
+                'x': x,
+                'y': y,
+                'life': random.randint(3, 8),  # Frames to live
+                'char': random.choice(self.SPLAT_CHARS),
+            })
+
     def update(self):
         """Update rain drop positions and flicker state."""
         self._frame_count += 1
@@ -254,15 +271,31 @@ class MatrixRain:
             drop['phase'] += drop['speed']
             drop['y'] = int(drop['phase'])
 
-            # Roll through characters as the drop falls (faster roll for nearer drops)
-            roll_speed = 1 + drop['depth']  # Layers 0-4 roll at speeds 1-5
+            # Roll through characters as the drop falls
+            # Tiny rain (layer 0) rolls fastest for that streaking effect
+            roll_speed = 5 - drop['depth']  # Layer 0 = 5, Layer 4 = 1
             drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(self.DEPTH_CHARS[drop['depth']])
+
+            # Check if tiny rain (layer 0) hit the ground (mid-screen to bottom)
+            if drop['depth'] == 0 and drop['y'] >= self.height:
+                # Create splat effect
+                if random.random() < 0.7:  # 70% chance of splat
+                    self._add_splat(drop['x'], self.height - 1)
+                continue  # Don't keep this drop
 
             # Keep drop if still on screen
             if drop['y'] - drop['length'] < self.height:
                 new_drops.append(drop)
 
         self.drops = new_drops
+
+        # Update splats - decrease life and remove dead ones
+        new_splats = []
+        for splat in self.splats:
+            splat['life'] -= 1
+            if splat['life'] > 0:
+                new_splats.append(splat)
+        self.splats = new_splats
 
         # Add new drops to maintain density
         while len(self.drops) < self._target_drops:
@@ -273,14 +306,15 @@ class MatrixRain:
         old_width = self.width
         self.width = width
         self.height = height
-        self._target_drops = max(8, width * 3 // 20)  # 50% more rain!
+        self._target_drops = max(12, width * 3 // 10)  # More drops for tiny rain effect
 
-        # Remove drops that are now out of bounds
+        # Remove drops and splats that are now out of bounds
         self.drops = [d for d in self.drops if d['x'] < width]
+        self.splats = [s for s in self.splats if s['x'] < width and s['y'] < height]
 
         # Add more drops if window got bigger
         if width > old_width:
-            for _ in range(max(1, (width - old_width) * 3 // 20)):
+            for _ in range(max(1, (width - old_width) * 3 // 10)):
                 self._add_drop()
 
     def render(self, screen):
@@ -319,6 +353,23 @@ class MatrixRain:
                         self._render_char(screen, y, drop['x'], char, i, depth)
                     except curses.error:
                         pass
+
+        # Render splats (tiny rain impact effects)
+        for splat in self.splats:
+            try:
+                # Splats fade based on remaining life
+                if splat['life'] > 5:
+                    attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                elif splat['life'] > 2:
+                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                else:
+                    attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+
+                screen.attron(attr)
+                screen.addstr(splat['y'], splat['x'], splat['char'])
+                screen.attroff(attr)
+            except curses.error:
+                pass
 
     def _render_char(self, screen, y: int, x: int, char: str, pos: int, depth: int):
         """Render a single character with depth-appropriate styling."""
