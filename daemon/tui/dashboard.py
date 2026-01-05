@@ -1382,8 +1382,8 @@ class AlleyScene:
         "        |=|              |   ||=|              |=|=|      |   ||=|              |   ||=|        |  ||=|=|         ",  # Row 9
         "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 10
         "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 11
-        "        |=|              |___||=|              |___|      |___||=|              |___||=|        |___||___|         ",  # Row 12
-        "        |_|                  |_|                              |_|                  |_|                            ",  # Row 13
+        "        |=|              |___||=|              |=|=|      |___||=|              |___||=|        |___||=|=|         ",  # Row 12
+        "        |_|                  |_|              |_||_|          |_|                  |_|             |_||_|         ",  # Row 13
     ]
 
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, two doors with stoops
@@ -1597,12 +1597,19 @@ class AlleyScene:
         self._qte_misses = 0
         self._qte_npc_x = 0
         self._qte_npc_message = ""
+        self._qte_message_timer = 0  # Timer for auto-clearing messages
+        self._qte_message_duration = 90  # Frames to show message (1.5 sec at 60fps)
         self._qte_wave = 0  # Current wave of meteors
         self._qte_total_waves = 5  # Total waves per event
         self._qte_pending_keys: List[str] = []  # Keys player needs to press
+        self._qte_last_meteor_positions: List[Tuple[int, int, int, int]] = []  # (x, y, w, h) for cleanup
         # Skyline buildings with animated window lights
         self._skyline_windows: List[Dict] = []  # {x, y, on, timer, toggle_time}
         self._skyline_buildings: List[Dict] = []  # {x, y, width, height, windows}
+        # OPEN sign animation state
+        self._open_sign_phase = 0  # 0=off, 1=O, 2=OP, 3=OPE, 4=OPEN, 5-9=flash
+        self._open_sign_timer = 0
+        self._open_sign_speed = 20  # Frames per phase
         # Cloud layer with wisps
         self._clouds: List[Dict] = []
         self._init_clouds()
@@ -1967,9 +1974,20 @@ class AlleyScene:
                 # NPC appears on the left side
                 self._qte_npc_x = 5
                 self._qte_npc_message = "HELP! METEORS!"
+                self._qte_message_timer = 0
+                self._qte_last_meteor_positions = []  # Clear cleanup tracking
             return
 
         self._qte_timer += 1
+
+        # Update message timer - auto-clear messages after duration
+        if self._qte_npc_message:
+            self._qte_message_timer += 1
+            if self._qte_message_timer >= self._qte_message_duration:
+                # Don't clear during warning or end states
+                if self._qte_state == 'active':
+                    self._qte_npc_message = ""
+                    self._qte_message_timer = 0
 
         if self._qte_state == 'warning':
             # Warning phase - NPC appears and warns
@@ -2032,10 +2050,11 @@ class AlleyScene:
                     new_explosions.append(exp)
             self._qte_explosions = new_explosions
 
-            # Check wave completion
+            # Check wave completion - wait for explosions to finish too
             active_meteors = [m for m in self._qte_meteors if m['called']]
             uncalled_meteors = [m for m in self._qte_meteors if not m['called']]
-            if len(active_meteors) == 0 and len(uncalled_meteors) == 0 and len(self._qte_missiles) == 0:
+            explosions_done = len(self._qte_explosions) == 0
+            if len(active_meteors) == 0 and len(uncalled_meteors) == 0 and len(self._qte_missiles) == 0 and explosions_done:
                 self._qte_wave += 1
                 if self._qte_wave > self._qte_total_waves:
                     # All waves complete
@@ -2128,6 +2147,7 @@ class AlleyScene:
 
         self._qte_current_callout = (meteor['col'], meteor['row'], key)
         self._qte_npc_message = f"PRESS [{key}] {row_name}!"
+        self._qte_message_timer = 0  # Reset message timer for new callout
 
         # Start the meteor falling
         meteor['called'] = True
@@ -2236,6 +2256,105 @@ class AlleyScene:
                         self.scene[py][px] = ('▪', Colors.RAT_YELLOW)
                     else:
                         self.scene[py][px] = ('▫', Colors.ALLEY_DARK)
+
+    def _update_open_sign(self):
+        """Update OPEN sign animation - lights up O, P, E, N then flashes."""
+        self._open_sign_timer += 1
+        if self._open_sign_timer >= self._open_sign_speed:
+            self._open_sign_timer = 0
+            self._open_sign_phase += 1
+            if self._open_sign_phase > 9:  # 0-4 = lighting up, 5-9 = flashing
+                self._open_sign_phase = 0
+
+    def _render_cafe_sign(self, screen):
+        """Render cafe sign with green SHELL CAFE and animated OPEN sign."""
+        if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
+            return
+
+        cafe_x = self.cafe_x
+        cafe_y = self.cafe_y
+
+        # Find the SHELL CAFE text in the sprite (row 1)
+        if len(self.CAFE) > 1:
+            sign_row = self.CAFE[1]  # "  |     S H E L L  C A F E   |  "
+            for col_idx, char in enumerate(sign_row):
+                if char in 'SHELLCAFE':
+                    px = cafe_x + col_idx
+                    py = cafe_y + 1
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                        try:
+                            # Green bold for SHELL CAFE
+                            attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+        # Find and animate the OPEN sign (row 14 in CAFE sprite)
+        if len(self.CAFE) > 14:
+            open_row = self.CAFE[14]  # "  |[                  OPEN ]|  "
+            open_start = open_row.find('OPEN')
+            if open_start != -1:
+                # Determine which letters are lit based on phase
+                # Phase 0: all off, 1: O, 2: OP, 3: OPE, 4: OPEN, 5-9: flash on/off
+                letters = ['O', 'P', 'E', 'N']
+                for i, letter in enumerate(letters):
+                    px = cafe_x + open_start + i
+                    py = cafe_y + 14
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                        try:
+                            if self._open_sign_phase == 0:
+                                # All off - dim gray
+                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                            elif self._open_sign_phase <= 4:
+                                # Lighting up one by one
+                                if i < self._open_sign_phase:
+                                    # This letter is lit - bright yellow
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                else:
+                                    # Not lit yet - dim
+                                    attr = curses.color_pair(Colors.ALLEY_DARK)
+                            else:
+                                # Flashing phase (5-9) - alternate on/off
+                                if self._open_sign_phase % 2 == 1:
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_DIM
+                            screen.attron(attr)
+                            screen.addstr(py, px, letter)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_trees(self, screen):
+        """Render trees on top of buildings (foreground layer)."""
+        for tree_x, tree_y in self._tree_positions:
+            # Use windy tree sprite based on wind direction
+            if self._wind_direction > 0:
+                tree_sprite = self.TREE_WINDY_RIGHT
+            else:
+                tree_sprite = self.TREE_WINDY_LEFT
+
+            for row_idx, row in enumerate(tree_sprite):
+                for col_idx, char in enumerate(row):
+                    px = tree_x + col_idx
+                    py = tree_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            if char == '@':
+                                # Leaves - bright green
+                                attr = curses.color_pair(Colors.MATRIX_BRIGHT)
+                            elif char in '()|':
+                                # Trunk - brown/dark
+                                attr = curses.color_pair(Colors.SAND_DIM)
+                            else:
+                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
 
     def _render_clouds(self, screen):
         """Render cloud layer."""
@@ -2931,6 +3050,9 @@ class AlleyScene:
         # Update skyline window lights
         self._update_skyline_windows()
 
+        # Update OPEN sign animation
+        self._update_open_sign()
+
         # Update meteor damage overlays
         self._update_damage_overlays()
 
@@ -3460,8 +3582,14 @@ class AlleyScene:
         # Render cafe people in Shell Cafe lower window
         self._render_cafe_people(screen)
 
+        # Render cafe sign (green SHELL CAFE and animated OPEN sign)
+        self._render_cafe_sign(screen)
+
         # Render window frames on top of window people (so people appear inside)
         self._render_window_frames(screen)
+
+        # Render trees as foreground layer (in front of buildings)
+        self._render_trees(screen)
 
         # Render sidewalk/curb on top of scene but behind all sprites
         self._render_sidewalk(screen)
@@ -3543,22 +3671,31 @@ class AlleyScene:
                             pass
 
     def _render_damage_overlays(self, screen):
-        """Render meteor damage overlays on the scene."""
+        """Render meteor damage overlays on the scene - fades from red to gray."""
         for overlay in self._damage_overlays:
             px = overlay['x']
             py = overlay['y']
             if 0 <= px < self.width - 1 and 0 <= py < self.height:
                 try:
-                    # Damage fades from bright to dim as timer increases
+                    # Damage fades gradually: red -> orange -> gray -> dim gray -> gone
                     fade_progress = overlay['timer'] / overlay['fade_time']
-                    if fade_progress < 0.3:
-                        # Fresh damage - bright red/orange
+                    if fade_progress < 0.15:
+                        # Fresh damage - bright red
+                        attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+                    elif fade_progress < 0.3:
+                        # Cooling - red, no bold
                         attr = curses.color_pair(Colors.BRICK_RED)
-                    elif fade_progress < 0.6:
-                        # Aging damage - dim
-                        attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+                    elif fade_progress < 0.5:
+                        # Cooled - bright gray
+                        attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                    elif fade_progress < 0.7:
+                        # Fading - medium gray
+                        attr = curses.color_pair(Colors.ALLEY_MID)
+                    elif fade_progress < 0.85:
+                        # Old - dim gray
+                        attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
                     else:
-                        # Old damage - very dim
+                        # Almost gone - very dim
                         attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_DIM
                     screen.attron(attr)
                     screen.addstr(py, px, overlay['char'])
@@ -3615,7 +3752,21 @@ class AlleyScene:
     def _render_qte(self, screen):
         """Render the meteor QTE event - meteors, missiles, explosions, NPC."""
         if not self._qte_active:
+            # Clear any leftover positions from previous frame when QTE ends
+            for (px, py, w, h) in self._qte_last_meteor_positions:
+                for dy in range(h):
+                    for dx in range(w):
+                        cx, cy = px + dx, py + dy
+                        if 0 <= cx < self.width - 1 and 0 <= cy < self.height:
+                            try:
+                                screen.addstr(cy, cx, ' ')
+                            except curses.error:
+                                pass
+            self._qte_last_meteor_positions = []
             return
+
+        # Track current meteor positions for cleanup next frame
+        current_positions = []
 
         # Render meteors
         for meteor in self._qte_meteors:
@@ -3648,6 +3799,11 @@ class AlleyScene:
                         except curses.error:
                             pass
 
+            # Track meteor position for cleanup (include sprite bounds + label)
+            sprite_w = len(sprite[0]) if sprite else 5
+            sprite_h = len(sprite) + 2  # +2 for label above
+            current_positions.append((px - sprite_w // 2, py - 2, sprite_w + 3, sprite_h + 2))
+
             # Draw key indicator above meteor
             if not meteor['called']:
                 key = self.QTE_KEYS[meteor['col']]
@@ -3661,6 +3817,9 @@ class AlleyScene:
                         screen.attroff(attr)
                     except curses.error:
                         pass
+
+        # Save positions for cleanup next frame
+        self._qte_last_meteor_positions = current_positions
 
         # Render missiles
         for missile in self._qte_missiles:
@@ -5372,6 +5531,12 @@ class Dashboard:
         self._framerate_options = [100, 50, 25, 15]  # ms
         self._framerate_index = 1  # Start at 50ms
 
+        # CLI mode state
+        self._cli_history: List[str] = []
+        self._cli_history_index = 0
+        self._cli_results: List[str] = []
+        self._cli_results_scroll = 0
+
         # Moon state (arcs across sky every 15 minutes)
         self._moon_active = False
         self._moon_x = 0.0
@@ -5826,6 +5991,13 @@ class Dashboard:
                 # Apply new framerate immediately
                 if self.screen:
                     self.screen.timeout(self._framerate_options[self._framerate_index])
+        # QTE keys (6, 7, 8, 9, 0) for meteor game
+        elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
+            if self.matrix_mode and self.alley_scene:
+                self.alley_scene.handle_qte_key(chr(key))
+        # CLI mode (: or ;)
+        elif key == ord(':') or key == ord(';'):
+            self._start_cli()
 
     def _draw(self):
         """Draw the dashboard."""
@@ -6010,7 +6182,7 @@ class Dashboard:
         # Draw shortcuts at bottom of events panel (inside the box)
         shortcut_row = y + height - 2
         if self.matrix_mode:
-            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [m]Mode [a]Ack [e]Export [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -6126,7 +6298,7 @@ class Dashboard:
         """Draw the footer bar."""
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
-            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [m]Mode [a]Ack [e]Export [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -6327,6 +6499,755 @@ class Dashboard:
             self._show_message(f"Exported {len(events)} events to {export_path}", Colors.STATUS_OK)
         except Exception as e:
             self._show_message(f"Export failed: {e}", Colors.STATUS_ERROR)
+
+    # Boundary Daemon tool definitions with help
+    DAEMON_TOOLS = {
+        # CLI Commands
+        'query': {
+            'desc': 'Query events from log',
+            'usage': 'query <filter> [--last 24h] [--limit N]',
+            'help': [
+                "QUERY - Event Query Tool",
+                "=" * 50,
+                "",
+                "Query events from the daemon's hash-chain log.",
+                "",
+                "USAGE:",
+                "  query <filter>",
+                "  query type:VIOLATION --last 24h",
+                "  query contains:unauthorized",
+                "",
+                "FILTERS:",
+                "  type:<TYPE>       - Event type (VIOLATION, TRIPWIRE, MODE_CHANGE, etc)",
+                "  severity:>=HIGH   - Minimum severity (INFO, LOW, MEDIUM, HIGH, CRITICAL)",
+                "  contains:<text>   - Full text search in details",
+                "  actor:<pattern>   - Filter by actor/agent",
+                "  --last <time>     - Time range (1h, 24h, 7d)",
+                "",
+                "EXAMPLES:",
+                "  query type:VIOLATION",
+                "  query severity:>=HIGH --last 24h",
+                "  query contains:passwd",
+                "  query actor:agent-*",
+            ],
+            'subcommands': [],
+        },
+        'trace': {
+            'desc': 'Trace and search events with details',
+            'usage': 'trace <search_term>',
+            'help': [
+                "TRACE - Event Tracing Tool",
+                "=" * 50,
+                "",
+                "Search and display detailed event information.",
+                "",
+                "USAGE:",
+                "  trace <search_term>",
+                "",
+                "Searches event types and details, displays results",
+                "in detailed box format with timestamps.",
+                "",
+                "EXAMPLES:",
+                "  trace unauthorized",
+                "  trace VIOLATION",
+                "  trace sandbox",
+            ],
+            'subcommands': [],
+        },
+        'status': {
+            'desc': 'Show daemon status',
+            'usage': 'status',
+            'help': [
+                "STATUS - Daemon Status",
+                "=" * 50,
+                "",
+                "Display current daemon status including:",
+                "  - Current security mode",
+                "  - Mode frozen state",
+                "  - Uptime",
+                "  - Event count",
+                "  - Violation count",
+                "  - Connection info",
+            ],
+            'subcommands': [],
+        },
+        'alerts': {
+            'desc': 'Show all alerts',
+            'usage': 'alerts',
+            'help': [
+                "ALERTS - Alert Management",
+                "=" * 50,
+                "",
+                "Display all current security alerts.",
+                "",
+                "Shows:",
+                "  - Alert severity (HIGH, MEDIUM, LOW)",
+                "  - Alert message",
+                "  - Acknowledgment status",
+                "  - Timestamp",
+            ],
+            'subcommands': [],
+        },
+        'violations': {
+            'desc': 'Show recent violations',
+            'usage': 'violations',
+            'help': [
+                "VIOLATIONS - Security Violations",
+                "=" * 50,
+                "",
+                "Display recent security violations including:",
+                "  - Unauthorized tool access attempts",
+                "  - Policy violations",
+                "  - PII detection events",
+                "  - Command injection attempts",
+                "",
+                "For full history, use: query type:VIOLATION --last 24h",
+            ],
+            'subcommands': [],
+        },
+        'mode': {
+            'desc': 'Show or change security mode',
+            'usage': 'mode [MODE]',
+            'help': [
+                "MODE - Security Mode Management",
+                "=" * 50,
+                "",
+                "Show current mode or initiate mode change.",
+                "",
+                "AVAILABLE MODES:",
+                "  OPEN       - Minimal restrictions, full tool access",
+                "  RESTRICTED - Limited tool access, monitoring active",
+                "  TRUSTED    - Verified tools only, enhanced logging",
+                "  AIRGAP     - No network, local tools only",
+                "  COLDROOM   - Read-only, no modifications allowed",
+                "  LOCKDOWN   - Emergency mode, all actions blocked",
+                "",
+                "Mode changes require ceremony confirmation.",
+            ],
+            'subcommands': ['open', 'restricted', 'trusted', 'airgap', 'coldroom', 'lockdown'],
+        },
+        'sandbox': {
+            'desc': 'Sandbox management',
+            'usage': 'sandbox <command>',
+            'help': [
+                "SANDBOX - Sandbox Management",
+                "=" * 50,
+                "",
+                "Manage isolated execution environments.",
+                "",
+                "SUBCOMMANDS:",
+                "  sandbox list      - List active sandboxes",
+                "  sandbox run       - Run command in sandbox",
+                "  sandbox inspect   - Inspect sandbox details",
+                "  sandbox kill      - Terminate sandbox",
+                "  sandbox profiles  - List available profiles",
+                "  sandbox metrics   - Show sandbox metrics",
+                "",
+                "Sandboxes provide isolation for untrusted code execution.",
+            ],
+            'subcommands': ['list', 'run', 'inspect', 'kill', 'profiles', 'metrics', 'test'],
+        },
+        'config': {
+            'desc': 'Configuration management',
+            'usage': 'config <command>',
+            'help': [
+                "CONFIG - Configuration Management",
+                "=" * 50,
+                "",
+                "Manage daemon configuration.",
+                "",
+                "SUBCOMMANDS:",
+                "  config show     - Display current configuration",
+                "  config lint     - Check configuration for errors",
+                "  config validate - Validate configuration",
+                "",
+                "Config file: /etc/boundary-daemon/boundary.conf",
+                "Or set BOUNDARY_CONFIG environment variable.",
+            ],
+            'subcommands': ['show', 'lint', 'validate'],
+        },
+        'case': {
+            'desc': 'Security case management',
+            'usage': 'case <command>',
+            'help': [
+                "CASE - Security Case Management",
+                "=" * 50,
+                "",
+                "Manage security investigation cases.",
+                "",
+                "SUBCOMMANDS:",
+                "  case list       - List all cases",
+                "  case show <id>  - Show case details",
+                "  case create     - Create new case",
+                "  case update     - Update case status",
+                "  case close      - Close a case",
+                "",
+                "Cases track security incidents and investigations.",
+            ],
+            'subcommands': ['list', 'show', 'create', 'update', 'close'],
+        },
+        'tripwire': {
+            'desc': 'Tripwire file monitoring',
+            'usage': 'tripwire <command>',
+            'help': [
+                "TRIPWIRE - File Integrity Monitoring",
+                "=" * 50,
+                "",
+                "Monitor critical files for unauthorized changes.",
+                "",
+                "SUBCOMMANDS:",
+                "  tripwire status  - Show tripwire status",
+                "  tripwire list    - List monitored files",
+                "  tripwire check   - Run integrity check",
+                "  tripwire add     - Add file to monitoring",
+                "  tripwire remove  - Remove file from monitoring",
+                "",
+                "Tripwires detect modifications to sensitive files",
+                "like /etc/passwd, config files, and binaries.",
+            ],
+            'subcommands': ['status', 'list', 'check', 'add', 'remove'],
+        },
+        'network': {
+            'desc': 'Network security status',
+            'usage': 'network',
+            'help': [
+                "NETWORK - Network Security",
+                "=" * 50,
+                "",
+                "Display network security status including:",
+                "  - Network trust level",
+                "  - VPN status",
+                "  - DNS security status",
+                "  - ARP monitoring status",
+                "  - Traffic anomaly detection",
+                "",
+                "Network restrictions vary by security mode.",
+            ],
+            'subcommands': ['status', 'trust', 'dns', 'arp'],
+        },
+        'pii': {
+            'desc': 'PII detection status',
+            'usage': 'pii',
+            'help': [
+                "PII - Personal Information Detection",
+                "=" * 50,
+                "",
+                "Monitor PII detection and filtering.",
+                "",
+                "Shows:",
+                "  - PII detections in agent output",
+                "  - Redaction statistics",
+                "  - Sensitive data patterns matched",
+                "",
+                "PII types: SSN, credit cards, emails, phone numbers,",
+                "API keys, passwords, and other credentials.",
+            ],
+            'subcommands': ['status', 'stats', 'patterns'],
+        },
+        'ceremony': {
+            'desc': 'Security ceremonies',
+            'usage': 'ceremony <type>',
+            'help': [
+                "CEREMONY - Security Ceremonies",
+                "=" * 50,
+                "",
+                "Initiate security ceremonies for sensitive operations.",
+                "",
+                "CEREMONY TYPES:",
+                "  ceremony mode     - Mode change ceremony",
+                "  ceremony verify   - Identity verification",
+                "  ceremony unlock   - Unlock frozen mode",
+                "",
+                "Ceremonies require human confirmation for",
+                "security-critical operations.",
+            ],
+            'subcommands': ['mode', 'verify', 'unlock'],
+        },
+        'export': {
+            'desc': 'Export events to file',
+            'usage': 'export <filename>',
+            'help': [
+                "EXPORT - Export Events",
+                "=" * 50,
+                "",
+                "Export events to JSON file for analysis.",
+                "",
+                "USAGE:",
+                "  export events.json",
+                "  export /path/to/output.json",
+                "",
+                "Exports include:",
+                "  - Timestamp",
+                "  - Event type",
+                "  - Event details",
+            ],
+            'subcommands': [],
+        },
+        'clear': {
+            'desc': 'Clear CLI results',
+            'usage': 'clear',
+            'help': ["Clears the results display area."],
+            'subcommands': [],
+        },
+        'help': {
+            'desc': 'Show help',
+            'usage': 'help [command]',
+            'help': [
+                "HELP - Command Help",
+                "=" * 50,
+                "",
+                "Show help for commands.",
+                "",
+                "USAGE:",
+                "  help           - Show all commands",
+                "  help <command> - Show help for specific command",
+                "",
+                "EXAMPLES:",
+                "  help query",
+                "  help sandbox",
+                "  help mode",
+            ],
+            'subcommands': [],
+        },
+    }
+
+    def _start_cli(self):
+        """Start CLI mode for running commands."""
+        curses.curs_set(1)  # Show cursor
+        cmd_text = ""
+        cursor_pos = 0
+        show_help_popup = False
+        help_popup_tool = None
+
+        # Build autocomplete list from DAEMON_TOOLS
+        all_completions = list(self.DAEMON_TOOLS.keys())
+
+        # Available commands help
+        cli_help = [
+            "BOUNDARY DAEMON CLI - Press [F1] or type 'help <cmd>' for tool help",
+            "=" * 60,
+            "",
+            "COMMANDS:",
+        ]
+        for cmd, info in self.DAEMON_TOOLS.items():
+            cli_help.append(f"  {cmd:12} - {info['desc']}")
+        cli_help.extend([
+            "",
+            "QUERY FILTERS:",
+            "  type:<TYPE>        - Filter by event type",
+            "  severity:>=HIGH    - Minimum severity",
+            "  contains:<text>    - Full text search",
+            "  --last 24h         - Time range",
+            "",
+            "Press [Tab] to autocomplete, [F1] for tool help",
+        ])
+
+        while True:
+            self.screen.clear()
+
+            # Draw CLI header
+            header = "─" * (self.width - 1)
+            self._addstr(0, 0, " BOUNDARY CLI ", Colors.HEADER)
+            self._addstr(0, 15, header[15:], Colors.MUTED)
+
+            # Draw results area (scrollable)
+            results_height = self.height - 5
+            if self._cli_results:
+                for i, line in enumerate(self._cli_results[self._cli_results_scroll:]):
+                    row = 2 + i
+                    if row >= results_height:
+                        break
+                    # Color code based on content
+                    if line.startswith("ERROR:") or "VIOLATION" in line or "CRITICAL" in line:
+                        color = Colors.STATUS_ERROR
+                    elif line.startswith("OK:") or "SUCCESS" in line:
+                        color = Colors.STATUS_OK
+                    elif line.startswith("  ") or line.startswith("│"):
+                        color = Colors.MUTED
+                    elif "HIGH" in line:
+                        color = Colors.STATUS_WARN
+                    else:
+                        color = Colors.NORMAL
+                    self._addstr(row, 1, line[:self.width-3], color)
+
+                # Scroll indicator
+                if len(self._cli_results) > results_height - 2:
+                    scroll_info = f"[{self._cli_results_scroll+1}-{min(self._cli_results_scroll+results_height-2, len(self._cli_results))}/{len(self._cli_results)}]"
+                    self._addstr(1, self.width - len(scroll_info) - 2, scroll_info, Colors.MUTED)
+            else:
+                # Show help if no results
+                for i, line in enumerate(cli_help):
+                    row = 2 + i
+                    if row >= results_height:
+                        break
+                    self._addstr(row, 2, line, Colors.MUTED)
+
+            # Draw command line at bottom
+            prompt_y = self.height - 2
+            self._addstr(prompt_y, 0, ":" + cmd_text + " ", Colors.HEADER)
+            self._addstr(prompt_y, len(cmd_text) + 1, "_", Colors.ACCENT)
+
+            # Draw shortcuts
+            shortcuts = "[Enter] Run  [Tab] Complete  [F1] Help  [↑↓] History  [ESC] Exit"
+            self._addstr(self.height - 1, 0, shortcuts[:self.width-1], Colors.MUTED)
+
+            self.screen.refresh()
+
+            key = self.screen.getch()
+            if key == 27:  # ESC
+                break
+            elif key in (curses.KEY_ENTER, 10, 13):
+                if cmd_text.strip():
+                    # Add to history
+                    if not self._cli_history or self._cli_history[-1] != cmd_text:
+                        self._cli_history.append(cmd_text)
+                    self._cli_history_index = len(self._cli_history)
+
+                    # Execute command
+                    self._execute_cli_command(cmd_text.strip())
+                    cmd_text = ""
+                    self._cli_results_scroll = 0
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                cmd_text = cmd_text[:-1]
+            elif key == curses.KEY_UP:
+                # History navigation
+                if self._cli_history and self._cli_history_index > 0:
+                    self._cli_history_index -= 1
+                    cmd_text = self._cli_history[self._cli_history_index]
+            elif key == curses.KEY_DOWN:
+                if self._cli_history_index < len(self._cli_history) - 1:
+                    self._cli_history_index += 1
+                    cmd_text = self._cli_history[self._cli_history_index]
+                else:
+                    self._cli_history_index = len(self._cli_history)
+                    cmd_text = ""
+            elif key == curses.KEY_PPAGE:  # Page Up
+                if show_help_popup:
+                    # Scroll help popup
+                    pass
+                else:
+                    self._cli_results_scroll = max(0, self._cli_results_scroll - 10)
+            elif key == curses.KEY_NPAGE:  # Page Down
+                if show_help_popup:
+                    pass
+                else:
+                    max_scroll = max(0, len(self._cli_results) - (self.height - 6))
+                    self._cli_results_scroll = min(max_scroll, self._cli_results_scroll + 10)
+            elif key == curses.KEY_F1 or key == 265:  # F1 - show help for current command
+                # Get the first word being typed
+                first_word = cmd_text.split()[0] if cmd_text.split() else ""
+                if first_word in self.DAEMON_TOOLS:
+                    help_popup_tool = first_word
+                    show_help_popup = True
+                else:
+                    # Show general help
+                    show_help_popup = True
+                    help_popup_tool = None
+            elif key == 9:  # Tab - smart autocomplete
+                parts = cmd_text.split()
+                if len(parts) == 0 or (len(parts) == 1 and not cmd_text.endswith(' ')):
+                    # Complete command name
+                    prefix = parts[0] if parts else ""
+                    for comp in all_completions:
+                        if comp.startswith(prefix):
+                            cmd_text = comp + " "
+                            break
+                elif len(parts) >= 1:
+                    # Complete subcommand
+                    base_cmd = parts[0]
+                    if base_cmd in self.DAEMON_TOOLS:
+                        subcommands = self.DAEMON_TOOLS[base_cmd].get('subcommands', [])
+                        if subcommands:
+                            prefix = parts[1] if len(parts) > 1 else ""
+                            for sub in subcommands:
+                                if sub.startswith(prefix):
+                                    cmd_text = f"{base_cmd} {sub} "
+                                    break
+            elif 32 <= key <= 126:  # Printable characters
+                cmd_text += chr(key)
+
+            # Draw help popup if active
+            if show_help_popup:
+                self._draw_help_popup(help_popup_tool)
+                self.screen.refresh()
+                popup_key = self.screen.getch()
+                if popup_key == 27 or popup_key == curses.KEY_F1 or popup_key == 265 or popup_key in (10, 13):
+                    show_help_popup = False
+                continue
+
+        curses.curs_set(0)  # Hide cursor
+
+    def _draw_help_popup(self, tool_name: Optional[str] = None):
+        """Draw a help popup window for a tool."""
+        # Calculate popup dimensions
+        popup_width = min(60, self.width - 4)
+        popup_height = min(25, self.height - 4)
+        popup_x = (self.width - popup_width) // 2
+        popup_y = (self.height - popup_height) // 2
+
+        # Get help content
+        if tool_name and tool_name in self.DAEMON_TOOLS:
+            tool = self.DAEMON_TOOLS[tool_name]
+            help_lines = tool['help']
+            title = f" {tool_name.upper()} HELP "
+        else:
+            help_lines = [
+                "BOUNDARY DAEMON CLI HELP",
+                "=" * 40,
+                "",
+                "Available commands:",
+                "",
+            ]
+            for cmd, info in self.DAEMON_TOOLS.items():
+                help_lines.append(f"  {cmd:12} - {info['desc']}")
+            help_lines.extend([
+                "",
+                "Type 'help <command>' for detailed help.",
+                "Press F1 while typing a command for quick help.",
+            ])
+            title = " CLI HELP "
+
+        # Draw popup border
+        try:
+            # Top border
+            self._addstr(popup_y, popup_x, "┌" + "─" * (popup_width - 2) + "┐", Colors.HEADER)
+            # Title
+            title_x = popup_x + (popup_width - len(title)) // 2
+            self._addstr(popup_y, title_x, title, Colors.ACCENT)
+
+            # Content area
+            for i in range(popup_height - 2):
+                row = popup_y + 1 + i
+                # Side borders
+                self._addstr(row, popup_x, "│", Colors.HEADER)
+                self._addstr(row, popup_x + popup_width - 1, "│", Colors.HEADER)
+                # Content
+                if i < len(help_lines):
+                    line = help_lines[i][:popup_width - 4]
+                    self._addstr(row, popup_x + 2, line, Colors.NORMAL)
+
+            # Bottom border
+            self._addstr(popup_y + popup_height - 1, popup_x, "└" + "─" * (popup_width - 2) + "┘", Colors.HEADER)
+
+            # Close hint
+            close_hint = " [ESC/Enter] Close "
+            self._addstr(popup_y + popup_height - 1, popup_x + popup_width - len(close_hint) - 2, close_hint, Colors.MUTED)
+        except curses.error:
+            pass
+
+    def _execute_cli_command(self, cmd: str):
+        """Execute a CLI command and populate results."""
+        parts = cmd.split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        self._cli_results = []
+
+        try:
+            if command == 'help':
+                if args and args in self.DAEMON_TOOLS:
+                    # Show specific tool help
+                    tool = self.DAEMON_TOOLS[args]
+                    self._cli_results = tool['help'].copy()
+                else:
+                    # Show general help
+                    self._cli_results = [
+                        "BOUNDARY DAEMON CLI",
+                        "=" * 50,
+                        "",
+                        "COMMANDS:",
+                    ]
+                    for cmd_name, info in self.DAEMON_TOOLS.items():
+                        usage = info['usage']
+                        self._cli_results.append(f"  {usage:24} - {info['desc']}")
+                    self._cli_results.extend([
+                        "",
+                        "Type 'help <command>' for detailed help on any command.",
+                        "Press F1 while typing for quick context help.",
+                        "",
+                        "EXAMPLES:",
+                        "  query type:VIOLATION --last 24h",
+                        "  trace unauthorized",
+                        "  sandbox list",
+                        "  tripwire status",
+                    ])
+
+            elif command == 'clear':
+                self._cli_results = ["Results cleared."]
+
+            elif command == 'status':
+                status = self.client.get_status()
+                self._cli_results = [
+                    "DAEMON STATUS",
+                    "=" * 40,
+                    f"  Mode:       {status.get('mode', 'UNKNOWN')}",
+                    f"  Frozen:     {status.get('is_frozen', False)}",
+                    f"  Uptime:     {self._format_duration(status.get('uptime', 0))}",
+                    f"  Events:     {status.get('total_events', 0)}",
+                    f"  Violations: {status.get('violations', 0)}",
+                    f"  Connection: {'TCP:19847' if self.client._use_tcp else self.client.socket_path}",
+                    f"  Demo Mode:  {self.client.is_demo_mode()}",
+                ]
+
+            elif command == 'alerts':
+                alerts = self.client.get_alerts()
+                self._cli_results = [f"ALERTS ({len(alerts)} total)", "=" * 40]
+                for alert in alerts:
+                    ack = "✓" if alert.acknowledged else "○"
+                    self._cli_results.append(f"  {ack} [{alert.severity}] {alert.message}")
+                    self._cli_results.append(f"      Time: {alert.time_str}")
+                if not alerts:
+                    self._cli_results.append("  No alerts.")
+
+            elif command == 'violations':
+                # Query violations from events
+                violations = [e for e in self.events if 'VIOLATION' in e.event_type.upper()]
+                self._cli_results = [f"RECENT VIOLATIONS ({len(violations)})", "=" * 40]
+                for v in violations[:20]:
+                    self._cli_results.append(f"  [{v.time_short}] {v.event_type}")
+                    self._cli_results.append(f"      {v.details[:60]}")
+                if not violations:
+                    self._cli_results.append("  No violations in recent events.")
+                    self._cli_results.append("  Use 'query type:VIOLATION --last 24h' for full search.")
+
+            elif command == 'query':
+                self._cli_results = self._execute_query(args)
+
+            elif command == 'trace':
+                self._cli_results = self._execute_trace(args)
+
+            elif command == 'mode':
+                if args:
+                    # Try to change mode (would need ceremony in real use)
+                    self._cli_results = [
+                        f"Mode change to '{args}' requires ceremony.",
+                        "Use 'm' key from main dashboard to initiate mode change.",
+                    ]
+                else:
+                    status = self.client.get_status()
+                    self._cli_results = [
+                        f"Current Mode: {status.get('mode', 'UNKNOWN')}",
+                        f"Frozen: {status.get('is_frozen', False)}",
+                    ]
+
+            elif command == 'export':
+                if not args:
+                    self._cli_results = ["ERROR: Specify output file (e.g., export events.json)"]
+                else:
+                    try:
+                        events = self.client.get_events(1000)
+                        export_data = [{'time': e.time_str, 'type': e.event_type, 'details': e.details} for e in events]
+                        with open(args, 'w') as f:
+                            json.dump(export_data, f, indent=2)
+                        self._cli_results = [f"OK: Exported {len(events)} events to {args}"]
+                    except Exception as e:
+                        self._cli_results = [f"ERROR: Export failed: {e}"]
+
+            else:
+                self._cli_results = [
+                    f"ERROR: Unknown command '{command}'",
+                    "Type 'help' for available commands.",
+                ]
+
+        except Exception as e:
+            self._cli_results = [f"ERROR: {e}"]
+
+    def _execute_query(self, query_str: str) -> List[str]:
+        """Execute a query command."""
+        results = ["QUERY RESULTS", "=" * 40]
+
+        # Parse query parameters
+        query_lower = query_str.lower()
+        events = self.events
+
+        # Filter by type
+        if 'type:' in query_lower:
+            import re
+            type_match = re.search(r'type:(\w+)', query_lower)
+            if type_match:
+                event_type = type_match.group(1).upper()
+                events = [e for e in events if event_type in e.event_type.upper()]
+
+        # Filter by severity
+        if 'severity:' in query_lower:
+            severity_map = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+            import re
+            sev_match = re.search(r'severity:>=?(\w+)', query_lower)
+            if sev_match:
+                min_sev = severity_map.get(sev_match.group(1).lower(), 0)
+                # Filter events with severity (would need actual severity field)
+                events = [e for e in events if any(s in e.event_type.upper() for s in ['HIGH', 'CRITICAL', 'VIOLATION', 'ERROR'])]
+
+        # Full text search
+        if 'contains:' in query_lower:
+            import re
+            text_match = re.search(r'contains:(\S+)', query_lower)
+            if text_match:
+                search_text = text_match.group(1)
+                events = [e for e in events if search_text.lower() in e.details.lower() or search_text.lower() in e.event_type.lower()]
+
+        # Simple text search (no prefix)
+        remaining = query_str
+        for prefix in ['type:', 'severity:', 'contains:', '--last']:
+            import re
+            remaining = re.sub(rf'{prefix}\S*\s*', '', remaining, flags=re.IGNORECASE)
+        remaining = remaining.strip()
+        if remaining and not remaining.startswith('-'):
+            events = [e for e in events if remaining.lower() in e.details.lower() or remaining.lower() in e.event_type.lower()]
+
+        results.append(f"Found {len(events)} events matching: {query_str}")
+        results.append("")
+
+        for e in events[:30]:
+            results.append(f"  [{e.time_short}] {e.event_type}")
+            results.append(f"      {e.details[:70]}")
+
+        if len(events) > 30:
+            results.append(f"  ... and {len(events) - 30} more")
+
+        if not events:
+            results.append("  No matching events found.")
+            results.append("  Try: query type:VIOLATION")
+            results.append("       query contains:unauthorized")
+
+        return results
+
+    def _execute_trace(self, search_text: str) -> List[str]:
+        """Trace/search for events with detailed output."""
+        results = ["TRACE RESULTS", "=" * 40]
+
+        if not search_text:
+            results.append("Usage: trace <search_term>")
+            results.append("Example: trace unauthorized")
+            return results
+
+        # Search through events
+        matches = []
+        for e in self.events:
+            if search_text.lower() in e.event_type.lower() or search_text.lower() in e.details.lower():
+                matches.append(e)
+
+        results.append(f"Tracing '{search_text}': {len(matches)} matches")
+        results.append("")
+
+        for i, e in enumerate(matches[:15]):
+            results.append(f"┌─ Event {i+1} ─────────────────────────")
+            results.append(f"│ Time:    {e.time_str}")
+            results.append(f"│ Type:    {e.event_type}")
+            results.append(f"│ Details: {e.details[:50]}")
+            if len(e.details) > 50:
+                results.append(f"│          {e.details[50:100]}")
+            results.append(f"└{'─' * 40}")
+            results.append("")
+
+        if len(matches) > 15:
+            results.append(f"... and {len(matches) - 15} more matches")
+
+        if not matches:
+            results.append("No matches found.")
+            results.append("Try a different search term.")
+
+        return results
 
     def _start_search(self):
         """Start event search/filter with text input."""
