@@ -2681,11 +2681,18 @@ class Dashboard:
             self._addstr(start_y + 1 + i, start_x + 2, line, Colors.NORMAL)
 
     def _draw_box(self, y: int, x: int, width: int, height: int, title: str, title_color: int = None):
-        """Draw a box with title."""
+        """Draw a box with title and solid background to block rain effect."""
         if title_color is None:
             title_color = Colors.HEADER
 
         try:
+            # First, fill the entire interior with spaces to create solid background
+            # This blocks the Matrix rain from showing through
+            for row in range(y, y + height):
+                for col in range(x, x + width):
+                    if row < self.height and col < self.width - 1:
+                        self.screen.addch(row, col, ' ')
+
             # Top border
             self.screen.addch(y, x, curses.ACS_ULCORNER)
             self.screen.addch(y, x + width - 1, curses.ACS_URCORNER)
