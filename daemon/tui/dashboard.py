@@ -1223,8 +1223,8 @@ class AlleyScene:
         "  |  [====]          [====]  |  ",
         "  |                          |  ",
         "  |[=======================]|  ",
-        "  |[ O  O   .oOo.  OPEN    ]|  ",
-        "  |[/|\\-|\\__________       ]|  ",
+        "  |[                  OPEN ]|  ",
+        "  |[__________________     ]|  ",
         "  |__________[  ]__________|  ",
     ]
 
@@ -1695,6 +1695,14 @@ class AlleyScene:
         # Window positions for layering (filled during _draw_building)
         self._window_interior_positions: List[Tuple[int, int]] = []
         self._window_frame_positions: List[Tuple[int, int, str]] = []  # (x, y, char)
+        self._sidewalk_positions: List[Tuple[int, int, str, int]] = []  # (x, y, char, color)
+        # Cafe people in the lower window (Shell Cafe)
+        self._cafe_people: List[Dict] = [
+            {'x_offset': 0.0, 'direction': 1, 'arm_frame': 0, 'move_timer': 0, 'arm_timer': 0},
+            {'x_offset': 6.0, 'direction': -1, 'arm_frame': 1, 'move_timer': 30, 'arm_timer': 15},
+            {'x_offset': 12.0, 'direction': 1, 'arm_frame': 0, 'move_timer': 60, 'arm_timer': 45},
+        ]
+        self._cafe_people_timer = 0
         # Manholes and drains with occasional steam
         self._manhole_positions: List[Tuple[int, int]] = []  # (x, y)
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
@@ -1776,14 +1784,14 @@ class AlleyScene:
         """Initialize cloud layer with cumulus clouds and wisps."""
         self._clouds = []
 
-        # Create big, slow-moving cumulus clouds (closer, more detailed)
+        # Create big, FAST-moving cumulus clouds (closer, more detailed)
         num_cumulus = max(2, self.width // 60)
         for i in range(num_cumulus):
-            # Large cumulus cloud shapes
+            # Large cumulus cloud shapes - move fast
             self._clouds.append({
                 'x': random.uniform(0, self.width),
                 'y': random.randint(4, 8),  # Mid-sky area
-                'speed': random.uniform(0.02, 0.05),  # Very slow movement
+                'speed': random.uniform(0.15, 0.30),  # Fast movement for big clouds
                 'type': 'cumulus',
                 'chars': random.choice([
                     # Big puffy cumulus
@@ -1814,14 +1822,14 @@ class AlleyScene:
                 ]),
             })
 
-        # Create smaller main clouds
+        # Create smaller main clouds - move slower
         num_clouds = max(2, self.width // 50)
         for i in range(num_clouds):
-            # Main cloud body
+            # Main cloud body - slow
             self._clouds.append({
                 'x': random.uniform(0, self.width),
                 'y': random.randint(3, 6),  # Upper area
-                'speed': random.uniform(0.05, 0.12),
+                'speed': random.uniform(0.03, 0.08),  # Slow movement for small clouds
                 'type': 'main',
                 'chars': random.choice([
                     ['  ___  ', ' (   ) ', '(_____)', '  ~~~  '],
@@ -1829,12 +1837,12 @@ class AlleyScene:
                     ['_____', '(   )', '~~~~~'],
                 ]),
             })
-            # Wisps below main clouds
+            # Wisps below main clouds - slowest
             for _ in range(2):
                 self._clouds.append({
                     'x': random.uniform(0, self.width),
                     'y': random.randint(6, 12),
-                    'speed': random.uniform(0.08, 0.18),
+                    'speed': random.uniform(0.02, 0.05),  # Slowest for wisps
                     'type': 'wisp',
                     'char': random.choice(['~', '≈', '-', '.']),
                     'length': random.randint(3, 8),
@@ -2477,9 +2485,11 @@ class AlleyScene:
         # Draw street lights between buildings (in the gap)
         self._draw_street_lights(ground_y)
 
-        # Draw curb - solid line separating alley from street (at bottom)
+        # Draw curb/sidewalk - store positions for front-layer rendering
+        self._sidewalk_positions = []
         for x in range(self.width - 1):
-            self.scene[curb_y][x] = ('▄', Colors.ALLEY_MID)
+            # Store sidewalk position for rendering on top of scene (but behind sprites)
+            self._sidewalk_positions.append((x, curb_y, '▄', Colors.ALLEY_MID))
 
         # Draw street surface (two rows)
         for x in range(self.width - 1):
@@ -3094,6 +3104,9 @@ class AlleyScene:
         # Update window people
         self._update_window_people()
 
+        # Update cafe people in Shell Cafe
+        self._update_cafe_people()
+
         # Update clouds
         self._update_clouds()
 
@@ -3323,6 +3336,34 @@ class AlleyScene:
 
         self._window_people = new_window_people
 
+    def _update_cafe_people(self):
+        """Update the 3 people in Shell Cafe's lower window - gentle movement and arm animation."""
+        self._cafe_people_timer += 1
+
+        for person in self._cafe_people:
+            person['move_timer'] += 1
+            person['arm_timer'] += 1
+
+            # Move person slightly back and forth within their zone
+            if person['move_timer'] >= random.randint(30, 60):
+                person['move_timer'] = 0
+                # Small movements within their section of the window
+                person['x_offset'] += person['direction'] * 0.5
+                # Bounds check - each person has a ~5 char zone
+                base_x = self._cafe_people.index(person) * 6.0
+                if person['x_offset'] > base_x + 2.0:
+                    person['direction'] = -1
+                elif person['x_offset'] < base_x - 2.0:
+                    person['direction'] = 1
+                # Occasionally reverse direction randomly
+                if random.random() < 0.2:
+                    person['direction'] *= -1
+
+            # Animate arms - cycle through arm positions
+            if person['arm_timer'] >= random.randint(20, 50):
+                person['arm_timer'] = 0
+                person['arm_frame'] = (person['arm_frame'] + 1) % 4
+
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
         """Get the current light colors for both directions.
@@ -3381,20 +3422,17 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw a crosswalk with white stripes (4x wider) and vanishing street above."""
-        crosswalk_width = 32  # 4x wider
+        """Draw vanishing street with ==== line across (no crosswalk stripes)."""
+        crosswalk_width = 32
+
+        # Draw "====" line across the street instead of crosswalk stripes
         for cx in range(crosswalk_width):
             px = x + cx
             if 0 <= px < self.width - 1:
-                # Draw white stripes on street and blank out sidewalk every other tile
-                if cx % 2 == 0:
-                    if street_y < self.height:
-                        self.scene[street_y][px] = ('█', Colors.ALLEY_LIGHT)
-                    # Blank out sidewalk (curb) every other tile for crosswalk effect
-                    if curb_y < self.height:
-                        self.scene[curb_y][px] = (' ', Colors.ALLEY_DARK)
+                if street_y < self.height:
+                    self.scene[street_y][px] = ('=', Colors.RAT_YELLOW)
 
-        # Draw vanishing street effect above crosswalk
+        # Draw vanishing street effect above
         # Starts at curb and ends at lower 1/5th of screen
         vanish_end_y = self.height - (self.height // 5)  # Lower 1/5th of screen
         vanish_start_y = curb_y - 1  # Just above curb
@@ -3572,8 +3610,14 @@ class AlleyScene:
         # Render window people silhouettes (behind window frames)
         self._render_window_people(screen)
 
+        # Render cafe people in Shell Cafe lower window
+        self._render_cafe_people(screen)
+
         # Render window frames on top of window people (so people appear inside)
         self._render_window_frames(screen)
+
+        # Render sidewalk/curb on top of scene but behind all sprites
+        self._render_sidewalk(screen)
 
         # Render street light flicker effects
         self._render_street_light_flicker(screen)
@@ -3611,6 +3655,18 @@ class AlleyScene:
             if 0 <= px < self.width - 1 and 0 <= py < self.height:
                 try:
                     attr = curses.color_pair(Colors.ALLEY_BLUE) | curses.A_DIM
+                    screen.attron(attr)
+                    screen.addstr(py, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    def _render_sidewalk(self, screen):
+        """Render sidewalk/curb on top of scene but behind sprites."""
+        for px, py, char, color in self._sidewalk_positions:
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    attr = curses.color_pair(color)
                     screen.attron(attr)
                     screen.addstr(py, px, char)
                     screen.attroff(attr)
@@ -4187,6 +4243,53 @@ class AlleyScene:
                     y = window_y + i
                     if 0 <= silhouette_x < self.width - 2 and 0 <= y < self.height:
                         screen.addstr(y, silhouette_x, char)
+                screen.attroff(attr)
+            except curses.error:
+                pass
+
+    def _render_cafe_people(self, screen):
+        """Render the 3 people in Shell Cafe's lower window with animated arms."""
+        if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
+            return
+
+        # Lower window is at row 14-15 of CAFE sprite (0-indexed)
+        # The window content area starts at column 4 and spans ~20 chars
+        window_row = 14  # Row with people heads
+        body_row = 15    # Row with bodies/arms
+        window_start_col = 4  # Start of window content area
+
+        # Arm animation frames (both arms shown)
+        # Frame 0: arms down, Frame 1: left up, Frame 2: both up, Frame 3: right up
+        arm_frames = [
+            ('/|\\', '/ \\'),   # Frame 0: arms down
+            ('\\|\\', '\\ \\'),  # Frame 1: left arm up
+            ('\\|/', '\\ /'),    # Frame 2: both arms up (wave)
+            ('/|/', '/ /'),      # Frame 3: right arm up
+        ]
+
+        for person in self._cafe_people:
+            x_offset = int(person['x_offset'])
+            arm_frame = person['arm_frame'] % len(arm_frames)
+
+            # Calculate screen position
+            px = self.cafe_x + window_start_col + x_offset
+            py_head = self.cafe_y + window_row
+            py_body = self.cafe_y + body_row
+
+            if not (0 <= px < self.width - 3 and 0 <= py_head < self.height and 0 <= py_body < self.height):
+                continue
+
+            try:
+                # Draw head
+                attr = curses.color_pair(Colors.CAFE_WARM)
+                screen.attron(attr)
+                screen.addstr(py_head, px + 1, 'O')  # Head centered above body
+                screen.attroff(attr)
+
+                # Draw body with animated arms
+                upper_body, lower_body = arm_frames[arm_frame]
+                screen.attron(attr)
+                screen.addstr(py_body, px, upper_body)  # Arms and torso
                 screen.attroff(attr)
             except curses.error:
                 pass
