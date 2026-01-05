@@ -481,12 +481,12 @@ class MatrixRain:
             patch_dx = random.uniform(-0.15, 0.15)  # Whole patch drifts together
             patch_dy = random.uniform(-0.04, 0.04)
 
-            # Create particles clustered around the center - larger patches
-            patch_size = random.randint(12, 30)
+            # Create particles clustered around the center - larger, tighter patches
+            patch_size = random.randint(15, 35)
             for _ in range(patch_size):
-                # Particles spread around center with gaussian-like distribution
-                offset_x = random.gauss(0, 5)
-                offset_y = random.gauss(0, 4)
+                # Particles spread around center with gaussian-like distribution (tighter spread)
+                offset_x = random.gauss(0, 3)  # Tighter horizontal grouping
+                offset_y = random.gauss(0, 2.5)  # Tighter vertical grouping
 
                 # Only blocks - size 2 or 3
                 size = random.choice([2, 2, 3, 3, 3])
@@ -831,8 +831,8 @@ class MatrixRain:
     def _update_fog(self):
         """Update fog particle positions with magnetic clumping."""
         # First pass: calculate neighbor counts and attraction forces
-        attraction_radius = 8.0  # How far particles attract each other
-        attraction_strength = 0.02  # How strong the attraction is
+        attraction_radius = 12.0  # How far particles attract each other
+        attraction_strength = 0.08  # How strong the attraction is (increased for tighter grouping)
 
         for i, particle in enumerate(self._fog_particles):
             neighbor_count = 0
@@ -864,9 +864,9 @@ class MatrixRain:
 
             particle['neighbor_count'] = neighbor_count
 
-            # Apply attraction force (clamped to prevent wild movement)
-            attract_x = max(-0.1, min(0.1, attract_x))
-            attract_y = max(-0.05, min(0.05, attract_y))
+            # Apply attraction force (clamped to prevent wild movement, but allow stronger pulls)
+            attract_x = max(-0.2, min(0.2, attract_x))
+            attract_y = max(-0.1, min(0.1, attract_y))
 
             # Drift slowly with attraction
             particle['x'] += particle['dx'] + attract_x
@@ -1322,7 +1322,7 @@ class AlleyScene:
         "|                             |  .------.  |                   |",
         "|                             |  | #  # |  |                   |",
         "|                             |  |------|  |                   |",
-        "|                             |  | #  # |  |                   |",
+        "|                             |  | # o# |  |                   |",
         "|                             |  |------|  |                   |",
         "|                             |  | #  # |  |                   |",
         "|_____________________________|  |______|  |___________________|",
@@ -1368,7 +1368,7 @@ class AlleyScene:
         "|   |  .------.  |                                         |",
         "|   |  | #  # |  |                                         |",
         "|   |  |------|  |                                         |",
-        "|   |  | #  # |  |                                         |",
+        "|   |  | # o# |  |                                         |",
         "|   |  |------|  |                                         |",
         "|   |  | #  # |  |                                         |",
         "|___|  |______|  |_________________________________________|",
@@ -1528,8 +1528,8 @@ class AlleyScene:
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
-        # Position lights in the gap between buildings (spread out more)
-        light_x_positions = [gap_center - 15, gap_center + 15]
+        # Position lights in the gap between buildings (spread out widely)
+        light_x_positions = [gap_center - 25, gap_center + 25]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
@@ -1740,9 +1740,9 @@ class AlleyScene:
         self._closeup_car_timer += 1
         if self._closeup_car is None and self._closeup_car_timer >= random.randint(200, 400):
             self._closeup_car_timer = 0
-            # Spawn a car that stays in place and grows/shrinks
+            # Spawn a car that stays in place and grows/shrinks (shifted left)
             self._closeup_car = {
-                'x': float(random.randint(self.width // 3, 2 * self.width // 3)),  # Random position in middle third
+                'x': float(random.randint(self.width // 3, 2 * self.width // 3) - 4),  # Random position, shifted left
                 'direction': random.choice([-1, 1]),  # Face left or right
                 'scale': 0.5,  # Start small
                 'phase': 0,    # 0=growing, 1=shrinking
@@ -1923,14 +1923,28 @@ class AlleyScene:
 
         The bottom ~8 rows (near door/porch) get grey blocks, upper rows get red bricks.
         Windows remain in blue/cyan color. Satellite dishes are grey.
-        Random brick texture in red area, grey block fill in grey area.
+        Brick outlines around windows, grey blocks filled solidly with transparent texture.
         """
         total_rows = len(sprite)
         # Grey block section: bottom 10 rows (half story with door)
         grey_start_row = total_rows - 10
-        # Brick characters for texture
-        brick_chars = ['#', '▓', '░']
-        grey_block_chars = ['▒', '░', '▓']
+        # Brick characters for texture (outside windows)
+        brick_chars = ['#', '▓']
+        # Grey block chars - mostly solid with some transparent
+        grey_solid = '▓'
+        grey_transparent = '░'
+
+        # First pass: find window columns (between [ and ])
+        window_columns = set()
+        for row_idx, row in enumerate(sprite):
+            in_window = False
+            for col_idx, char in enumerate(row):
+                if char == '[':
+                    in_window = True
+                elif char == ']':
+                    in_window = False
+                elif in_window:
+                    window_columns.add((row_idx, col_idx))
 
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
@@ -1942,9 +1956,15 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.GREY_BLOCK)
                         continue
 
+                    # Check if we're inside a window
+                    is_inside_window = (row_idx, col_idx) in window_columns
+
                     if char != ' ':
                         # Determine color based on character and position
-                        if char in '[]=' or (char == '-' and row_idx == 1):
+                        if char == 'o' and row_idx >= grey_start_row:
+                            # Door knob - gold/yellow color
+                            color = Colors.RAT_YELLOW
+                        elif char in '[]=' or (char == '-' and row_idx == 1):
                             # Window frames and roof line - keep blue
                             color = Colors.ALLEY_BLUE
                         elif char in '|_.#':
@@ -1963,17 +1983,31 @@ class AlleyScene:
                         self.scene[py][px] = (char, color)
                     else:
                         # Empty space - add texture based on zone
-                        # Skip if inside window area (between [ and ])
+                        # Never put bricks INSIDE windows
+                        if is_inside_window:
+                            continue  # Leave window interior empty
+
                         if row_idx >= 2 and row_idx < grey_start_row:
-                            # Red brick zone - scatter random brick chars
-                            if random.random() < 0.08:  # 8% chance
-                                brick_char = random.choice(brick_chars)
-                                self.scene[py][px] = (brick_char, Colors.BRICK_RED)
+                            # Red brick zone - check if adjacent to window for outline
+                            is_near_window = False
+                            for dr in [-1, 0, 1]:
+                                for dc in [-1, 0, 1]:
+                                    if (row_idx + dr, col_idx + dc) in window_columns:
+                                        is_near_window = True
+                                        break
+                            if is_near_window:
+                                # Brick outline around windows
+                                if random.random() < 0.6:
+                                    self.scene[py][px] = (random.choice(brick_chars), Colors.BRICK_RED)
+                            elif random.random() < 0.05:  # Sparse bricks elsewhere
+                                self.scene[py][px] = (random.choice(brick_chars), Colors.BRICK_RED)
                         elif row_idx >= grey_start_row and row_idx < total_rows - 2:
-                            # Grey zone - fill with grey blocks
-                            if random.random() < 0.15:  # 15% chance
-                                block_char = random.choice(grey_block_chars)
-                                self.scene[py][px] = (block_char, Colors.GREY_BLOCK)
+                            # Grey zone - fill solidly with transparent texture
+                            if random.random() < 0.7:  # 70% filled
+                                if random.random() < 0.3:  # 30% of filled are transparent
+                                    self.scene[py][px] = (grey_transparent, Colors.GREY_BLOCK)
+                                else:
+                                    self.scene[py][px] = (grey_solid, Colors.GREY_BLOCK)
 
     def render(self, screen):
         """Render the alley scene to the screen."""
@@ -2146,8 +2180,8 @@ class AlleyScene:
                     " () ",
                 ]
 
-        # Position car at street level
-        street_y = self.height - 1
+        # Position car at street level (moved up 2 rows)
+        street_y = self.height - 3
         sprite_height = len(sprite)
 
         for row_idx, row in enumerate(sprite):
@@ -3907,6 +3941,10 @@ class Dashboard:
         if self.matrix_mode and self.alley_scene:
             self.alley_scene.render(self.screen)
 
+        # Render moon (behind rain and creatures)
+        if self.matrix_mode:
+            self._render_moon(self.screen)
+
         # Render matrix rain on top of alley
         if self.matrix_mode and self.matrix_rain:
             self.matrix_rain.render(self.screen)
@@ -3916,9 +3954,6 @@ class Dashboard:
                 self.alley_rat.render(self.screen)
             if self.lurking_shadow:
                 self.lurking_shadow.render(self.screen)
-
-            # Render moon (behind other effects)
-            self._render_moon(self.screen)
 
             # Render lightning bolt if active
             if self._lightning_active and self._lightning_bolt:
