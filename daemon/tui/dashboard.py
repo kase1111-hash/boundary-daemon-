@@ -1347,6 +1347,91 @@ class AlleyScene:
         PERSON_SKIRT_LEFT_FRAMES,
     ]
 
+    # ==========================================
+    # WOMAN IN RED EVENT - Matrix iconic scene
+    # ==========================================
+
+    # Woman in red - blonde hair, red dress (walking right)
+    WOMAN_RED_RIGHT_FRAMES = [
+        ["~o~", "/|\\", "/A\\", "> |"],   # Walking frame 1
+        ["~o~", "\\|/", "/A\\", "| |"],   # Walking frame 2
+        ["~o~", "/|\\", "/A\\", "| <"],   # Walking frame 3
+        ["~o~", "\\|/", "/A\\", "| |"],   # Walking frame 4
+    ]
+
+    # Woman in red - walking left
+    WOMAN_RED_LEFT_FRAMES = [
+        ["~o~", "\\|/", "/A\\", "| <"],   # Walking frame 1
+        ["~o~", "/|\\", "/A\\", "| |"],   # Walking frame 2
+        ["~o~", "\\|/", "/A\\", "> |"],   # Walking frame 3
+        ["~o~", "/|\\", "/A\\", "| |"],   # Walking frame 4
+    ]
+
+    # Woman in red - waving (stationary, arm raised)
+    WOMAN_RED_WAVE_FRAMES = [
+        ["~o~", "\\|/", "/A\\", "| |"],   # Wave down
+        ["~o~", "\\|_", "/A\\", "| |"],   # Wave mid
+        ["~o~", "\\|^", "/A\\", "| |"],   # Wave up
+        ["~o~", "\\|_", "/A\\", "| |"],   # Wave mid
+    ]
+
+    # Agent Smith - suit and sunglasses (walking/running right)
+    AGENT_SMITH_RIGHT_FRAMES = [
+        ["[=]", "/|\\", "[H]", "/ \\"],   # Running frame 1
+        ["[=]", "\\|/", "[H]", " | "],    # Running frame 2
+        ["[=]", "/|\\", "[H]", "\\ /"],   # Running frame 3
+        ["[=]", "\\|/", "[H]", " | "],    # Running frame 4
+    ]
+
+    # Agent Smith - suit and sunglasses (walking/running left)
+    AGENT_SMITH_LEFT_FRAMES = [
+        ["[=]", "\\|/", "[H]", "/ \\"],   # Running frame 1
+        ["[=]", "/|\\", "[H]", " | "],    # Running frame 2
+        ["[=]", "\\|/", "[H]", "\\ /"],   # Running frame 3
+        ["[=]", "/|\\", "[H]", " | "],    # Running frame 4
+    ]
+
+    # Neo - long coat, sunglasses (walking right)
+    NEO_RIGHT_FRAMES = [
+        ["(O)", "/|\\", "###", "/ \\"],   # Walking frame 1
+        ["(O)", "\\|/", "###", " | "],    # Walking frame 2
+        ["(O)", "/|\\", "###", "\\ /"],   # Walking frame 3
+        ["(O)", "\\|/", "###", " | "],    # Walking frame 4
+    ]
+
+    # Neo - long coat, sunglasses (walking left / running away)
+    NEO_LEFT_FRAMES = [
+        ["(O)", "\\|/", "###", "/ \\"],   # Running frame 1
+        ["(O)", "/|\\", "###", " | "],    # Running frame 2
+        ["(O)", "\\|/", "###", "\\ /"],   # Running frame 3
+        ["(O)", "/|\\", "###", " | "],    # Running frame 4
+    ]
+
+    # Morpheus - bald, long coat (walking right)
+    MORPHEUS_RIGHT_FRAMES = [
+        ["(0)", "/|\\", "%%%", "/ \\"],   # Walking frame 1
+        ["(0)", "\\|/", "%%%", " | "],    # Walking frame 2
+        ["(0)", "/|\\", "%%%", "\\ /"],   # Walking frame 3
+        ["(0)", "\\|/", "%%%", " | "],    # Walking frame 4
+    ]
+
+    # Morpheus - bald, long coat (walking left / running away)
+    MORPHEUS_LEFT_FRAMES = [
+        ["(0)", "\\|/", "%%%", "/ \\"],   # Running frame 1
+        ["(0)", "/|\\", "%%%", " | "],    # Running frame 2
+        ["(0)", "\\|/", "%%%", "\\ /"],   # Running frame 3
+        ["(0)", "/|\\", "%%%", " | "],    # Running frame 4
+    ]
+
+    # Transform effect frames (woman to agent glitch)
+    TRANSFORM_FRAMES = [
+        ["~o~", "/|\\", "/A\\", "| |"],   # Woman
+        ["###", "###", "###", "###"],     # Glitch 1
+        ["[=]", "???", "[H]", "???"],     # Partial transform
+        ["###", "###", "###", "###"],     # Glitch 2
+        ["[=]", "\\|/", "[H]", " | "],    # Agent Smith
+    ]
+
     # Street light - taller pole
     STREET_LIGHT = [
         " ___ ",
@@ -1514,6 +1599,21 @@ class AlleyScene:
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
         self._steam_effects: List[Dict] = []  # {x, y, frame, timer, duration}
         self._steam_spawn_timer = 0
+        # Woman in Red event - rare Matrix scene
+        self._woman_red_active = False
+        self._woman_red_state = 'idle'  # idle, neo_morpheus_enter, woman_enters, woman_passes, woman_waves, woman_pauses, transform, chase, cooldown
+        self._woman_red_timer = 0
+        self._woman_red_cooldown = 0
+        self._woman_red_x = 0.0  # Woman's x position
+        self._neo_x = 0.0  # Neo's x position
+        self._morpheus_x = 0.0  # Morpheus's x position
+        self._agent_x = 0.0  # Agent Smith's x position (after transform)
+        self._woman_red_frame = 0
+        self._neo_frame = 0
+        self._morpheus_frame = 0
+        self._agent_frame = 0
+        self._transform_frame = 0
+        self._frame_timer = 0
         # Cloud layer with wisps
         self._clouds: List[Dict] = []
         self._init_clouds()
@@ -1526,6 +1626,8 @@ class AlleyScene:
         self._cars = []  # Clear cars on resize
         self._closeup_car = None  # Clear close-up car on resize
         self._pedestrians = []  # Clear pedestrians on resize
+        self._woman_red_active = False  # Reset woman in red event
+        self._woman_red_state = 'idle'
         self._init_clouds()  # Reinit clouds for new size
         self._generate_scene()
 
@@ -1602,6 +1704,97 @@ class AlleyScene:
             if steam['timer'] < steam['duration']:
                 new_steam.append(steam)
         self._steam_effects = new_steam
+
+    def _update_woman_red(self):
+        """Update the Woman in Red event - rare Matrix iconic scene."""
+        # Handle cooldown
+        if self._woman_red_cooldown > 0:
+            self._woman_red_cooldown -= 1
+            return
+
+        # If idle, check for rare trigger
+        if self._woman_red_state == 'idle':
+            # Rare trigger - about 1 in 2000 frames when not in cooldown
+            if random.randint(1, 2000) == 1:
+                self._woman_red_active = True
+                self._woman_red_state = 'neo_morpheus_enter'
+                self._woman_red_timer = 0
+                # Neo and Morpheus enter from left
+                self._neo_x = -10.0
+                self._morpheus_x = -16.0  # Morpheus slightly behind
+                # Woman starts off screen right
+                self._woman_red_x = float(self.width + 10)
+            return
+
+        # Update timer and frame animation
+        self._woman_red_timer += 1
+        self._frame_timer += 1
+        if self._frame_timer >= 4:  # Animation speed
+            self._frame_timer = 0
+            self._woman_red_frame = (self._woman_red_frame + 1) % 4
+            self._neo_frame = (self._neo_frame + 1) % 4
+            self._morpheus_frame = (self._morpheus_frame + 1) % 4
+            self._agent_frame = (self._agent_frame + 1) % 4
+
+        screen_center = self.width // 2
+
+        if self._woman_red_state == 'neo_morpheus_enter':
+            # Neo and Morpheus walk in from left and stop near center-left
+            self._neo_x += 0.5
+            self._morpheus_x += 0.5
+            # Stop when Neo reaches about 1/3 of screen
+            if self._neo_x >= screen_center - 20:
+                self._woman_red_state = 'woman_enters'
+                self._woman_red_timer = 0
+
+        elif self._woman_red_state == 'woman_enters':
+            # Woman in red walks from right toward center
+            self._woman_red_x -= 0.4
+            # When she reaches center, transition to passing
+            if self._woman_red_x <= screen_center + 10:
+                self._woman_red_state = 'woman_passes'
+                self._woman_red_timer = 0
+
+        elif self._woman_red_state == 'woman_passes':
+            # Woman walks past Neo and Morpheus
+            self._woman_red_x -= 0.4
+            # When past them, stop and wave
+            if self._woman_red_x <= self._neo_x - 5:
+                self._woman_red_state = 'woman_waves'
+                self._woman_red_timer = 0
+
+        elif self._woman_red_state == 'woman_waves':
+            # Woman stops and waves at Neo and Morpheus
+            if self._woman_red_timer >= 60:  # Wave for about 60 frames
+                self._woman_red_state = 'woman_pauses'
+                self._woman_red_timer = 0
+
+        elif self._woman_red_state == 'woman_pauses':
+            # Brief pause before transformation
+            if self._woman_red_timer >= 30:
+                self._woman_red_state = 'transform'
+                self._woman_red_timer = 0
+                self._transform_frame = 0
+
+        elif self._woman_red_state == 'transform':
+            # Woman transforms into Agent Smith (glitch effect)
+            if self._woman_red_timer % 8 == 0:
+                self._transform_frame += 1
+            if self._transform_frame >= len(self.TRANSFORM_FRAMES):
+                self._woman_red_state = 'chase'
+                self._woman_red_timer = 0
+                self._agent_x = self._woman_red_x
+
+        elif self._woman_red_state == 'chase':
+            # Agent Smith chases Neo and Morpheus off screen left
+            self._agent_x -= 0.8  # Agent runs fast
+            self._neo_x -= 1.0  # Neo runs faster (escaping)
+            self._morpheus_x -= 1.0  # Morpheus runs too
+            # End when everyone is off screen
+            if self._agent_x < -15 and self._neo_x < -15:
+                self._woman_red_state = 'idle'
+                self._woman_red_active = False
+                self._woman_red_cooldown = 3000  # Long cooldown before next event
 
     def _render_clouds(self, screen):
         """Render cloud layer."""
@@ -2082,6 +2275,9 @@ class AlleyScene:
         # Update steam effects from manholes/drains
         self._update_steam()
 
+        # Update woman in red event
+        self._update_woman_red()
+
     def _update_cars(self):
         """Update car positions and spawn new cars."""
         # Spawn new cars occasionally
@@ -2544,6 +2740,9 @@ class AlleyScene:
         # Render pedestrians on the sidewalk
         self._render_pedestrians(screen)
 
+        # Render Woman in Red event (on top of regular pedestrians)
+        self._render_woman_red(screen)
+
         # Render traffic light (dynamic - lights change)
         self._render_traffic_light(screen)
 
@@ -2586,6 +2785,88 @@ class AlleyScene:
                             screen.attroff(attr)
                         except curses.error:
                             pass
+
+    def _render_woman_red(self, screen):
+        """Render the Woman in Red event characters."""
+        if not self._woman_red_active:
+            return
+
+        curb_y = self.height - 4  # Same as pedestrians
+
+        def draw_character(x, sprite, color, is_blonde=False, is_transform=False):
+            """Helper to draw a character sprite at position."""
+            px_start = int(x)
+            sprite_height = len(sprite)
+
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    px = px_start + col_idx
+                    py = curb_y - (sprite_height - 1 - row_idx)
+
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            # Special coloring for woman in red
+                            if is_blonde and row_idx == 0 and char == '~':
+                                # Blonde hair - yellow
+                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                            elif is_transform and char == '#':
+                                # Glitch effect - flashing
+                                attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                            elif is_transform and char == '?':
+                                # Partial transform - dim
+                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            else:
+                                attr = curses.color_pair(color)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+        # Render based on current state
+        if self._woman_red_state in ['neo_morpheus_enter', 'woman_enters', 'woman_passes', 'woman_waves', 'woman_pauses']:
+            # Draw Neo (dark coat)
+            neo_sprite = self.NEO_RIGHT_FRAMES[self._neo_frame]
+            draw_character(self._neo_x, neo_sprite, Colors.ALLEY_BLUE)
+
+            # Draw Morpheus (slightly behind Neo)
+            morpheus_sprite = self.MORPHEUS_RIGHT_FRAMES[self._morpheus_frame]
+            draw_character(self._morpheus_x, morpheus_sprite, Colors.GREY_BLOCK)
+
+        if self._woman_red_state in ['woman_enters', 'woman_passes']:
+            # Draw Woman in Red walking left
+            woman_sprite = self.WOMAN_RED_LEFT_FRAMES[self._woman_red_frame]
+            draw_character(self._woman_red_x, woman_sprite, Colors.SHADOW_RED, is_blonde=True)
+
+        elif self._woman_red_state == 'woman_waves':
+            # Draw Woman waving
+            wave_frame = (self._woman_red_timer // 10) % len(self.WOMAN_RED_WAVE_FRAMES)
+            woman_sprite = self.WOMAN_RED_WAVE_FRAMES[wave_frame]
+            draw_character(self._woman_red_x, woman_sprite, Colors.SHADOW_RED, is_blonde=True)
+
+        elif self._woman_red_state == 'woman_pauses':
+            # Draw Woman standing still (last wave frame)
+            woman_sprite = self.WOMAN_RED_WAVE_FRAMES[0]
+            draw_character(self._woman_red_x, woman_sprite, Colors.SHADOW_RED, is_blonde=True)
+
+        elif self._woman_red_state == 'transform':
+            # Draw transform effect
+            frame_idx = min(self._transform_frame, len(self.TRANSFORM_FRAMES) - 1)
+            transform_sprite = self.TRANSFORM_FRAMES[frame_idx]
+            draw_character(self._woman_red_x, transform_sprite, Colors.MATRIX_BRIGHT, is_transform=True)
+
+        elif self._woman_red_state == 'chase':
+            # Draw Neo running away (left)
+            neo_sprite = self.NEO_LEFT_FRAMES[self._neo_frame]
+            draw_character(self._neo_x, neo_sprite, Colors.ALLEY_BLUE)
+
+            # Draw Morpheus running away (left)
+            morpheus_sprite = self.MORPHEUS_LEFT_FRAMES[self._morpheus_frame]
+            draw_character(self._morpheus_x, morpheus_sprite, Colors.GREY_BLOCK)
+
+            # Draw Agent Smith chasing (left)
+            agent_sprite = self.AGENT_SMITH_LEFT_FRAMES[self._agent_frame]
+            draw_character(self._agent_x, agent_sprite, Colors.ALLEY_MID)
 
     def _render_cars(self, screen):
         """Render cars on the street."""
