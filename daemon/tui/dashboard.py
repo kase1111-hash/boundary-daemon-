@@ -1039,7 +1039,7 @@ class MatrixRain:
 
 class AlleyScene:
     """
-    Simple alley scene with dumpster, box, and traffic light for Matrix background.
+    Simple alley scene with dumpster, box, traffic light, building, and cars.
     """
 
     # Dumpster ASCII art (6 wide x 4 tall)
@@ -1069,6 +1069,20 @@ class AlleyScene:
         "   ||  ",
     ]
 
+    # Car sprites - simple side views
+    CAR_RIGHT = ["<[##]>"]  # Car going right
+    CAR_LEFT = ["<[##]>"]   # Car going left (same sprite, just moves left)
+
+    # Building wireframe (behind dumpster/box area)
+    BUILDING = [
+        ".--------.",
+        "|  []  []|",
+        "|  []  []|",
+        "|  []  []|",
+        "|  []  []|",
+        "|________|",
+    ]
+
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
@@ -1082,16 +1096,20 @@ class AlleyScene:
         self._traffic_frame = 0
         self._traffic_state = 'NS_GREEN'  # NS_GREEN, NS_YELLOW, EW_GREEN, EW_YELLOW
         self._state_duration = 0
+        # Cars on the street
+        self._cars: List[Dict] = []
+        self._car_spawn_timer = 0
         self._generate_scene()
 
     def resize(self, width: int, height: int):
         """Regenerate scene for new dimensions."""
         self.width = width
         self.height = height
+        self._cars = []  # Clear cars on resize
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate scene with dumpster, box, curb, and street."""
+        """Generate scene with building, dumpster, box, curb, and street."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
@@ -1099,6 +1117,11 @@ class AlleyScene:
         # Initialize with empty space
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
+
+        # Draw building wireframe in background (upper area, behind where dumpster will be)
+        building_x = 5
+        building_y = max(2, self.height - len(self.BUILDING) - 8)
+        self._draw_sprite(self.BUILDING, building_x, building_y, Colors.ALLEY_BLUE)
 
         # Draw street at the very bottom (last 2 rows)
         street_y = self.height - 1
@@ -1130,29 +1153,72 @@ class AlleyScene:
         self.box_y = self.height - len(self.BOX) - 3  # -3 to be above curb
         self._draw_sprite(self.BOX, self.box_x, self.box_y, Colors.SAND_DIM)
 
+    def _spawn_car(self):
+        """Spawn a new car on the street."""
+        # Randomly choose direction
+        if random.random() < 0.5:
+            # Car going right (spawn on left)
+            self._cars.append({
+                'x': -8.0,
+                'direction': 1,
+                'speed': random.uniform(0.8, 1.5),
+                'sprite': self.CAR_RIGHT,
+            })
+        else:
+            # Car going left (spawn on right)
+            self._cars.append({
+                'x': float(self.width + 2),
+                'direction': -1,
+                'speed': random.uniform(0.8, 1.5),
+                'sprite': self.CAR_LEFT,
+            })
+
     def update(self):
-        """Update traffic light state."""
+        """Update traffic light state and cars."""
         self._traffic_frame += 1
 
         # State machine for traffic lights
         self._state_duration += 1
 
         if self._traffic_state == 'NS_GREEN':
-            if self._state_duration >= 80:  # Green for 80 frames
+            if self._state_duration >= 80:
                 self._traffic_state = 'NS_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'NS_YELLOW':
-            if self._state_duration >= 20:  # Yellow for 20 frames
+            if self._state_duration >= 20:
                 self._traffic_state = 'EW_GREEN'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_GREEN':
-            if self._state_duration >= 80:  # Green for 80 frames
+            if self._state_duration >= 80:
                 self._traffic_state = 'EW_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_YELLOW':
-            if self._state_duration >= 20:  # Yellow for 20 frames
+            if self._state_duration >= 20:
                 self._traffic_state = 'NS_GREEN'
                 self._state_duration = 0
+
+        # Update cars
+        self._update_cars()
+
+    def _update_cars(self):
+        """Update car positions and spawn new cars."""
+        # Spawn new cars occasionally
+        self._car_spawn_timer += 1
+        if self._car_spawn_timer >= random.randint(40, 100):
+            if len(self._cars) < 3:  # Max 3 cars at once
+                self._spawn_car()
+            self._car_spawn_timer = 0
+
+        # Update car positions
+        new_cars = []
+        for car in self._cars:
+            car['x'] += car['direction'] * car['speed']
+
+            # Keep car if it's still on screen (with margin)
+            if -10 < car['x'] < self.width + 10:
+                new_cars.append(car)
+
+        self._cars = new_cars
 
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
@@ -1207,14 +1273,40 @@ class AlleyScene:
                     except curses.error:
                         pass
 
+        # Render cars on the street
+        self._render_cars(screen)
+
         # Render traffic light (dynamic - lights change)
         self._render_traffic_light(screen)
 
+    def _render_cars(self, screen):
+        """Render cars on the street."""
+        street_y = self.height - 1
+
+        for car in self._cars:
+            x = int(car['x'])
+            sprite = car['sprite']
+
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    px = x + col_idx
+                    py = street_y
+
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            # Cars are white/bright
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
     def _render_traffic_light(self, screen):
         """Render the traffic light with current light states."""
-        # Position traffic light on right side of scene
-        light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 10)
-        light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 2
+        # Position traffic light on right side of scene (shifted 10 chars right)
+        light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 20)
+        light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 3  # Above curb
 
         if light_x < 0 or light_y < 0:
             return
