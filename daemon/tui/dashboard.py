@@ -146,6 +146,15 @@ class Colors:
     GREY_BLOCK = 32      # Grey block color for lower building
     DOOR_KNOB_GOLD = 33  # Gold door knob color
     CAFE_WARM = 34       # Warm yellow/orange for cafe interior
+    # Weather-based box border colors
+    BOX_BROWN = 35       # Brown for snow mode top/sides
+    BOX_DARK_BROWN = 36  # Dark brown for rain mode
+    BOX_GREY = 37        # Grey for sand mode
+    BOX_WHITE = 38       # White for snow mode bottom
+    # Weather-blended text colors
+    TEXT_RAIN = 39       # Blue-tinted text for rain mode
+    TEXT_SNOW = 40       # White text for snow mode
+    TEXT_SAND = 41       # Yellow/tan text for sand mode
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -222,6 +231,15 @@ class Colors:
         curses.init_pair(Colors.DOOR_KNOB_GOLD, curses.COLOR_YELLOW, curses.COLOR_BLACK)
         # Cafe warm interior color
         curses.init_pair(Colors.CAFE_WARM, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Weather-based box border colors
+        curses.init_pair(Colors.BOX_BROWN, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Brown approximation
+        curses.init_pair(Colors.BOX_DARK_BROWN, curses.COLOR_RED, curses.COLOR_BLACK)  # Dark brown via dim red
+        curses.init_pair(Colors.BOX_GREY, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Grey via dim white
+        curses.init_pair(Colors.BOX_WHITE, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White
+        # Weather-blended text colors
+        curses.init_pair(Colors.TEXT_RAIN, curses.COLOR_CYAN, curses.COLOR_BLACK)  # Blue/cyan for rain
+        curses.init_pair(Colors.TEXT_SNOW, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White for snow
+        curses.init_pair(Colors.TEXT_SAND, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Yellow/tan for sand
 
 
 class WeatherMode(Enum):
@@ -230,6 +248,7 @@ class WeatherMode(Enum):
     RAIN = "rain"          # Blue rain
     SNOW = "snow"          # White/gray snow
     SAND = "sand"          # Brown/yellow sandstorm
+    CALM = "calm"          # No particles, just wind (leaves/debris)
 
     @property
     def display_name(self) -> str:
@@ -239,6 +258,7 @@ class WeatherMode(Enum):
             WeatherMode.RAIN: "Rain",
             WeatherMode.SNOW: "Snow",
             WeatherMode.SAND: "Sandstorm",
+            WeatherMode.CALM: "Calm",
         }.get(self, self.value.title())
 
 
@@ -275,6 +295,13 @@ class MatrixRain:
             ",:;~^",  # Layer 3: Coarse sand
             "~^°º",  # Layer 4: Larger particles
         ],
+        WeatherMode.CALM: [
+            "",  # Layer 0: No particles
+            "",  # Layer 1: No particles
+            "",  # Layer 2: No particles
+            "",  # Layer 3: No particles
+            "",  # Layer 4: No particles (wind effects only)
+        ],
     }
 
     # Weather-specific speed multipliers (relative to base speeds)
@@ -283,6 +310,7 @@ class MatrixRain:
         WeatherMode.RAIN: 1.2,   # Rain falls fast
         WeatherMode.SNOW: 0.4,   # Base snow speed (modified per-depth below)
         WeatherMode.SAND: 0.15,  # Sand falls very slowly (blows horizontally instead)
+        WeatherMode.CALM: 0.0,   # No particles falling
     }
 
     # Snow-specific speeds: big flakes fall FASTER than small ones (opposite of rain)
@@ -301,6 +329,7 @@ class MatrixRain:
         WeatherMode.RAIN: None,    # Use default DEPTH_LENGTHS
         WeatherMode.SNOW: [(1, 1), (1, 1), (1, 2), (1, 2), (1, 2)],  # Single flakes
         WeatherMode.SAND: [(1, 1), (1, 1), (1, 1), (1, 2), (1, 2)],  # Tiny grains
+        WeatherMode.CALM: [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],  # No particles
     }
 
     # Weather-specific horizontal movement
@@ -309,6 +338,7 @@ class MatrixRain:
         WeatherMode.RAIN: (-0.1, 0.1),    # Slight wind variation
         WeatherMode.SNOW: (-0.4, 0.4),    # Gentle drift both ways
         WeatherMode.SAND: (1.5, 3.0),     # Strong wind blowing right
+        WeatherMode.CALM: (0, 0),         # No particles to move
     }
 
     # Weather-specific color mappings (bright, dim, fade1, fade2)
@@ -317,6 +347,7 @@ class MatrixRain:
         WeatherMode.RAIN: (Colors.RAIN_BRIGHT, Colors.RAIN_DIM, Colors.RAIN_FADE1, Colors.RAIN_FADE2),
         WeatherMode.SNOW: (Colors.SNOW_BRIGHT, Colors.SNOW_DIM, Colors.SNOW_FADE, Colors.SNOW_FADE),
         WeatherMode.SAND: (Colors.SAND_BRIGHT, Colors.SAND_DIM, Colors.SAND_FADE, Colors.SAND_FADE),
+        WeatherMode.CALM: (Colors.MATRIX_DIM, Colors.MATRIX_FADE1, Colors.MATRIX_FADE2, Colors.MATRIX_FADE3),
     }
 
     # 5 depth layers - each with different character sets (simple=far, complex=near)
@@ -423,20 +454,26 @@ class MatrixRain:
         """
         self._glow_positions = positions
 
-    def set_quick_melt_zones(self, sidewalk_y: int, mailbox_bounds: Tuple[int, int, int, int], street_y: int):
-        """Set zones where snow melts very quickly (sidewalk, mailbox, traffic lines).
+    def set_quick_melt_zones(self, sidewalk_y: int, mailbox_bounds: Tuple[int, int, int, int], street_y: int,
+                              traffic_light_bounds: Tuple[int, int, int, int] = None,
+                              cafe_bounds: Tuple[int, int, int, int, int] = None):
+        """Set zones where snow melts very quickly (sidewalk, mailbox, traffic lines, traffic light, cafe).
 
         Args:
             sidewalk_y: Y coordinate of the sidewalk/curb
             mailbox_bounds: (x, y, width, height) of the mailbox
             street_y: Y coordinate of the street (for traffic lines)
+            traffic_light_bounds: (x, y, width, height) of the traffic light
+            cafe_bounds: (x, y, width, height, shell_roof_height) of the cafe - snow melts on building but not shell roof
         """
         self._quick_melt_sidewalk_y = sidewalk_y
         self._quick_melt_mailbox = mailbox_bounds
         self._quick_melt_street_y = street_y
+        self._quick_melt_traffic_light = traffic_light_bounds
+        self._quick_melt_cafe = cafe_bounds
 
     def _is_in_quick_melt_zone(self, x: int, y: int) -> bool:
-        """Check if a position is in a quick-melt zone (sidewalk, mailbox, traffic line)."""
+        """Check if a position is in a quick-melt zone (sidewalk, mailbox, traffic light, traffic line)."""
         # Sidewalk
         if hasattr(self, '_quick_melt_sidewalk_y') and y == self._quick_melt_sidewalk_y:
             return True
@@ -447,6 +484,18 @@ class MatrixRain:
         if hasattr(self, '_quick_melt_mailbox') and self._quick_melt_mailbox:
             mx, my, mw, mh = self._quick_melt_mailbox
             if mx <= x < mx + mw and my <= y < my + mh:
+                return True
+        # Traffic light
+        if hasattr(self, '_quick_melt_traffic_light') and self._quick_melt_traffic_light:
+            tx, ty, tw, th = self._quick_melt_traffic_light
+            if tx <= x < tx + tw and ty <= y < ty + th:
+                return True
+        # Cafe (excluding shell roof which can accumulate snow)
+        if hasattr(self, '_quick_melt_cafe') and self._quick_melt_cafe:
+            cx, cy, cw, ch, shell_h = self._quick_melt_cafe
+            # Only melt snow below the shell roof (shell_h rows from top)
+            cafe_body_y = cy + shell_h
+            if cx <= x < cx + cw and cafe_body_y <= y < cy + ch:
                 return True
         return False
 
@@ -1028,7 +1077,28 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
+    # Big shell logo for Shell Cafe roof
+    BIG_SHELL_LOGO = [
+        "      .------.",
+        "    /          \\",
+        "   /    .--.    \\",
+        "  |    /    \\    |",
+        "  |   | (()) |   |",
+        "  |    \\    /    |",
+        "   \\    '--'    /",
+        "    \\          /",
+        "      '------'",
+    ]
+
     CAFE = [
+        "      .------.      ",
+        "    /          \\    ",
+        "   /    .--.    \\   ",
+        "  |    /    \\    |  ",
+        "  |   | (()) |   |  ",
+        "  |    \\    /    |  ",
+        "   \\    '--'    /   ",
+        "    \\__________/    ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -1345,6 +1415,30 @@ class AlleyScene:
         ["[=]", "\\|/", "[H]", " | "],    # Agent Smith
     ]
 
+    # UFO for abduction event
+    UFO_SPRITE = [
+        "    ___    ",
+        " __/   \\__ ",
+        "/  o   o  \\",
+        "\\____*____/",
+    ]
+
+    # Tractor beam (extends below UFO)
+    TRACTOR_BEAM = [
+        "    |||    ",
+        "   |||||   ",
+        "  |||||||  ",
+        " ||||||||| ",
+    ]
+
+    # Cow being abducted
+    COW_SPRITE = [
+        " ^__^",
+        " (oo)",
+        "/----\\",
+        "||  ||",
+    ]
+
     # Street light - taller pole
     STREET_LIGHT = [
         " ___ ",
@@ -1424,8 +1518,8 @@ class AlleyScene:
         "   [        ]    [    ]  [    ]    [        ]    [    ]         ",
         "   [========]    [====]  [====]    [========]    [====]         ",
         "            .------.                    .------.                ",
-        "            |[####]|                    |[####]|                ",
-        "            |[####]|                    |[####]|                ",
+        "            |      |                    |      |                ",
+        "            |      |                    |      |                ",
         "            |      |                    |      |                ",
         "            | [==] |                    | [==] |                ",
         "____________|______|____________________|______|________________",
@@ -1470,8 +1564,8 @@ class AlleyScene:
         "     [        ]    [    ]    [        ]    [    ]           ",
         "     [========]    [====]    [========]    [====]           ",
         "            .------.                    .------.            ",
-        "            |[####]|                    |[####]|            ",
-        "            |[####]|                    |[####]|            ",
+        "            |      |                    |      |            ",
+        "            |      |                    |      |            ",
         "            |      |                    |      |            ",
         "            | [==] |                    | [==] |            ",
         "____________|______|____________________|______|____________",
@@ -1479,20 +1573,20 @@ class AlleyScene:
     ]
 
     # Window positions for people animation (relative to building sprite)
-    # Each entry is (row_offset, col_offset) for the middle of a window
+    # Each entry is (row_offset, col_offset) for the middle of a window interior
     BUILDING_WINDOW_POSITIONS = [
-        (8, 7), (8, 22), (8, 30), (8, 44),      # First row (row 8 is middle of window)
-        (14, 7), (14, 22), (14, 30), (14, 44),  # Second row
-        (20, 7), (20, 22), (20, 30), (20, 44),  # Third row
-        (26, 7), (26, 22), (26, 30), (26, 44),  # Fourth row
-        (32, 7), (32, 22), (32, 30), (32, 44),  # Fifth row
+        (8, 7), (8, 19), (8, 27), (8, 39),      # First row (inside window interiors)
+        (14, 7), (14, 19), (14, 27), (14, 39),  # Second row
+        (20, 7), (20, 19), (20, 27), (20, 39),  # Third row
+        (26, 7), (26, 19), (26, 27), (26, 39),  # Fourth row
+        (32, 7), (32, 19), (32, 27), (32, 39),  # Fifth row
     ]
     BUILDING2_WINDOW_POSITIONS = [
-        (8, 9), (8, 24), (8, 38), (8, 52),      # First row
-        (14, 9), (14, 24), (14, 38), (14, 52),  # Second row
-        (20, 9), (20, 24), (20, 38), (20, 52),  # Third row
-        (26, 9), (26, 24), (26, 38), (26, 52),  # Fourth row
-        (32, 9), (32, 24), (32, 38), (32, 52),  # Fifth row
+        (8, 9), (8, 21), (8, 33), (8, 45),      # First row (inside window interiors)
+        (14, 9), (14, 21), (14, 33), (14, 45),  # Second row
+        (20, 9), (20, 21), (20, 33), (20, 45),  # Third row
+        (26, 9), (26, 21), (26, 33), (26, 45),  # Fourth row
+        (32, 9), (32, 21), (32, 33), (32, 45),  # Fifth row
     ]
 
     def __init__(self, width: int, height: int):
@@ -1584,6 +1678,7 @@ class AlleyScene:
         self._transform_frame = 0
         self._frame_timer = 0
         # Meteor QTE event - quick time event
+        self._qte_enabled = True  # Toggle for QTE events
         self._qte_active = False
         self._qte_state = 'idle'  # idle, warning, active, success, failure, cooldown
         self._qte_timer = 0
@@ -1609,7 +1704,18 @@ class AlleyScene:
         # OPEN sign animation state
         self._open_sign_phase = 0  # 0=off, 1=O, 2=OP, 3=OPE, 4=OPEN, 5-9=flash
         self._open_sign_timer = 0
-        self._open_sign_speed = 20  # Frames per phase
+        self._open_sign_speed = 2  # Frames per phase (10x faster)
+        # Calm mode flag - more debris/leaves, no particles
+        self._calm_mode = False
+        # UFO abduction event - super rare
+        self._ufo_active = False
+        self._ufo_state = 'idle'  # idle, descend, abduct, ascend, cooldown
+        self._ufo_timer = 0
+        self._ufo_cooldown = 0
+        self._ufo_x = 0.0
+        self._ufo_y = 0.0
+        self._ufo_target_y = 0.0
+        self._cow_y = 0.0  # Cow being abducted
         # Cloud layer with wisps
         self._clouds: List[Dict] = []
         self._init_clouds()
@@ -1674,14 +1780,14 @@ class AlleyScene:
                 ]),
             })
 
-        # Create smaller main clouds - move slower
-        num_clouds = max(2, self.width // 50)
+        # Create smaller main clouds - move very slow
+        num_clouds = max(3, self.width // 40)  # More clouds
         for i in range(num_clouds):
-            # Main cloud body - slow
+            # Main cloud body - very slow
             self._clouds.append({
                 'x': random.uniform(0, self.width),
                 'y': random.randint(3, 6),  # Upper area
-                'speed': random.uniform(0.03, 0.08),  # Slow movement for small clouds
+                'speed': random.uniform(0.01, 0.03),  # Very slow movement for small clouds
                 'type': 'main',
                 'chars': random.choice([
                     ['  ___  ', ' (   ) ', '(_____)', '  ~~~  '],
@@ -1694,11 +1800,65 @@ class AlleyScene:
                 self._clouds.append({
                     'x': random.uniform(0, self.width),
                     'y': random.randint(6, 12),
-                    'speed': random.uniform(0.02, 0.05),  # Slowest for wisps
+                    'speed': random.uniform(0.005, 0.02),  # Even slower wisps
                     'type': 'wisp',
                     'char': random.choice(['~', '≈', '-', '.']),
                     'length': random.randint(3, 8),
                 })
+
+        # Create additional lower clouds - slowest, drift near buildings
+        num_low_clouds = max(2, self.width // 60)
+        for i in range(num_low_clouds):
+            self._clouds.append({
+                'x': random.uniform(0, self.width),
+                'y': random.randint(10, 18),  # Lower on screen, near building tops
+                'speed': random.uniform(0.008, 0.02),  # Very slow drift
+                'type': 'main',
+                'chars': random.choice([
+                    ['  ___  ', ' (   ) ', '(_____)', '  ~~~  '],
+                    [' ~~~ ', '(   )', ' ~~~ '],
+                    ['_____', '(   )', '~~~~~'],
+                    ['   ~~~   ', ' (     ) ', '(       )', ' ~~~~~~~ '],
+                ]),
+            })
+
+        # Create HUGE foreground clouds - biggest, fastest, rendered on top
+        num_foreground = max(1, self.width // 100)
+        for i in range(num_foreground):
+            self._clouds.append({
+                'x': random.uniform(0, self.width),
+                'y': random.randint(2, 10),  # Can go higher on screen
+                'speed': random.uniform(0.4, 0.7),  # Very fast movement
+                'type': 'foreground',
+                'chars': random.choice([
+                    # Massive storm cloud
+                    ['          .--~~~~~~~--.          ',
+                     '       .~~             ~~.       ',
+                     '     .~                   ~.     ',
+                     '   .~    ~~~~~~~~~~~        ~.   ',
+                     '  (    ~~           ~~        )  ',
+                     ' (   ~                 ~       ) ',
+                     '(  (      ~~~~~~~       )      ) ',
+                     ' (   ~               ~        )  ',
+                     '  ~~                        ~~   ',
+                     '    ~~~~~~~~~~~~~~~~~~~~~~~~~    '],
+                    # Wide fluffy cloud
+                    ['       .--~~~~~~~---.       ',
+                     '    .~~             ~~.    ',
+                     '  .~                   ~.  ',
+                     ' (      ~~~~~~~~~~       ) ',
+                     '(                         )',
+                     ' ~~~~~~~~~~~~~~~~~~~~~~~~~ '],
+                    # Giant cumulus
+                    ['        .~~~~.        ',
+                     '     .~~      ~~.     ',
+                     '   .~            ~.   ',
+                     '  (    ~~~~~~~~    )  ',
+                     ' (                  ) ',
+                     '(      ~~~~~~        )',
+                     ' ~~~~~~~~~~~~~~~~~~~~ '],
+                ]),
+            })
 
     def _update_clouds(self):
         """Update cloud positions - drift in wind direction."""
@@ -1708,7 +1868,7 @@ class AlleyScene:
             cloud['x'] += cloud['speed'] * self._wind_direction
 
             # Wrap around based on wind direction
-            if cloud['type'] in ['main', 'cumulus']:
+            if cloud['type'] in ['main', 'cumulus', 'foreground']:
                 cloud_width = len(cloud['chars'][0]) if cloud['chars'] else 5
                 if self._wind_direction > 0:
                     # Wind blowing right - wrap from left
@@ -1850,6 +2010,72 @@ class AlleyScene:
                 self._woman_red_active = False
                 self._woman_red_cooldown = 3000  # Long cooldown before next event
 
+    def set_calm_mode(self, calm: bool):
+        """Set calm mode - more debris/leaves, less mid-screen clutter."""
+        self._calm_mode = calm
+
+    def toggle_qte(self) -> bool:
+        """Toggle QTE (meteor game) on/off. Returns new state."""
+        self._qte_enabled = not self._qte_enabled
+        # If disabling while active, cancel the current event
+        if not self._qte_enabled and self._qte_active:
+            self._qte_active = False
+            self._qte_state = 'idle'
+            self._qte_meteors = []
+            self._qte_missiles = []
+            self._qte_explosions = []
+        return self._qte_enabled
+
+    def _update_ufo(self):
+        """Update UFO cow abduction event - super rare."""
+        # Handle cooldown
+        if self._ufo_cooldown > 0:
+            self._ufo_cooldown -= 1
+            return
+
+        # Very rare chance to trigger UFO event (about 1 in 50000 frames ~ once per 15 min)
+        if not self._ufo_active and random.random() < 0.00002:
+            self._ufo_active = True
+            self._ufo_state = 'descend'
+            self._ufo_timer = 0
+            # Position UFO above a building (behind building gap)
+            building1_right = self._building_x + len(self.BUILDING[0])
+            building2_left = self._building2_x if self._building2_x > 0 else self.width
+            gap_center = (building1_right + building2_left) // 2
+            self._ufo_x = float(gap_center)
+            self._ufo_y = -10.0  # Start above screen
+            self._ufo_target_y = float(self.height // 2 + 5)  # Descend to mid-low area
+            self._cow_y = self._ufo_target_y + 8  # Cow starts below UFO target
+
+        if not self._ufo_active:
+            return
+
+        self._ufo_timer += 1
+
+        if self._ufo_state == 'descend':
+            # UFO descends slowly behind buildings
+            self._ufo_y += 0.3
+            if self._ufo_y >= self._ufo_target_y:
+                self._ufo_y = self._ufo_target_y
+                self._ufo_state = 'abduct'
+                self._ufo_timer = 0
+
+        elif self._ufo_state == 'abduct':
+            # Cow rises up in tractor beam
+            self._cow_y -= 0.15
+            if self._cow_y <= self._ufo_y + len(self.UFO_SPRITE):
+                self._ufo_state = 'ascend'
+                self._ufo_timer = 0
+
+        elif self._ufo_state == 'ascend':
+            # UFO ascends with cow
+            self._ufo_y -= 0.4
+            self._cow_y = self._ufo_y + len(self.UFO_SPRITE)  # Cow attached
+            if self._ufo_y < -15:
+                self._ufo_state = 'idle'
+                self._ufo_active = False
+                self._ufo_cooldown = 36000  # ~10 minute cooldown
+
     def _update_wind(self):
         """Update windy city weather - debris, leaves, and wind wisps."""
         curb_y = self.height - 4
@@ -1865,11 +2091,16 @@ class AlleyScene:
         # Update tree sway animation
         self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
 
+        # Calm mode: faster debris spawn, more debris allowed
+        debris_spawn_min = 5 if self._calm_mode else 15
+        debris_spawn_max = 15 if self._calm_mode else 40
+        max_debris = 20 if self._calm_mode else 8
+
         # Spawn debris (newspapers, trash) on streets - spawn from upwind side
         self._debris_spawn_timer += 1
-        if self._debris_spawn_timer >= random.randint(15, 40):
+        if self._debris_spawn_timer >= random.randint(debris_spawn_min, debris_spawn_max):
             self._debris_spawn_timer = 0
-            if len(self._debris) < 8:
+            if len(self._debris) < max_debris:
                 debris_type = random.choice(['newspaper', 'trash'])
                 chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
                 # Spawn from upwind side
@@ -1886,11 +2117,16 @@ class AlleyScene:
                     'wobble': random.uniform(0, 6.28),
                 })
 
+        # Calm mode: fewer wind wisps (less mid-screen clutter)
+        max_wisps = 2 if self._calm_mode else 5
+        wisp_spawn_min = 60 if self._calm_mode else 30
+        wisp_spawn_max = 120 if self._calm_mode else 60
+
         # Spawn wind wisps in sky - spawn from upwind side
         self._wind_wisp_timer += 1
-        if self._wind_wisp_timer >= random.randint(30, 60):
+        if self._wind_wisp_timer >= random.randint(wisp_spawn_min, wisp_spawn_max):
             self._wind_wisp_timer = 0
-            if len(self._wind_wisps) < 5:
+            if len(self._wind_wisps) < max_wisps:
                 wisp_length = random.randint(3, 8)
                 wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
                 if self._wind_direction > 0:
@@ -1904,10 +2140,14 @@ class AlleyScene:
                     'speed': random.uniform(1.0, 2.5),
                 })
 
+        # Calm mode: more leaves
+        leaf_chance = 0.08 if self._calm_mode else 0.03
+        max_leaves = 30 if self._calm_mode else 15
+
         # Spawn leaves from trees
         for tree_x, tree_y in self._tree_positions:
-            if random.random() < 0.03:  # 3% chance per tree per frame
-                if len(self._leaves) < 15:
+            if random.random() < leaf_chance:
+                if len(self._leaves) < max_leaves:
                     self._leaves.append({
                         'x': float(tree_x + random.randint(2, 7)),
                         'y': float(tree_y + random.randint(0, 3)),
@@ -1950,6 +2190,10 @@ class AlleyScene:
 
     def _update_qte(self):
         """Update meteor QTE event - quick time event."""
+        # Skip if QTE is disabled
+        if not self._qte_enabled:
+            return
+
         # Handle cooldown
         if self._qte_cooldown > 0:
             self._qte_cooldown -= 1
@@ -2274,26 +2518,42 @@ class AlleyScene:
         cafe_x = self.cafe_x
         cafe_y = self.cafe_y
 
-        # Find the SHELL CAFE text in the sprite (row 1)
-        if len(self.CAFE) > 1:
-            sign_row = self.CAFE[1]  # "  |     S H E L L  C A F E   |  "
+        # Render big shell on roof in yellow/gold
+        for row_idx in range(8):  # First 8 rows are the shell roof
+            if row_idx < len(self.CAFE):
+                for col_idx, char in enumerate(self.CAFE[row_idx]):
+                    if char not in ' ':
+                        px = cafe_x + col_idx
+                        py = cafe_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                            try:
+                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+
+        # Find the SHELL CAFE text in the sprite (row 9 after shell roof)
+        if len(self.CAFE) > 9:
+            sign_row = self.CAFE[9]  # "  |     S H E L L  C A F E   |  "
             for col_idx, char in enumerate(sign_row):
                 if char in 'SHELLCAFE':
                     px = cafe_x + col_idx
-                    py = cafe_y + 1
+                    py = cafe_y + 9
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             # Green bold for SHELL CAFE
-                            attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                            attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
                         except curses.error:
                             pass
 
-        # Find and animate the OPEN sign (row 14 in CAFE sprite)
-        if len(self.CAFE) > 14:
-            open_row = self.CAFE[14]  # "  |[                  OPEN ]|  "
+        # Find and animate the OPEN sign (row 22 in CAFE sprite, after shell roof added 8 rows)
+        if len(self.CAFE) > 22:
+            open_row = self.CAFE[22]  # "  |[                  OPEN ]|  "
             open_start = open_row.find('OPEN')
             if open_start != -1:
                 # Determine which letters are lit based on phase
@@ -2301,26 +2561,26 @@ class AlleyScene:
                 letters = ['O', 'P', 'E', 'N']
                 for i, letter in enumerate(letters):
                     px = cafe_x + open_start + i
-                    py = cafe_y + 14
+                    py = cafe_y + 22
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             if self._open_sign_phase == 0:
-                                # All off - dim gray
-                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                                # All off - white/unlit
+                                attr = curses.color_pair(Colors.ALLEY_MID)
                             elif self._open_sign_phase <= 4:
                                 # Lighting up one by one
                                 if i < self._open_sign_phase:
                                     # This letter is lit - bright yellow
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                                 else:
-                                    # Not lit yet - dim
-                                    attr = curses.color_pair(Colors.ALLEY_DARK)
+                                    # Not lit yet - white/unlit
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
                             else:
                                 # Flashing phase (5-9) - alternate on/off
                                 if self._open_sign_phase % 2 == 1:
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                                 else:
-                                    attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_DIM
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
                             screen.attron(attr)
                             screen.addstr(py, px, letter)
                             screen.attroff(attr)
@@ -2343,8 +2603,8 @@ class AlleyScene:
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
                             if char == '@':
-                                # Leaves - bright green
-                                attr = curses.color_pair(Colors.MATRIX_BRIGHT)
+                                # Leaves - green
+                                attr = curses.color_pair(Colors.MATRIX_DIM)
                             elif char in '()|':
                                 # Trunk - brown/dark
                                 attr = curses.color_pair(Colors.SAND_DIM)
@@ -2388,6 +2648,90 @@ class AlleyScene:
                             attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
                             screen.attron(attr)
                             screen.addstr(py, px, cloud['char'])
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_foreground_clouds(self, screen):
+        """Render large foreground clouds on top of the scene."""
+        for cloud in self._clouds:
+            if cloud['type'] == 'foreground':
+                # Render huge foreground cloud - brightest, on top
+                for row_idx, row in enumerate(cloud['chars']):
+                    for col_idx, char in enumerate(row):
+                        px = int(cloud['x']) + col_idx
+                        py = cloud['y'] + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                            try:
+                                # Foreground clouds are brightest white
+                                attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+
+    def _render_ufo(self, screen):
+        """Render UFO cow abduction event."""
+        if not self._ufo_active:
+            return
+
+        ufo_x = int(self._ufo_x) - len(self.UFO_SPRITE[0]) // 2
+        ufo_y = int(self._ufo_y)
+
+        # Render tractor beam first (behind cow)
+        if self._ufo_state in ('abduct', 'ascend'):
+            beam_x = ufo_x + (len(self.UFO_SPRITE[0]) - len(self.TRACTOR_BEAM[0])) // 2
+            beam_y = ufo_y + len(self.UFO_SPRITE)
+            for row_idx, row in enumerate(self.TRACTOR_BEAM):
+                # Repeat beam to reach cow
+                py = beam_y + row_idx
+                while py < int(self._cow_y):
+                    for col_idx, char in enumerate(row):
+                        px = beam_x + col_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                # Green tractor beam
+                                attr = curses.color_pair(Colors.MATRIX_DIM)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+                    py += len(self.TRACTOR_BEAM)
+
+        # Render UFO
+        for row_idx, row in enumerate(self.UFO_SPRITE):
+            py = ufo_y + row_idx
+            for col_idx, char in enumerate(row):
+                px = ufo_x + col_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        if char in 'o*':
+                            # Lights - yellow
+                            attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                        else:
+                            # Body - silver/white
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render cow (during abduct or ascend)
+        if self._ufo_state in ('abduct', 'ascend'):
+            cow_x = int(self._ufo_x) - len(self.COW_SPRITE[0]) // 2
+            cow_y = int(self._cow_y)
+            for row_idx, row in enumerate(self.COW_SPRITE):
+                py = cow_y + row_idx
+                for col_idx, char in enumerate(row):
+                    px = cow_x + col_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            attr = curses.color_pair(Colors.ALLEY_MID)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
                             screen.attroff(attr)
                         except curses.error:
                             pass
@@ -2495,27 +2839,28 @@ class AlleyScene:
                     if drain_x + i < self.width - 1:
                         self.scene[curb_y][drain_x + i] = (char, Colors.ALLEY_DARK)
 
-        # Place trees - spread across the gap between buildings
+        # Place trees - one on left, two in front of right building
         self._tree_positions = []
         tree_height = len(self.TREE)
         tree_width = len(self.TREE[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
-        gap_width = building2_left - building1_right
+        building2_width = len(self.BUILDING2[0]) if self.BUILDING2 else 60
 
-        # Tree 1: left side of gap
+        # Tree 1: left side of gap (near left building)
         tree1_x = building1_right + 8
-        # Tree 2: middle-right of gap (shifted 40 right)
-        tree2_x = building1_right + gap_width // 2 + 60
-        # Tree 3: right side of gap (before building 2, shifted 40 right)
-        tree3_x = building2_left - tree_width + 28
+        # Tree 2: in front of right building (center-left of building2)
+        tree2_x = building2_left + building2_width // 3
+        # Tree 3: in front of right building (center-right of building2)
+        tree3_x = building2_left + 2 * building2_width // 3
 
         for tree_x in [tree1_x, tree2_x, tree3_x]:
-            # Check tree fits in gap and doesn't overlap with cafe
+            # Check tree fits and doesn't overlap with cafe
             cafe_left = getattr(self, 'cafe_x', 0)
             cafe_right = cafe_left + len(self.CAFE[0]) if hasattr(self, 'cafe_x') else 0
             overlaps_cafe = cafe_left - 5 < tree_x < cafe_right + 5
 
-            if tree_x > building1_right + 2 and tree_x + tree_width < building2_left - 2 and not overlaps_cafe:
+            # Allow trees in front of building2 (not just in the gap)
+            if tree_x > building1_right + 2 and tree_x + tree_width < self.width - 2 and not overlaps_cafe:
                 tree_y = ground_y - tree_height + 1
                 self._tree_positions.append((tree_x, tree_y))
                 self._draw_tree(tree_x, tree_y)
@@ -2552,7 +2897,7 @@ class AlleyScene:
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
         # Draw street sign near crosswalk (shifted 12 chars right)
-        sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2 + 12
+        sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2 + 16
         sign_y = ground_y - len(self.STREET_SIGN) + 1
         self._draw_street_sign(sign_x, sign_y)
 
@@ -2573,42 +2918,42 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.MATRIX_DIM)
 
     def _draw_building_numbers(self, ground_y: int):
-        """Draw building street numbers near doorways."""
-        # Building 1 numbers - "1742" and "1744" for the two doors
+        """Draw building street numbers beside doorways in gold."""
+        # Building 1 numbers - to the side of doors
         # Find door positions in BUILDING sprite
-        door_row = len(self.BUILDING) - 7  # Row with doors
-        # Draw numbers above doors
-        number1_x = self._building_x + 14  # Above first door
-        number2_x = self._building_x + 42  # Above second door
-        number_y = self._building_y + door_row - 1
+        door_row = len(self.BUILDING) - 5  # Row beside doors (middle of door)
+        # Draw numbers to the LEFT side of each door
+        number1_x = self._building_x + 8  # Left side of first door
+        number2_x = self._building_x + 36  # Left side of second door
+        number_y = self._building_y + door_row
 
-        # Building 1 - odd side (1741, 1743)
+        # Building 1 - odd side (1741, 1743) - vertical numbers beside door
         numbers1 = "1741"
         numbers2 = "1743"
         for i, char in enumerate(numbers1):
-            px = number1_x + i
-            if 0 <= px < self.width - 1 and 0 <= number_y < self.height:
-                self.scene[number_y][px] = (char, Colors.ALLEY_LIGHT)
+            py = number_y + i
+            if 0 <= number1_x < self.width - 1 and 0 <= py < self.height:
+                self.scene[py][number1_x] = (char, Colors.DOOR_KNOB_GOLD)
         for i, char in enumerate(numbers2):
-            px = number2_x + i
-            if 0 <= px < self.width - 1 and 0 <= number_y < self.height:
-                self.scene[number_y][px] = (char, Colors.ALLEY_LIGHT)
+            py = number_y + i
+            if 0 <= number2_x < self.width - 1 and 0 <= py < self.height:
+                self.scene[py][number2_x] = (char, Colors.DOOR_KNOB_GOLD)
 
         # Building 2 numbers - even side (1742, 1744)
         if self._building2_x > 0:
-            number3_x = self._building2_x + 14
-            number4_x = self._building2_x + 42
-            number_y2 = self._building2_y + door_row - 1
+            number3_x = self._building2_x + 8  # Left side of first door
+            number4_x = self._building2_x + 36  # Left side of second door
+            number_y2 = self._building2_y + door_row
             numbers3 = "1742"
             numbers4 = "1744"
             for i, char in enumerate(numbers3):
-                px = number3_x + i
-                if 0 <= px < self.width - 1 and 0 <= number_y2 < self.height:
-                    self.scene[number_y2][px] = (char, Colors.ALLEY_LIGHT)
+                py = number_y2 + i
+                if 0 <= number3_x < self.width - 1 and 0 <= py < self.height:
+                    self.scene[py][number3_x] = (char, Colors.DOOR_KNOB_GOLD)
             for i, char in enumerate(numbers4):
-                px = number4_x + i
-                if 0 <= px < self.width - 1 and 0 <= number_y2 < self.height:
-                    self.scene[number_y2][px] = (char, Colors.ALLEY_LIGHT)
+                py = number_y2 + i
+                if 0 <= number4_x < self.width - 1 and 0 <= py < self.height:
+                    self.scene[py][number4_x] = (char, Colors.DOOR_KNOB_GOLD)
 
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
@@ -2672,7 +3017,7 @@ class AlleyScene:
         # Draw the static cityscape
         for row_idx, row in enumerate(self.CITYSCAPE):
             py = cityscape_y + row_idx
-            if py < 2 or py >= self.height:
+            if py < 0 or py >= self.height:
                 continue
 
             for col_idx, char in enumerate(row):
@@ -3046,6 +3391,9 @@ class AlleyScene:
 
         # Update meteor QTE event
         self._update_qte()
+
+        # Update UFO abduction event
+        self._update_ufo()
 
         # Update skyline window lights
         self._update_skyline_windows()
@@ -3560,6 +3908,9 @@ class AlleyScene:
         # Render clouds first (behind everything)
         self._render_clouds(screen)
 
+        # Render UFO event (in sky, behind buildings)
+        self._render_ufo(screen)
+
         # Render static scene elements (except window frames - those go on top)
         for y, row in enumerate(self.scene):
             if y >= self.height:
@@ -3620,6 +3971,9 @@ class AlleyScene:
 
         # Render horizontal cars on the street LAST (on top of everything)
         self._render_cars(screen)
+
+        # Render foreground clouds (big, fast, on top of scene)
+        self._render_foreground_clouds(screen)
 
         # Render QTE event (meteors, missiles, explosions, NPC) on top of everything
         self._render_qte(screen)
@@ -3964,8 +4318,8 @@ class AlleyScene:
             draw_character(self._woman_red_x, woman_sprite, Colors.SHADOW_RED, is_blonde=True)
 
         elif self._woman_red_state == 'woman_waves':
-            # Draw Woman waving
-            wave_frame = (self._woman_red_timer // 10) % len(self.WOMAN_RED_WAVE_FRAMES)
+            # Draw Woman waving (10x faster)
+            wave_frame = (self._woman_red_timer // 1) % len(self.WOMAN_RED_WAVE_FRAMES)
             woman_sprite = self.WOMAN_RED_WAVE_FRAMES[wave_frame]
             draw_character(self._woman_red_x, woman_sprite, Colors.SHADOW_RED, is_blonde=True)
 
@@ -5530,6 +5884,7 @@ class Dashboard:
         # Framerate options (for matrix mode)
         self._framerate_options = [100, 50, 25, 15]  # ms
         self._framerate_index = 1  # Start at 50ms
+        self._qte_enabled = True  # QTE (meteor game) toggle state
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -5676,12 +6031,21 @@ class Dashboard:
             self.matrix_rain.set_roof_sill_checker(self.alley_scene.is_roof_or_sill)
             # Connect street light glow positions so snow melts faster in warm light
             self.matrix_rain.set_glow_positions(self.alley_scene._street_light_positions)
-            # Set quick-melt zones (sidewalk, mailbox, street) so snow melts very fast there
+            # Set quick-melt zones (sidewalk, mailbox, street, traffic light) so snow melts very fast there
             sidewalk_y = self.height - 4  # curb_y
             street_y = self.height - 3
             mailbox_bounds = (self.alley_scene.mailbox_x, self.alley_scene.mailbox_y,
                               len(self.alley_scene.MAILBOX[0]), len(self.alley_scene.MAILBOX))
-            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y)
+            # Traffic light bounds
+            traffic_light_x = min(self.width - 10, self.alley_scene.box_x + len(self.alley_scene.BOX[0]) + 100)
+            traffic_light_y = self.height - len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE) - 1
+            traffic_light_bounds = (traffic_light_x, traffic_light_y,
+                                    len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
+                                    len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
+            # Cafe bounds (snow melts on building but not on shell roof)
+            cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
+                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)  # 8 rows for shell roof
+            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
             self.alley_rat.set_hiding_spots(self.alley_scene)
@@ -5717,7 +6081,15 @@ class Dashboard:
                             street_y = self.height - 3
                             mailbox_bounds = (self.alley_scene.mailbox_x, self.alley_scene.mailbox_y,
                                               len(self.alley_scene.MAILBOX[0]), len(self.alley_scene.MAILBOX))
-                            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y)
+                            traffic_light_x = min(self.width - 10, self.alley_scene.box_x + len(self.alley_scene.BOX[0]) + 100)
+                            traffic_light_y = self.height - len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE) - 1
+                            traffic_light_bounds = (traffic_light_x, traffic_light_y,
+                                                    len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
+                                                    len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
+                            # Cafe bounds (snow melts on building but not on shell roof)
+                            cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
+                                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)
+                            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
                         self.matrix_rain.resize(self.width, self.height)
                         if self.alley_rat:
                             self.alley_rat.resize(self.width, self.height)
@@ -5984,6 +6356,9 @@ class Dashboard:
                 new_mode = self.matrix_rain.cycle_weather()
                 # Store for header display
                 self._current_weather = new_mode
+                # Sync calm mode to alley scene
+                if self.alley_scene:
+                    self.alley_scene.set_calm_mode(new_mode == WeatherMode.CALM)
         elif key == ord('f') or key == ord('F'):
             # Cycle framerate (only in matrix mode)
             if self.matrix_mode:
@@ -5991,6 +6366,11 @@ class Dashboard:
                 # Apply new framerate immediately
                 if self.screen:
                     self.screen.timeout(self._framerate_options[self._framerate_index])
+        elif key == ord('g') or key == ord('G'):
+            # Toggle QTE (meteor game) on/off
+            if self.matrix_mode and self.alley_scene:
+                enabled = self.alley_scene.toggle_qte()
+                self._qte_enabled = enabled  # Store for header display
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -6042,6 +6422,8 @@ class Dashboard:
         if self.matrix_mode:
             header += f" [{self._current_weather.display_name}]"
             header += f" [{self._framerate_options[self._framerate_index]}ms]"
+            if not self._qte_enabled:
+                header += " [QTE OFF]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
@@ -6052,9 +6434,11 @@ class Dashboard:
         # Pad to full width
         header = header.ljust(self.width - 1)
 
-        self.screen.attron(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        # Use weather-blended color for header
+        header_color = self._get_weather_text_color(Colors.HEADER)
+        self.screen.attron(curses.color_pair(header_color) | curses.A_BOLD)
         self.screen.addstr(0, 0, header[:self.width-1])
-        self.screen.attroff(curses.color_pair(Colors.HEADER) | curses.A_BOLD)
+        self.screen.attroff(curses.color_pair(header_color) | curses.A_BOLD)
 
     def _draw_panels(self):
         """Draw the main panels in a 2x2 grid."""
@@ -6362,17 +6746,66 @@ class Dashboard:
         for i, line in enumerate(help_text):
             self._addstr(start_y + 1 + i, start_x + 2, line, Colors.NORMAL)
 
+    def _get_weather_box_colors(self) -> Tuple[int, int, int, bool]:
+        """Get box border colors based on current weather mode.
+
+        Returns:
+            (top_color, side_color, bottom_color, is_transparent)
+        """
+        if not self.matrix_mode:
+            return (Colors.HEADER, Colors.HEADER, Colors.HEADER, False)
+
+        weather = self._current_weather
+        if weather == WeatherMode.CALM or weather == WeatherMode.MATRIX:
+            # Transparent in calm/matrix mode - don't draw borders
+            return (Colors.MATRIX_FADE3, Colors.MATRIX_FADE3, Colors.MATRIX_FADE3, True)
+        elif weather == WeatherMode.SAND:
+            # Grey in sand mode
+            return (Colors.BOX_GREY, Colors.BOX_GREY, Colors.BOX_GREY, False)
+        elif weather == WeatherMode.SNOW:
+            # Brown on top and sides, white on bottom
+            return (Colors.BOX_BROWN, Colors.BOX_BROWN, Colors.BOX_WHITE, False)
+        elif weather == WeatherMode.RAIN:
+            # Dark brown in rain mode
+            return (Colors.BOX_DARK_BROWN, Colors.BOX_DARK_BROWN, Colors.BOX_DARK_BROWN, False)
+        else:
+            return (Colors.HEADER, Colors.HEADER, Colors.HEADER, False)
+
     def _draw_box(self, y: int, x: int, width: int, height: int, title: str, title_color: int = None):
-        """Draw a box with title."""
+        """Draw a box with title, using weather-based colors."""
         if title_color is None:
             title_color = Colors.HEADER
 
+        # Blend title color with weather
+        title_color = self._get_weather_text_color(title_color)
+
+        # Get weather-based box colors
+        top_color, side_color, bottom_color, is_transparent = self._get_weather_box_colors()
+
+        # Skip drawing borders if transparent (calm/matrix mode)
+        if is_transparent:
+            # Just draw title if present
+            if title:
+                try:
+                    title_str = f" {title} "
+                    self.screen.attron(curses.color_pair(title_color) | curses.A_BOLD)
+                    self.screen.addstr(y, x + 2, title_str[:width-4])
+                    self.screen.attroff(curses.color_pair(title_color) | curses.A_BOLD)
+                except curses.error:
+                    pass
+            return
+
         try:
-            # Top border
+            # Top border with weather color
+            top_attr = curses.color_pair(top_color)
+            if top_color == Colors.BOX_GREY:
+                top_attr |= curses.A_DIM  # Make grey dimmer
+            self.screen.attron(top_attr)
             self.screen.addch(y, x, curses.ACS_ULCORNER)
             self.screen.addch(y, x + width - 1, curses.ACS_URCORNER)
             for i in range(1, width - 1):
                 self.screen.addch(y, x + i, curses.ACS_HLINE)
+            self.screen.attroff(top_attr)
 
             # Title
             if title:
@@ -6381,21 +6814,60 @@ class Dashboard:
                 self.screen.addstr(y, x + 2, title_str[:width-4])
                 self.screen.attroff(curses.color_pair(title_color) | curses.A_BOLD)
 
-            # Side borders
+            # Side borders with weather color
+            side_attr = curses.color_pair(side_color)
+            if side_color == Colors.BOX_GREY:
+                side_attr |= curses.A_DIM
+            self.screen.attron(side_attr)
             for i in range(1, height - 1):
                 self.screen.addch(y + i, x, curses.ACS_VLINE)
                 self.screen.addch(y + i, x + width - 1, curses.ACS_VLINE)
+            self.screen.attroff(side_attr)
 
-            # Bottom border
+            # Bottom border with weather color (may be different in snow)
+            bottom_attr = curses.color_pair(bottom_color)
+            if bottom_color == Colors.BOX_GREY:
+                bottom_attr |= curses.A_DIM
+            elif bottom_color == Colors.BOX_WHITE:
+                bottom_attr |= curses.A_BOLD  # Make white brighter
+            self.screen.attron(bottom_attr)
             self.screen.addch(y + height - 1, x, curses.ACS_LLCORNER)
             self.screen.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER)
             for i in range(1, width - 1):
                 self.screen.addch(y + height - 1, x + i, curses.ACS_HLINE)
+            self.screen.attroff(bottom_attr)
         except curses.error:
             pass
 
+    def _get_weather_text_color(self, base_color: int) -> int:
+        """Get weather-blended text color.
+
+        Blends the base color with weather-appropriate tint.
+        """
+        if not self.matrix_mode:
+            return base_color
+
+        weather = self._current_weather
+        # For certain base colors, blend with weather
+        # Keep status colors (OK, WARN, ERROR) as-is for visibility
+        if base_color in (Colors.STATUS_OK, Colors.STATUS_WARN, Colors.STATUS_ERROR):
+            return base_color
+
+        # Blend normal/muted text with weather colors
+        if weather == WeatherMode.RAIN:
+            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
+                return Colors.TEXT_RAIN
+        elif weather == WeatherMode.SNOW:
+            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
+                return Colors.TEXT_SNOW
+        elif weather == WeatherMode.SAND:
+            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
+                return Colors.TEXT_SAND
+        # Matrix and Calm stay green (default)
+        return base_color
+
     def _addstr(self, y: int, x: int, text: str, color: int = Colors.NORMAL, bold: bool = False):
-        """Add string with color and bounds checking."""
+        """Add string with color and bounds checking, blending with weather."""
         if y >= self.height or x >= self.width:
             return
 
@@ -6405,8 +6877,11 @@ class Dashboard:
 
         text = text[:max_len]
 
+        # Apply weather-based color blending
+        blended_color = self._get_weather_text_color(color)
+
         try:
-            attr = curses.color_pair(color)
+            attr = curses.color_pair(blended_color)
             if bold:
                 attr |= curses.A_BOLD
             self.screen.attron(attr)
