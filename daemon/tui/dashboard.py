@@ -467,13 +467,6 @@ class LightningBolt:
 class DashboardClient:
     """Client for communicating with daemon via socket API."""
 
-    # Socket paths to try in order
-    SOCKET_PATHS = [
-        '/var/run/boundary-daemon/boundary.sock',
-        os.path.expanduser('~/.agent-os/api/boundary.sock'),
-        './api/boundary.sock',
-    ]
-
     # Windows TCP fallback
     WINDOWS_HOST = '127.0.0.1'
     WINDOWS_PORT = 19847
@@ -482,18 +475,106 @@ class DashboardClient:
         self.socket_path = socket_path
         self._connected = False
         self._demo_mode = False
-        self._token = self._resolve_token()
         self._demo_event_offset = 0
+
+        # Build dynamic socket paths based on where daemon might create them
+        self._socket_paths = self._build_socket_paths()
 
         # Try to find working socket
         if not self.socket_path:
             self.socket_path = self._find_socket()
+
+        # Resolve token after finding socket (token might be near socket)
+        self._token = self._resolve_token()
 
         # Test connection
         self._connected = self._test_connection()
         if not self._connected:
             self._demo_mode = True
             logger.info("Daemon not available, running in demo mode")
+
+    def _build_socket_paths(self) -> List[str]:
+        """Build list of possible socket paths based on daemon behavior."""
+        paths = []
+
+        # Get package root directory (where boundary-daemon- is installed)
+        package_root = Path(__file__).parent.parent.parent
+
+        # 1. Check for running daemon process and get its working directory
+        daemon_cwd = self._find_daemon_working_dir()
+        if daemon_cwd:
+            paths.append(os.path.join(daemon_cwd, 'api', 'boundary.sock'))
+
+        # 2. Relative to package root (most common for development)
+        paths.append(str(package_root / 'api' / 'boundary.sock'))
+
+        # 3. Standard system locations
+        paths.append('/var/run/boundary-daemon/boundary.sock')
+
+        # 4. User home directory locations
+        paths.append(os.path.expanduser('~/.boundary-daemon/api/boundary.sock'))
+        paths.append(os.path.expanduser('~/.agent-os/api/boundary.sock'))
+
+        # 5. Current working directory
+        paths.append('./api/boundary.sock')
+
+        # 6. Check PID file for daemon location hints
+        pid_socket = self._find_socket_from_pid_file()
+        if pid_socket:
+            paths.insert(0, pid_socket)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_paths = []
+        for p in paths:
+            normalized = os.path.normpath(os.path.abspath(p))
+            if normalized not in seen:
+                seen.add(normalized)
+                unique_paths.append(p)
+
+        return unique_paths
+
+    def _find_daemon_working_dir(self) -> Optional[str]:
+        """Find working directory of running daemon process."""
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'cwd']):
+                try:
+                    cmdline = proc.info.get('cmdline') or []
+                    cmdline_str = ' '.join(cmdline).lower()
+                    # Look for boundary daemon process
+                    if 'boundary' in cmdline_str and 'daemon' in cmdline_str:
+                        cwd = proc.info.get('cwd')
+                        if cwd:
+                            logger.debug(f"Found daemon process {proc.info['pid']} at {cwd}")
+                            return cwd
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"Error finding daemon process: {e}")
+        return None
+
+    def _find_socket_from_pid_file(self) -> Optional[str]:
+        """Find socket path from daemon PID file."""
+        pid_file_locations = [
+            '/var/run/boundary-daemon/boundary.pid',
+            os.path.expanduser('~/.boundary-daemon/boundary.pid'),
+            './boundary.pid',
+        ]
+        for pid_file in pid_file_locations:
+            if os.path.exists(pid_file):
+                # Socket is usually in api/ subdirectory relative to PID file
+                pid_dir = os.path.dirname(pid_file)
+                socket_path = os.path.join(pid_dir, 'api', 'boundary.sock')
+                if os.path.exists(socket_path):
+                    return socket_path
+                # Or in parent directory's api folder
+                parent_api = os.path.join(os.path.dirname(pid_dir), 'api', 'boundary.sock')
+                if os.path.exists(parent_api):
+                    return parent_api
+        return None
 
     def _resolve_token(self) -> Optional[str]:
         """Resolve API token from environment or file."""
@@ -502,12 +583,28 @@ class DashboardClient:
         if token:
             return token.strip()
 
-        # Token file
-        token_paths = [
+        # Build token file paths based on socket location
+        token_paths = []
+
+        # If we found a socket, look for token near it
+        if self.socket_path:
+            socket_dir = os.path.dirname(self.socket_path)
+            parent_dir = os.path.dirname(socket_dir)
+            token_paths.append(os.path.join(parent_dir, 'config', 'api_tokens.json'))
+            token_paths.append(os.path.join(socket_dir, 'api_tokens.json'))
+
+        # Package root config
+        package_root = Path(__file__).parent.parent.parent
+        token_paths.append(str(package_root / 'config' / 'api_tokens.json'))
+
+        # Standard locations
+        token_paths.extend([
             './config/api_tokens.json',
+            os.path.expanduser('~/.boundary-daemon/config/api_tokens.json'),
             os.path.expanduser('~/.agent-os/api_token'),
             '/etc/boundary-daemon/api_token',
-        ]
+        ])
+
         for path in token_paths:
             if os.path.exists(path):
                 try:
@@ -515,29 +612,41 @@ class DashboardClient:
                         content = f.read().strip()
                         if path.endswith('.json'):
                             data = json.loads(content)
-                            if isinstance(data, dict) and 'token' in data:
-                                return data['token']
+                            # Token file format: {"tokens": [{"token": "...", ...}]}
+                            if isinstance(data, dict):
+                                if 'token' in data:
+                                    return data['token']
+                                if 'tokens' in data and data['tokens']:
+                                    # Get first non-expired token
+                                    for tok in data['tokens']:
+                                        if isinstance(tok, dict) and 'token' in tok:
+                                            return tok['token']
                             elif isinstance(data, list) and data:
                                 return data[0].get('token')
                         else:
                             return content
-                except (IOError, json.JSONDecodeError):
-                    pass
+                except (IOError, json.JSONDecodeError) as e:
+                    logger.debug(f"Failed to read token from {path}: {e}")
         return None
 
     def _find_socket(self) -> str:
-        """Find available socket path."""
-        for path in self.SOCKET_PATHS:
+        """Find available socket path by testing each candidate."""
+        for path in self._socket_paths:
             if os.path.exists(path):
+                logger.debug(f"Found socket at {path}")
                 return path
-        return self.SOCKET_PATHS[0]  # Default
+
+        # No socket found - return first path as default
+        logger.debug(f"No socket found, using default: {self._socket_paths[0] if self._socket_paths else './api/boundary.sock'}")
+        return self._socket_paths[0] if self._socket_paths else './api/boundary.sock'
 
     def _test_connection(self) -> bool:
         """Test if daemon is reachable."""
         try:
             response = self._send_request('status')
             return response.get('success', False)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Connection test failed: {e}")
             return False
 
     def _send_request(self, command: str, params: Optional[Dict] = None) -> Dict:
@@ -587,6 +696,41 @@ class DashboardClient:
         self._connected = self._test_connection()
         self._demo_mode = not self._connected
         return self._connected
+
+    def reconnect(self) -> bool:
+        """Try to reconnect to daemon by refreshing socket paths."""
+        # Rebuild socket paths (daemon might have started since last check)
+        self._socket_paths = self._build_socket_paths()
+
+        # Try each socket path
+        for path in self._socket_paths:
+            if os.path.exists(path):
+                old_path = self.socket_path
+                self.socket_path = path
+                # Refresh token in case it changed
+                self._token = self._resolve_token()
+                if self._test_connection():
+                    self._connected = True
+                    self._demo_mode = False
+                    logger.info(f"Connected to daemon at {path}")
+                    return True
+                self.socket_path = old_path
+
+        # Also try Windows TCP on Windows
+        if sys.platform == 'win32':
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1.0)
+                sock.connect((self.WINDOWS_HOST, self.WINDOWS_PORT))
+                sock.close()
+                self._connected = True
+                self._demo_mode = False
+                logger.info(f"Connected to daemon via TCP {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
+                return True
+            except Exception:
+                pass
+
+        return False
 
     def is_demo_mode(self) -> bool:
         """Check if running in demo mode."""
@@ -1116,6 +1260,11 @@ class Dashboard:
 
     def _refresh_data(self):
         """Refresh all data from daemon."""
+        # If in demo mode, periodically try to reconnect to real daemon
+        if self.client.is_demo_mode():
+            if self.client.reconnect():
+                logger.info("Reconnected to daemon!")
+
         try:
             self.status = self.client.get_status()
             self.events = self.client.get_events(20)
