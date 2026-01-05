@@ -1148,12 +1148,13 @@ class AlleyScene:
     Simple alley scene with dumpster, box, traffic light, buildings, cars, and pedestrians.
     """
 
-    # Dumpster ASCII art (6 wide x 4 tall)
+    # Dumpster ASCII art (7 wide x 5 tall)
     DUMPSTER = [
-        " ____ ",
-        "|####|",
-        "|####|",
-        "|____|",
+        " _____ ",
+        "|#####|",
+        "|#####|",
+        "|#####|",
+        "|_____|",
     ]
 
     # Cardboard box ASCII art (5 wide x 3 tall) - filled to prevent see-through
@@ -1191,19 +1192,19 @@ class AlleyScene:
     # Left column is N/S direction (flat), right column is E/W direction (brackets)
     # All 6 lights shown as circles, off lights are gray
     TRAFFIC_LIGHT_TEMPLATE = [
-        " .=====. ",
-        " |L  (R) ",  # Red lights - right side has brackets
-        " |L  (R) ",  # Yellow lights
-        " |L  (R) ",  # Green lights
-        " '=====' ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
+        " .===. ",
+        " |L(R) ",  # Red lights - right side has brackets
+        " |L(R) ",  # Yellow lights
+        " |L(R) ",  # Green lights
+        " '===' ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
     ]
 
     # Car sprites - large side views (3 rows tall, longer)
@@ -1328,16 +1329,14 @@ class AlleyScene:
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [========]    [====]  [====]    [========]    [====]        |",
-        "|                              _____________                   |",
-        "|                             |  .------.  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|                             |  |------|  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|                             |  |------|  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|_____________________________|  |______|  |___________________|",
-        "                              |__|______|__|                    ",
-        "                               ===========                      ",
+        "|                              _________                       |",
+        "|                             |  ____  |                       |",
+        "|                             | |    | |                       |",
+        "|                             | |    | |                       |",
+        "|                             | |____| |                       |",
+        "|                             |________|                       |",
+        "|_____________________________|________|_______________________|",
+        "                               ========                         ",
     ]
 
     # Second building (right side) - 2X TALL, 2X WIDE with door, porch & steps
@@ -1376,16 +1375,14 @@ class AlleyScene:
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [========]    [====]    [========]    [====]          |",
-        "|    _____________                                         |",
-        "|   |  .------.  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|   |  |------|  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|   |  |------|  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|___|  |______|  |_________________________________________|",
-        "    |__|______|__|                                          ",
-        "     ===========                                            ",
+        "|   _________                                              |",
+        "|  |  ____  |                                              |",
+        "|  | |    | |                                              |",
+        "|  | |    | |                                              |",
+        "|  | |____| |                                              |",
+        "|  |________|                                              |",
+        "|__|________|______________________________________________|",
+        "    ========                                                ",
     ]
 
     # Window positions for people animation (relative to building sprite)
@@ -1544,7 +1541,7 @@ class AlleyScene:
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
         # Position lights in the gap between buildings (spread out more)
-        light_x_positions = [gap_center - 25, gap_center + 25]
+        light_x_positions = [gap_center - 40, gap_center + 40]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
@@ -2198,9 +2195,13 @@ class AlleyScene:
             return
 
         car = self._closeup_car
-        x = int(car['x']) - 4  # Shifted left 4 characters
+        x = int(car['x']) - 10  # Shifted left 10 characters (4 + 6)
         scale = car['scale']
         direction = car['direction']
+        # Calculate vertical offset based on scale (moves up as car shrinks)
+        # At scale 3.0 (largest) = 0 offset, at scale 0.8 (smallest) = moves up
+        scale_progress = (3.0 - scale) / 2.2  # 0 to 1 as car shrinks
+        y_offset = int(scale_progress * (self.height // 5))  # Move up 1/5 of screen
 
         # Different car sprites based on scale (biggest to smallest)
         if scale >= 2.5:
@@ -2268,8 +2269,8 @@ class AlleyScene:
                     " () ",
                 ]
 
-        # Position car at street level (shifted up 2 rows)
-        street_y = self.height - 3
+        # Position car at street level (shifted up 2 rows + y_offset for perspective)
+        street_y = self.height - 3 - y_offset
         sprite_height = len(sprite)
 
         for row_idx, row in enumerate(sprite):
@@ -3713,7 +3714,7 @@ class Dashboard:
 
         # Matrix mode: faster refresh for smooth animation, black background
         if self.matrix_mode:
-            screen.timeout(100)  # 100ms for smooth rain animation
+            screen.timeout(50)  # 50ms for smooth rain animation (doubled framerate)
             screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
@@ -3887,12 +3888,12 @@ class Dashboard:
         moon_y = int(min_y + arc_height * 4 * (x_centered ** 2))
         moon_x = int(self._moon_x)
 
-        # Moon ASCII art (simple crescent)
+        # Moon ASCII art (filled moon)
         moon_chars = [
             " @@@ ",
-            "@   @",
-            "@    ",
-            "@   @",
+            "@@@@@",
+            "@@@@@",
+            "@@@@@",
             " @@@ ",
         ]
 
