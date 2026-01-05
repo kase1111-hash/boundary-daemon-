@@ -29,6 +29,7 @@ Keyboard Shortcuts:
 import json
 import logging
 import os
+import random
 import signal
 import socket
 import sys
@@ -36,14 +37,13 @@ import threading
 import time
 
 # Handle curses import for Windows compatibility
+# Defer error to runtime to allow PyInstaller to analyze the module
 try:
     import curses
+    CURSES_AVAILABLE = True
 except ImportError:
-    if sys.platform == 'win32':
-        print("Error: curses library not available on Windows.")
-        print("Please install windows-curses: pip install windows-curses")
-        sys.exit(1)
-    raise
+    curses = None
+    CURSES_AVAILABLE = False
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -115,19 +115,129 @@ class Colors:
     SELECTED = 5
     MUTED = 6
     ACCENT = 7
+    MATRIX_BRIGHT = 8
+    MATRIX_DIM = 9
 
     @staticmethod
-    def init_colors():
+    def init_colors(matrix_mode: bool = False):
         """Initialize curses color pairs."""
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(Colors.STATUS_OK, curses.COLOR_GREEN, -1)
-        curses.init_pair(Colors.STATUS_WARN, curses.COLOR_YELLOW, -1)
-        curses.init_pair(Colors.STATUS_ERROR, curses.COLOR_RED, -1)
-        curses.init_pair(Colors.HEADER, curses.COLOR_CYAN, -1)
-        curses.init_pair(Colors.SELECTED, curses.COLOR_BLACK, curses.COLOR_WHITE)
-        curses.init_pair(Colors.MUTED, curses.COLOR_WHITE, -1)
-        curses.init_pair(Colors.ACCENT, curses.COLOR_MAGENTA, -1)
+        if matrix_mode:
+            Colors._init_matrix_colors()
+        else:
+            curses.init_pair(Colors.STATUS_OK, curses.COLOR_GREEN, -1)
+            curses.init_pair(Colors.STATUS_WARN, curses.COLOR_YELLOW, -1)
+            curses.init_pair(Colors.STATUS_ERROR, curses.COLOR_RED, -1)
+            curses.init_pair(Colors.HEADER, curses.COLOR_CYAN, -1)
+            curses.init_pair(Colors.SELECTED, curses.COLOR_BLACK, curses.COLOR_WHITE)
+            curses.init_pair(Colors.MUTED, curses.COLOR_WHITE, -1)
+            curses.init_pair(Colors.ACCENT, curses.COLOR_MAGENTA, -1)
+
+    @staticmethod
+    def _init_matrix_colors():
+        """Initialize Matrix-style green-on-black color scheme."""
+        # All green, all the time
+        curses.init_pair(Colors.STATUS_OK, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.STATUS_WARN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.STATUS_ERROR, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.HEADER, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SELECTED, curses.COLOR_BLACK, curses.COLOR_GREEN)
+        curses.init_pair(Colors.MUTED, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ACCENT, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.MATRIX_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.MATRIX_DIM, curses.COLOR_GREEN, curses.COLOR_BLACK)
+
+
+class MatrixRain:
+    """Digital rain effect from The Matrix."""
+
+    # Characters used in the Matrix digital rain (mix of half-width katakana and symbols)
+    MATRIX_CHARS = (
+        "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"
+        "0123456789"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "+-*/<>=$#@&"
+    )
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.drops: List[Dict] = []
+        self._init_drops()
+
+    def _init_drops(self):
+        """Initialize rain drops at random positions."""
+        self.drops = []
+        # Start with a few drops
+        for _ in range(max(3, self.width // 20)):
+            self._add_drop()
+
+    def _add_drop(self):
+        """Add a new rain drop."""
+        self.drops.append({
+            'x': random.randint(0, self.width - 1),
+            'y': random.randint(-self.height, 0),
+            'speed': random.uniform(0.3, 1.0),
+            'length': random.randint(4, min(12, self.height // 2)),
+            'chars': [random.choice(self.MATRIX_CHARS) for _ in range(15)],
+            'phase': 0.0,
+        })
+
+    def update(self):
+        """Update rain drop positions."""
+        new_drops = []
+        for drop in self.drops:
+            drop['phase'] += drop['speed']
+            drop['y'] = int(drop['phase'])
+
+            # Randomly change characters for that flickering effect
+            if random.random() < 0.3:
+                idx = random.randint(0, len(drop['chars']) - 1)
+                drop['chars'][idx] = random.choice(self.MATRIX_CHARS)
+
+            # Keep drop if still on screen
+            if drop['y'] - drop['length'] < self.height:
+                new_drops.append(drop)
+
+        self.drops = new_drops
+
+        # Occasionally add new drops
+        if random.random() < 0.15 and len(self.drops) < self.width // 8:
+            self._add_drop()
+
+    def resize(self, width: int, height: int):
+        """Handle terminal resize."""
+        self.width = width
+        self.height = height
+        # Remove drops that are now out of bounds
+        self.drops = [d for d in self.drops if d['x'] < width]
+
+    def render(self, screen):
+        """Render rain drops to screen."""
+        for drop in self.drops:
+            for i in range(drop['length']):
+                y = drop['y'] - i
+                if 0 <= y < self.height and 0 <= drop['x'] < self.width:
+                    char = drop['chars'][i % len(drop['chars'])]
+                    try:
+                        if i == 0:
+                            # Bright white head of the drop
+                            screen.attron(curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD)
+                            screen.addstr(y, drop['x'], char)
+                            screen.attroff(curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD)
+                        elif i < 3:
+                            # Bright green near the head
+                            screen.attron(curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD)
+                            screen.addstr(y, drop['x'], char)
+                            screen.attroff(curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD)
+                        else:
+                            # Dimmer green for the tail
+                            screen.attron(curses.color_pair(Colors.MATRIX_DIM))
+                            screen.addstr(y, drop['x'], char)
+                            screen.attroff(curses.color_pair(Colors.MATRIX_DIM))
+                    except curses.error:
+                        pass
 
 
 class DashboardClient:
@@ -247,7 +357,8 @@ class Dashboard:
     - SIEM shipping status
     """
 
-    def __init__(self, refresh_interval: float = 2.0, socket_path: Optional[str] = None):
+    def __init__(self, refresh_interval: float = 2.0, socket_path: Optional[str] = None,
+                 matrix_mode: bool = False):
         self.refresh_interval = refresh_interval
         self.client = DashboardClient(socket_path or "/var/run/boundary-daemon/boundary.sock")
         self.running = False
@@ -256,6 +367,8 @@ class Dashboard:
         self.event_filter = ""
         self.scroll_offset = 0
         self.show_help = False
+        self.matrix_mode = matrix_mode
+        self.matrix_rain: Optional[MatrixRain] = None
 
         # Data caches
         self.status: Dict = {}
@@ -270,6 +383,13 @@ class Dashboard:
 
     def run(self):
         """Run the dashboard."""
+        if not CURSES_AVAILABLE:
+            if sys.platform == 'win32':
+                print("Error: curses library not available on Windows.")
+                print("Please install windows-curses: pip install windows-curses")
+            else:
+                print("Error: curses library not available.")
+            sys.exit(1)
         curses.wrapper(self._main_loop)
 
     def _main_loop(self, screen):
@@ -279,8 +399,16 @@ class Dashboard:
 
         # Setup curses
         curses.curs_set(0)  # Hide cursor
-        screen.timeout(int(self.refresh_interval * 1000))
-        Colors.init_colors()
+        Colors.init_colors(self.matrix_mode)
+
+        # Matrix mode: faster refresh for smooth animation, black background
+        if self.matrix_mode:
+            screen.timeout(100)  # 100ms for smooth rain animation
+            screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
+            self._update_dimensions()
+            self.matrix_rain = MatrixRain(self.width, self.height)
+        else:
+            screen.timeout(int(self.refresh_interval * 1000))
 
         # Handle terminal resize
         signal.signal(signal.SIGWINCH, lambda *_: self._handle_resize())
@@ -291,15 +419,21 @@ class Dashboard:
         while self.running:
             try:
                 self._update_dimensions()
+
+                # Update matrix rain animation
+                if self.matrix_mode and self.matrix_rain:
+                    self.matrix_rain.update()
+
                 self._draw()
 
                 # Wait for input with timeout
                 key = screen.getch()
                 self._handle_input(key)
 
-                # Refresh data on timeout
+                # Refresh data on timeout (less frequently in matrix mode)
                 if key == -1:  # Timeout
-                    self._refresh_data()
+                    if not self.matrix_mode or random.random() < 0.1:
+                        self._refresh_data()
 
             except KeyboardInterrupt:
                 self.running = False
@@ -309,6 +443,8 @@ class Dashboard:
     def _handle_resize(self):
         """Handle terminal resize."""
         self._update_dimensions()
+        if self.matrix_mode and self.matrix_rain:
+            self.matrix_rain.resize(self.width, self.height)
         self.screen.clear()
 
     def _update_dimensions(self):
@@ -356,6 +492,10 @@ class Dashboard:
     def _draw(self):
         """Draw the dashboard."""
         self.screen.clear()
+
+        # Render matrix rain in background first
+        if self.matrix_mode and self.matrix_rain:
+            self.matrix_rain.render(self.screen)
 
         if self.show_help:
             self._draw_help()
@@ -732,15 +872,18 @@ class Dashboard:
         return f"{n:.0f}TB"
 
 
-def run_dashboard(refresh_interval: float = 2.0, socket_path: Optional[str] = None):
+def run_dashboard(refresh_interval: float = 2.0, socket_path: Optional[str] = None,
+                  matrix_mode: bool = False):
     """
     Run the dashboard.
 
     Args:
         refresh_interval: How often to refresh data (seconds)
         socket_path: Path to daemon socket
+        matrix_mode: Enable Matrix-style theme with digital rain
     """
-    dashboard = Dashboard(refresh_interval=refresh_interval, socket_path=socket_path)
+    dashboard = Dashboard(refresh_interval=refresh_interval, socket_path=socket_path,
+                         matrix_mode=matrix_mode)
     dashboard.run()
 
 
@@ -752,6 +895,10 @@ if __name__ == "__main__":
                        help="Refresh interval in seconds")
     parser.add_argument("--socket", "-s", type=str,
                        help="Path to daemon socket")
+    # Secret Matrix mode - not shown in help
+    parser.add_argument("--matrix", action="store_true",
+                       help=argparse.SUPPRESS)
 
     args = parser.parse_args()
-    run_dashboard(refresh_interval=args.refresh, socket_path=args.socket)
+    run_dashboard(refresh_interval=args.refresh, socket_path=args.socket,
+                  matrix_mode=args.matrix)

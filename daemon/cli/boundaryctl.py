@@ -107,7 +107,8 @@ def cmd_dashboard(args):
     """Open terminal dashboard."""
     try:
         from daemon.tui.dashboard import run_dashboard
-        run_dashboard(refresh_interval=args.refresh, socket_path=args.socket)
+        run_dashboard(refresh_interval=args.refresh, socket_path=args.socket,
+                     matrix_mode=getattr(args, 'matrix', False))
     except ImportError:
         print("Dashboard module not available. Run from daemon directory.")
         return 1
@@ -283,6 +284,7 @@ def main():
     dash_parser = subparsers.add_parser('dashboard', help='Open terminal dashboard')
     dash_parser.add_argument('--refresh', '-r', type=float, default=2.0, help='Refresh interval')
     dash_parser.add_argument('--socket', '-s', help='Daemon socket path')
+    dash_parser.add_argument('--matrix', action='store_true', help=argparse.SUPPRESS)  # Secret mode
     dash_parser.set_defaults(func=cmd_dashboard)
 
     # config
