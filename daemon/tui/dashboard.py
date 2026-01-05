@@ -130,6 +130,19 @@ class Colors:
     # Creature colors
     RAT_YELLOW = 18      # Yellow rat for warnings
     SHADOW_RED = 19      # Red glowing eyes for threats
+    # Weather mode colors
+    RAIN_BRIGHT = 20     # Bright blue rain
+    RAIN_DIM = 21        # Dim blue rain
+    RAIN_FADE1 = 22      # Fading blue
+    RAIN_FADE2 = 23      # Very faded blue
+    SNOW_BRIGHT = 24     # Bright white snow
+    SNOW_DIM = 25        # Dim gray snow
+    SNOW_FADE = 26       # Faded gray snow
+    SAND_BRIGHT = 27     # Bright sand/brown
+    SAND_DIM = 28        # Dim sand
+    SAND_FADE = 29       # Faded sand
+    FOG_BRIGHT = 30      # Bright fog (white)
+    FOG_DIM = 31         # Dim fog (gray)
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -174,21 +187,109 @@ class Colors:
         # Creature colors
         curses.init_pair(Colors.RAT_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
         curses.init_pair(Colors.SHADOW_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        # Weather mode colors
+        # Rain (blue)
+        curses.init_pair(Colors.RAIN_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.RAIN_DIM, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.RAIN_FADE1, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.RAIN_FADE2, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        # Snow (white/gray)
+        curses.init_pair(Colors.SNOW_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SNOW_DIM, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SNOW_FADE, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        # Sand (yellow/brown - using yellow as closest to brown)
+        curses.init_pair(Colors.SAND_BRIGHT, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SAND_DIM, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SAND_FADE, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Fog (gray/white)
+        curses.init_pair(Colors.FOG_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.FOG_DIM, curses.COLOR_WHITE, curses.COLOR_BLACK)
+
+
+class WeatherMode(Enum):
+    """Weather modes for Matrix-style effects."""
+    MATRIX = "matrix"      # Classic green Matrix rain
+    RAIN = "rain"          # Blue rain
+    SNOW = "snow"          # White/gray snow
+    SAND = "sand"          # Brown/yellow sandstorm
+    FOG = "fog"            # Gray fog/mist
+
+    @property
+    def display_name(self) -> str:
+        """Get display name for the weather mode."""
+        return {
+            WeatherMode.MATRIX: "Matrix",
+            WeatherMode.RAIN: "Rain",
+            WeatherMode.SNOW: "Snow",
+            WeatherMode.SAND: "Sandstorm",
+            WeatherMode.FOG: "Fog",
+        }.get(self, self.value.title())
 
 
 class MatrixRain:
-    """Digital rain effect from The Matrix with depth simulation."""
+    """Digital rain effect from The Matrix with depth simulation and weather modes."""
+
+    # Weather-specific character sets
+    WEATHER_CHARS = {
+        WeatherMode.MATRIX: [
+            ".-·:;'`",  # Layer 0: Tiny rain - minimal dots
+            ".|!:;+-=",  # Layer 1: Simple ASCII
+            "0123456789+-*/<>=$#",  # Layer 2: Numbers and symbols
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",  # Layer 3: Alphanumeric
+            "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789$#@&",  # Layer 4: Nearest
+        ],
+        WeatherMode.RAIN: [
+            ".|'`",  # Layer 0: Light drizzle
+            ".|!:",  # Layer 1: Light rain
+            ".|!:;",  # Layer 2: Rain
+            "||!:;/\\",  # Layer 3: Heavy rain
+            "|||///\\\\\\",  # Layer 4: Downpour
+        ],
+        WeatherMode.SNOW: [
+            "··",  # Layer 0: Distant snowflakes
+            ".·*",  # Layer 1: Small flakes
+            ".*+",  # Layer 2: Medium flakes
+            "*+❄",  # Layer 3: Large flakes (using simple chars for compatibility)
+            "*❄❅❆",  # Layer 4: Big fluffy snowflakes
+        ],
+        WeatherMode.SAND: [
+            ".,",  # Layer 0: Fine dust
+            ".,;:",  # Layer 1: Fine sand
+            ".,:;'",  # Layer 2: Sand particles
+            ",:;~^",  # Layer 3: Coarse sand
+            "~^°º",  # Layer 4: Larger particles
+        ],
+        WeatherMode.FOG: [
+            " .",  # Layer 0: Thin mist
+            " .·",  # Layer 1: Light fog
+            ".·:",  # Layer 2: Medium fog
+            "·:░",  # Layer 3: Thick fog
+            "░▒",  # Layer 4: Dense fog
+        ],
+    }
+
+    # Weather-specific speed multipliers (relative to base speeds)
+    WEATHER_SPEED_MULT = {
+        WeatherMode.MATRIX: 1.0,
+        WeatherMode.RAIN: 1.2,   # Rain falls fast
+        WeatherMode.SNOW: 0.3,   # Snow falls slowly
+        WeatherMode.SAND: 0.8,   # Sand blows moderately
+        WeatherMode.FOG: 0.15,   # Fog drifts very slowly
+    }
+
+    # Weather-specific color mappings (bright, dim, fade1, fade2)
+    WEATHER_COLORS = {
+        WeatherMode.MATRIX: (Colors.MATRIX_BRIGHT, Colors.MATRIX_DIM, Colors.MATRIX_FADE1, Colors.MATRIX_FADE2),
+        WeatherMode.RAIN: (Colors.RAIN_BRIGHT, Colors.RAIN_DIM, Colors.RAIN_FADE1, Colors.RAIN_FADE2),
+        WeatherMode.SNOW: (Colors.SNOW_BRIGHT, Colors.SNOW_DIM, Colors.SNOW_FADE, Colors.SNOW_FADE),
+        WeatherMode.SAND: (Colors.SAND_BRIGHT, Colors.SAND_DIM, Colors.SAND_FADE, Colors.SAND_FADE),
+        WeatherMode.FOG: (Colors.FOG_BRIGHT, Colors.FOG_DIM, Colors.FOG_DIM, Colors.FOG_DIM),
+    }
 
     # 5 depth layers - each with different character sets (simple=far, complex=near)
     # Layer 0: Farthest - tiny fast raindrops falling from sky
     # Layer 4: Nearest - big slow drops sliding down window
-    DEPTH_CHARS = [
-        ".-·:;'`",  # Layer 0: Tiny rain - minimal dots
-        ".|!:;+-=",  # Layer 1: Simple ASCII
-        "0123456789+-*/<>=$#",  # Layer 2: Numbers and symbols
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",  # Layer 3: Alphanumeric
-        "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789$#@&",  # Layer 4: Nearest - full
-    ]
+    DEPTH_CHARS = WEATHER_CHARS[WeatherMode.MATRIX]  # Default to Matrix
 
     # Speed ranges - REVERSED: tiny rain (layer 0) is FASTEST like falling from sky
     # Big drops (layer 4) are SLOWEST like sliding down a window
@@ -218,9 +319,10 @@ class MatrixRain:
     # Splat characters for when tiny rain hits
     SPLAT_CHARS = ['+', '*', '×', '·']
 
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, weather_mode: WeatherMode = WeatherMode.MATRIX):
         self.width = width
         self.height = height
+        self.weather_mode = weather_mode
         self.drops: List[Dict] = []
         self.splats: List[Dict] = []  # Splat effects when tiny rain hits
         # Increased by 2.35x to maintain absolute counts for layers 2-4
@@ -231,6 +333,58 @@ class MatrixRain:
         self._frame_count = 0
         self._global_flicker = 0.0  # 0-1 intensity of global flicker
         self._intermittent_flicker = False  # Major flicker event active
+
+        # Fog-specific state
+        self._fog_particles: List[Dict] = []
+        if weather_mode == WeatherMode.FOG:
+            self._init_fog()
+
+    def set_weather_mode(self, mode: WeatherMode):
+        """Change the weather mode and reinitialize particles."""
+        if mode != self.weather_mode:
+            self.weather_mode = mode
+            self.drops = []
+            self.splats = []
+            self._fog_particles = []
+            self._init_drops()
+            if mode == WeatherMode.FOG:
+                self._init_fog()
+
+    def cycle_weather(self) -> WeatherMode:
+        """Cycle to the next weather mode and return the new mode."""
+        modes = list(WeatherMode)
+        current_idx = modes.index(self.weather_mode)
+        next_idx = (current_idx + 1) % len(modes)
+        new_mode = modes[next_idx]
+        self.set_weather_mode(new_mode)
+        return new_mode
+
+    def _init_fog(self):
+        """Initialize fog particles that drift slowly."""
+        self._fog_particles = []
+        # Create dense fog patches across the screen
+        num_patches = max(20, self.width * self.height // 50)
+        for _ in range(num_patches):
+            self._fog_particles.append({
+                'x': random.uniform(0, self.width),
+                'y': random.uniform(0, self.height),
+                'dx': random.uniform(-0.3, 0.3),  # Horizontal drift
+                'dy': random.uniform(-0.1, 0.1),  # Very slow vertical movement
+                'char': random.choice(['░', '▒', '·', '.', ' ']),
+                'opacity': random.uniform(0.3, 1.0),
+            })
+
+    def _get_weather_chars(self) -> List[str]:
+        """Get character sets for current weather mode."""
+        return self.WEATHER_CHARS.get(self.weather_mode, self.WEATHER_CHARS[WeatherMode.MATRIX])
+
+    def _get_speed_multiplier(self) -> float:
+        """Get speed multiplier for current weather mode."""
+        return self.WEATHER_SPEED_MULT.get(self.weather_mode, 1.0)
+
+    def _get_weather_colors(self) -> tuple:
+        """Get color tuple (bright, dim, fade1, fade2) for current weather mode."""
+        return self.WEATHER_COLORS.get(self.weather_mode, self.WEATHER_COLORS[WeatherMode.MATRIX])
 
     def _init_drops(self):
         """Initialize rain drops at random positions across all depth layers."""
@@ -250,14 +404,27 @@ class MatrixRain:
         speed_min, speed_max = self.DEPTH_SPEEDS[depth]
         len_min, len_max = self.DEPTH_LENGTHS[depth]
 
+        # Apply weather-specific speed multiplier
+        speed_mult = self._get_speed_multiplier()
+        weather_chars = self._get_weather_chars()
+
+        # For snow, add horizontal drift
+        dx = 0.0
+        if self.weather_mode == WeatherMode.SNOW:
+            dx = random.uniform(-0.3, 0.3)  # Gentle sideways drift
+        elif self.weather_mode == WeatherMode.SAND:
+            dx = random.uniform(0.5, 1.5)  # Sand blows in one direction (wind)
+
         self.drops.append({
             'x': random.randint(0, self.width - 1),
             'y': random.randint(-self.height, 0),
-            'speed': random.uniform(speed_min, speed_max),
+            'speed': random.uniform(speed_min, speed_max) * speed_mult,
             'length': random.randint(len_min, min(len_max, self.height // 2)),
-            'char_offset': random.randint(0, len(self.DEPTH_CHARS[depth]) - 1),
+            'char_offset': random.randint(0, len(weather_chars[depth]) - 1),
             'depth': depth,
             'phase': 0.0,
+            'dx': dx,  # Horizontal movement
+            'fx': 0.0,  # Fractional x position for smooth movement
         })
 
     def _add_splat(self, x: int, y: int):
@@ -274,31 +441,47 @@ class MatrixRain:
         """Update rain drop positions and flicker state."""
         self._frame_count += 1
 
-        # Update flicker states
-        # Rapid low-level flicker - subtle constant shimmer (sine wave oscillation)
-        self._global_flicker = 0.15 + 0.1 * math.sin(self._frame_count * 0.3)
-
-        # Intermittent major flicker - brief stutter every few seconds (2-8% chance per frame)
-        if random.random() < 0.003:
-            self._intermittent_flicker = True
-        elif self._intermittent_flicker and random.random() < 0.3:
+        # Update flicker states (less flicker for non-Matrix modes)
+        if self.weather_mode == WeatherMode.MATRIX:
+            # Rapid low-level flicker - subtle constant shimmer (sine wave oscillation)
+            self._global_flicker = 0.15 + 0.1 * math.sin(self._frame_count * 0.3)
+            # Intermittent major flicker - brief stutter every few seconds
+            if random.random() < 0.003:
+                self._intermittent_flicker = True
+            elif self._intermittent_flicker and random.random() < 0.3:
+                self._intermittent_flicker = False
+        else:
+            self._global_flicker = 0.0
             self._intermittent_flicker = False
+
+        # Update fog particles if in fog mode
+        if self.weather_mode == WeatherMode.FOG:
+            self._update_fog()
+
+        weather_chars = self._get_weather_chars()
 
         new_drops = []
         for drop in self.drops:
             drop['phase'] += drop['speed']
             drop['y'] = int(drop['phase'])
 
+            # Update horizontal position for snow/sand
+            if 'dx' in drop and drop['dx'] != 0:
+                drop['fx'] = drop.get('fx', float(drop['x'])) + drop['dx']
+                drop['x'] = int(drop['fx']) % self.width  # Wrap around
+
             # Roll through characters as the drop falls
             # Tiny rain (layer 0) rolls fastest for that streaking effect
             roll_speed = 5 - drop['depth']  # Layer 0 = 5, Layer 4 = 1
-            drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(self.DEPTH_CHARS[drop['depth']])
+            chars = weather_chars[drop['depth']]
+            drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(chars)
 
             # Check if tiny rain (layer 0) hit the ground (mid-screen to bottom)
+            # Only create splats for Matrix and Rain modes
             if drop['depth'] == 0 and drop['y'] >= self.height:
-                # Create splat effect
-                if random.random() < 0.7:  # 70% chance of splat
-                    self._add_splat(drop['x'], self.height - 1)
+                if self.weather_mode in (WeatherMode.MATRIX, WeatherMode.RAIN):
+                    if random.random() < 0.7:  # 70% chance of splat
+                        self._add_splat(drop['x'], self.height - 1)
                 continue  # Don't keep this drop
 
             # Keep drop if still on screen
@@ -319,9 +502,36 @@ class MatrixRain:
         while len(self.drops) < self._target_drops:
             self._add_drop()
 
+    def _update_fog(self):
+        """Update fog particle positions."""
+        for particle in self._fog_particles:
+            # Drift slowly
+            particle['x'] += particle['dx']
+            particle['y'] += particle['dy']
+
+            # Wrap around screen edges
+            if particle['x'] < 0:
+                particle['x'] = self.width - 1
+            elif particle['x'] >= self.width:
+                particle['x'] = 0
+            if particle['y'] < 0:
+                particle['y'] = self.height - 1
+            elif particle['y'] >= self.height:
+                particle['y'] = 0
+
+            # Slowly change opacity
+            particle['opacity'] += random.uniform(-0.05, 0.05)
+            particle['opacity'] = max(0.2, min(1.0, particle['opacity']))
+
+            # Occasionally change drift direction
+            if random.random() < 0.01:
+                particle['dx'] = random.uniform(-0.3, 0.3)
+                particle['dy'] = random.uniform(-0.1, 0.1)
+
     def resize(self, width: int, height: int):
         """Handle terminal resize."""
         old_width = self.width
+        old_height = self.height
         self.width = width
         self.height = height
         self._target_drops = max(28, width * 7 // 10)  # Massive rain density
@@ -330,6 +540,18 @@ class MatrixRain:
         self.drops = [d for d in self.drops if d['x'] < width]
         self.splats = [s for s in self.splats if s['x'] < width and s['y'] < height]
 
+        # Update fog particles for new dimensions
+        if self.weather_mode == WeatherMode.FOG:
+            # Keep particles in bounds or reinitialize if size changed significantly
+            if abs(width - old_width) > 10 or abs(height - old_height) > 5:
+                self._init_fog()
+            else:
+                for p in self._fog_particles:
+                    if p['x'] >= width:
+                        p['x'] = width - 1
+                    if p['y'] >= height:
+                        p['y'] = height - 1
+
         # Add more drops if window got bigger
         if width > old_width:
             for _ in range(max(1, (width - old_width) * 7 // 10)):
@@ -337,12 +559,19 @@ class MatrixRain:
 
     def render(self, screen):
         """Render rain drops with depth-based visual effects and flicker."""
+        weather_chars = self._get_weather_chars()
+        colors = self._get_weather_colors()
+
+        # Render fog particles first (behind everything)
+        if self.weather_mode == WeatherMode.FOG:
+            self._render_fog(screen)
+
         # Sort drops by depth so farther ones render first (get overwritten by nearer)
         sorted_drops = sorted(self.drops, key=lambda d: d['depth'])
 
         for drop in sorted_drops:
             depth = drop['depth']
-            chars = self.DEPTH_CHARS[depth]
+            chars = weather_chars[depth]
 
             # During intermittent flicker, skip rendering some drops randomly
             if self._intermittent_flicker and random.random() < 0.4:
@@ -359,90 +588,118 @@ class MatrixRain:
                     char_idx = (drop['char_offset'] + i * 2) % len(chars)
                     char = chars[char_idx]
 
-                    # More character mutation flicker for nearer drops
-                    if random.random() < 0.02 * (depth + 1):
-                        char = random.choice(chars)
-
-                    # Rapid flicker can also swap characters briefly
-                    if random.random() < self._global_flicker * 0.15:
-                        char = random.choice(chars)
+                    # More character mutation flicker for nearer drops (Matrix mode only)
+                    if self.weather_mode == WeatherMode.MATRIX:
+                        if random.random() < 0.02 * (depth + 1):
+                            char = random.choice(chars)
+                        # Rapid flicker can also swap characters briefly
+                        if random.random() < self._global_flicker * 0.15:
+                            char = random.choice(chars)
 
                     try:
                         self._render_char(screen, y, drop['x'], char, i, depth)
                     except curses.error:
                         pass
 
-        # Render splats (tiny rain impact effects)
-        for splat in self.splats:
-            try:
-                # Splats fade based on remaining life
-                if splat['life'] > 5:
-                    attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
-                elif splat['life'] > 2:
-                    attr = curses.color_pair(Colors.MATRIX_DIM)
-                else:
-                    attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+        # Render splats (tiny rain impact effects) - only for Matrix and Rain modes
+        if self.weather_mode in (WeatherMode.MATRIX, WeatherMode.RAIN):
+            bright, dim, fade1, fade2 = colors
+            for splat in self.splats:
+                try:
+                    # Splats fade based on remaining life
+                    if splat['life'] > 5:
+                        attr = curses.color_pair(bright) | curses.A_BOLD
+                    elif splat['life'] > 2:
+                        attr = curses.color_pair(dim)
+                    else:
+                        attr = curses.color_pair(fade1) | curses.A_DIM
 
-                screen.attron(attr)
-                screen.addstr(splat['y'], splat['x'], splat['char'])
-                screen.attroff(attr)
+                    screen.attron(attr)
+                    screen.addstr(splat['y'], splat['x'], splat['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    def _render_fog(self, screen):
+        """Render fog particles."""
+        for particle in self._fog_particles:
+            try:
+                x = int(particle['x'])
+                y = int(particle['y'])
+                if 0 <= x < self.width - 1 and 0 <= y < self.height - 1:
+                    if particle['opacity'] > 0.7:
+                        attr = curses.color_pair(Colors.FOG_BRIGHT) | curses.A_BOLD
+                    elif particle['opacity'] > 0.4:
+                        attr = curses.color_pair(Colors.FOG_DIM)
+                    else:
+                        attr = curses.color_pair(Colors.FOG_DIM) | curses.A_DIM
+
+                    screen.attron(attr)
+                    screen.addstr(y, x, particle['char'])
+                    screen.attroff(attr)
             except curses.error:
                 pass
 
     def _render_char(self, screen, y: int, x: int, char: str, pos: int, depth: int):
         """Render a single character with depth-appropriate styling."""
         # Depth 0 = farthest/dimmest, Depth 4 = nearest/brightest
+        # Get weather-appropriate colors
+        bright, dim, fade1, fade2 = self._get_weather_colors()
 
         if depth == 0:
             # Farthest layer - very dim, no head highlight
             if pos < 2:
-                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+                attr = curses.color_pair(fade2) | curses.A_DIM
             else:
-                attr = curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM
+                # Use fade2 with more dimming for Matrix, just dim for others
+                if self.weather_mode == WeatherMode.MATRIX:
+                    attr = curses.color_pair(Colors.MATRIX_FADE3) | curses.A_DIM
+                else:
+                    attr = curses.color_pair(fade2) | curses.A_DIM
         elif depth == 1:
             # Far layer - dim
             if pos == 0:
-                attr = curses.color_pair(Colors.MATRIX_FADE1)
+                attr = curses.color_pair(fade1)
             elif pos < 3:
-                attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+                attr = curses.color_pair(fade1) | curses.A_DIM
             else:
-                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+                attr = curses.color_pair(fade2) | curses.A_DIM
         elif depth == 2:
             # Middle layer - normal
             if pos == 0:
-                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+                attr = curses.color_pair(dim) | curses.A_BOLD
             elif pos < 3:
-                attr = curses.color_pair(Colors.MATRIX_DIM)
+                attr = curses.color_pair(dim)
             elif pos < 6:
-                attr = curses.color_pair(Colors.MATRIX_FADE1) | curses.A_DIM
+                attr = curses.color_pair(fade1) | curses.A_DIM
             else:
-                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+                attr = curses.color_pair(fade2) | curses.A_DIM
         elif depth == 3:
             # Near layer - bright
             if pos == 0:
-                attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                attr = curses.color_pair(bright) | curses.A_BOLD
             elif pos == 1:
-                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+                attr = curses.color_pair(dim) | curses.A_BOLD
             elif pos < 5:
-                attr = curses.color_pair(Colors.MATRIX_DIM)
+                attr = curses.color_pair(dim)
             elif pos < 9:
-                attr = curses.color_pair(Colors.MATRIX_FADE1)
+                attr = curses.color_pair(fade1)
             else:
-                attr = curses.color_pair(Colors.MATRIX_FADE2) | curses.A_DIM
+                attr = curses.color_pair(fade2) | curses.A_DIM
         else:  # depth == 4
             # Nearest layer - brightest, boldest
             if pos == 0:
-                attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                attr = curses.color_pair(bright) | curses.A_BOLD
             elif pos == 1:
-                attr = curses.color_pair(Colors.MATRIX_BRIGHT)
+                attr = curses.color_pair(bright)
             elif pos < 4:
-                attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD
+                attr = curses.color_pair(dim) | curses.A_BOLD
             elif pos < 8:
-                attr = curses.color_pair(Colors.MATRIX_DIM)
+                attr = curses.color_pair(dim)
             elif pos < 12:
-                attr = curses.color_pair(Colors.MATRIX_FADE1)
+                attr = curses.color_pair(fade1)
             else:
-                attr = curses.color_pair(Colors.MATRIX_FADE2)
+                attr = curses.color_pair(fade2)
 
         screen.attron(attr)
         screen.addstr(y, x, char)
@@ -1708,6 +1965,9 @@ class Dashboard:
         self._has_warnings = False
         self._has_threats = False
 
+        # Weather mode (for matrix mode)
+        self._current_weather: WeatherMode = WeatherMode.MATRIX
+
     def run(self):
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
@@ -2039,6 +2299,12 @@ class Dashboard:
             self.selected_panel = PanelType.ALERTS
         elif key == ord('4'):
             self.selected_panel = PanelType.SANDBOXES
+        elif key == ord('w') or key == ord('W'):
+            # Cycle weather mode (only in matrix mode)
+            if self.matrix_mode and self.matrix_rain:
+                new_mode = self.matrix_rain.cycle_weather()
+                # Store for header display
+                self._current_weather = new_mode
 
     def _draw(self):
         """Draw the dashboard."""
@@ -2076,6 +2342,9 @@ class Dashboard:
         header = " BOUNDARY DAEMON"
         if self.client.is_demo_mode():
             header += " [DEMO]"
+        # Show weather mode in matrix mode
+        if self.matrix_mode:
+            header += f" [{self._current_weather.display_name}]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
@@ -2298,7 +2567,11 @@ class Dashboard:
 
     def _draw_footer(self):
         """Draw the footer bar."""
-        shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
+        # Add weather shortcut in matrix mode
+        if self.matrix_mode:
+            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+        else:
+            shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
         # In demo mode, show connection hint
         if self.client.is_demo_mode():
@@ -2338,8 +2611,14 @@ class Dashboard:
             "  q    Quit dashboard",
             "  ?    Toggle this help",
             "",
-            "Press any key to close",
         ]
+
+        # Add weather info if in matrix mode
+        if self.matrix_mode:
+            help_text.insert(6, "  w    Cycle weather (Matrix/Rain/Snow/Sand/Fog)")
+            help_text.insert(7, "")
+
+        help_text.append("Press any key to close")
 
         # Calculate centered position
         box_width = max(len(line) for line in help_text) + 4
