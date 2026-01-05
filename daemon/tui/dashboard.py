@@ -437,19 +437,22 @@ class MatrixRain:
         self._glow_positions = positions
 
     def set_quick_melt_zones(self, sidewalk_y: int, mailbox_bounds: Tuple[int, int, int, int], street_y: int,
-                              traffic_light_bounds: Tuple[int, int, int, int] = None):
-        """Set zones where snow melts very quickly (sidewalk, mailbox, traffic lines, traffic light).
+                              traffic_light_bounds: Tuple[int, int, int, int] = None,
+                              cafe_bounds: Tuple[int, int, int, int, int] = None):
+        """Set zones where snow melts very quickly (sidewalk, mailbox, traffic lines, traffic light, cafe).
 
         Args:
             sidewalk_y: Y coordinate of the sidewalk/curb
             mailbox_bounds: (x, y, width, height) of the mailbox
             street_y: Y coordinate of the street (for traffic lines)
             traffic_light_bounds: (x, y, width, height) of the traffic light
+            cafe_bounds: (x, y, width, height, shell_roof_height) of the cafe - snow melts on building but not shell roof
         """
         self._quick_melt_sidewalk_y = sidewalk_y
         self._quick_melt_mailbox = mailbox_bounds
         self._quick_melt_street_y = street_y
         self._quick_melt_traffic_light = traffic_light_bounds
+        self._quick_melt_cafe = cafe_bounds
 
     def _is_in_quick_melt_zone(self, x: int, y: int) -> bool:
         """Check if a position is in a quick-melt zone (sidewalk, mailbox, traffic light, traffic line)."""
@@ -468,6 +471,13 @@ class MatrixRain:
         if hasattr(self, '_quick_melt_traffic_light') and self._quick_melt_traffic_light:
             tx, ty, tw, th = self._quick_melt_traffic_light
             if tx <= x < tx + tw and ty <= y < ty + th:
+                return True
+        # Cafe (excluding shell roof which can accumulate snow)
+        if hasattr(self, '_quick_melt_cafe') and self._quick_melt_cafe:
+            cx, cy, cw, ch, shell_h = self._quick_melt_cafe
+            # Only melt snow below the shell roof (shell_h rows from top)
+            cafe_body_y = cy + shell_h
+            if cx <= x < cx + cw and cafe_body_y <= y < cy + ch:
                 return True
         return False
 
@@ -1650,6 +1660,7 @@ class AlleyScene:
         self._transform_frame = 0
         self._frame_timer = 0
         # Meteor QTE event - quick time event
+        self._qte_enabled = True  # Toggle for QTE events
         self._qte_active = False
         self._qte_state = 'idle'  # idle, warning, active, success, failure, cooldown
         self._qte_timer = 0
@@ -1985,6 +1996,18 @@ class AlleyScene:
         """Set calm mode - more debris/leaves, less mid-screen clutter."""
         self._calm_mode = calm
 
+    def toggle_qte(self) -> bool:
+        """Toggle QTE (meteor game) on/off. Returns new state."""
+        self._qte_enabled = not self._qte_enabled
+        # If disabling while active, cancel the current event
+        if not self._qte_enabled and self._qte_active:
+            self._qte_active = False
+            self._qte_state = 'idle'
+            self._qte_meteors = []
+            self._qte_missiles = []
+            self._qte_explosions = []
+        return self._qte_enabled
+
     def _update_ufo(self):
         """Update UFO cow abduction event - super rare."""
         # Handle cooldown
@@ -2149,6 +2172,10 @@ class AlleyScene:
 
     def _update_qte(self):
         """Update meteor QTE event - quick time event."""
+        # Skip if QTE is disabled
+        if not self._qte_enabled:
+            return
+
         # Handle cooldown
         if self._qte_cooldown > 0:
             self._qte_cooldown -= 1
@@ -5839,6 +5866,7 @@ class Dashboard:
         # Framerate options (for matrix mode)
         self._framerate_options = [100, 50, 25, 15]  # ms
         self._framerate_index = 1  # Start at 50ms
+        self._qte_enabled = True  # QTE (meteor game) toggle state
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -5996,7 +6024,10 @@ class Dashboard:
             traffic_light_bounds = (traffic_light_x, traffic_light_y,
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
-            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds)
+            # Cafe bounds (snow melts on building but not on shell roof)
+            cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
+                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)  # 8 rows for shell roof
+            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
             self.alley_rat.set_hiding_spots(self.alley_scene)
@@ -6037,7 +6068,10 @@ class Dashboard:
                             traffic_light_bounds = (traffic_light_x, traffic_light_y,
                                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
                                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
-                            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds)
+                            # Cafe bounds (snow melts on building but not on shell roof)
+                            cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
+                                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)
+                            self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
                         self.matrix_rain.resize(self.width, self.height)
                         if self.alley_rat:
                             self.alley_rat.resize(self.width, self.height)
@@ -6314,6 +6348,11 @@ class Dashboard:
                 # Apply new framerate immediately
                 if self.screen:
                     self.screen.timeout(self._framerate_options[self._framerate_index])
+        elif key == ord('g') or key == ord('G'):
+            # Toggle QTE (meteor game) on/off
+            if self.matrix_mode and self.alley_scene:
+                enabled = self.alley_scene.toggle_qte()
+                self._qte_enabled = enabled  # Store for header display
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -6365,6 +6404,8 @@ class Dashboard:
         if self.matrix_mode:
             header += f" [{self._current_weather.display_name}]"
             header += f" [{self._framerate_options[self._framerate_index]}ms]"
+            if not self._qte_enabled:
+                header += " [QTE OFF]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
