@@ -122,6 +122,11 @@ class Colors:
     MATRIX_FADE2 = 11
     MATRIX_FADE3 = 12
     LIGHTNING = 13  # Inverted flash for lightning bolt
+    # Alley scene colors
+    ALLEY_DARK = 14      # Darkest shadows
+    ALLEY_MID = 15       # Mid-tone buildings
+    ALLEY_LIGHT = 16     # Lighter details
+    ALLEY_BLUE = 17      # Muted blue accents
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -158,6 +163,11 @@ class Colors:
         curses.init_pair(Colors.MATRIX_FADE3, curses.COLOR_BLACK, curses.COLOR_BLACK)
         # Lightning flash - inverted bright white on green
         curses.init_pair(Colors.LIGHTNING, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        # Alley scene colors - muted blue and grey
+        curses.init_pair(Colors.ALLEY_DARK, curses.COLOR_BLACK, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ALLEY_MID, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ALLEY_LIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ALLEY_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
 
 
 class MatrixRain:
@@ -431,6 +441,216 @@ class MatrixRain:
         screen.attron(attr)
         screen.addstr(y, x, char)
         screen.attroff(attr)
+
+
+class AlleyScene:
+    """
+    Procedurally generated back alley scene for Matrix background.
+    Creates a perspective view of a dark alley with buildings, windows,
+    fire escapes, and urban details.
+    """
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.scene: List[List[Tuple[str, int]]] = []  # (char, color_id)
+        self._generate_scene()
+
+    def resize(self, width: int, height: int):
+        """Regenerate scene for new dimensions."""
+        self.width = width
+        self.height = height
+        self._generate_scene()
+
+    def _generate_scene(self):
+        """Generate the alley scene."""
+        if self.width <= 0 or self.height <= 0:
+            self.scene = []
+            return
+
+        # Initialize with empty space
+        self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
+                      for _ in range(self.height)]
+
+        # Calculate perspective points
+        center_x = self.width // 2
+        horizon_y = self.height // 3  # Vanishing point
+        ground_y = self.height - 1
+
+        # Draw buildings on left side
+        self._draw_building_left(0, center_x // 3, horizon_y, ground_y)
+
+        # Draw buildings on right side
+        self._draw_building_right(self.width - center_x // 3, self.width, horizon_y, ground_y)
+
+        # Draw alley floor with perspective lines
+        self._draw_floor(center_x, horizon_y, ground_y)
+
+        # Add some atmospheric details
+        self._add_details(center_x, horizon_y, ground_y)
+
+    def _draw_building_left(self, x_start: int, x_end: int, y_top: int, y_bottom: int):
+        """Draw left building with windows and fire escape."""
+        if x_end <= x_start:
+            return
+
+        for y in range(y_top, min(y_bottom + 1, self.height)):
+            # Building edge gets closer to center as we go up (perspective)
+            progress = (y - y_top) / max(1, (y_bottom - y_top))
+            edge_x = int(x_start + (x_end - x_start) * (0.3 + 0.7 * progress))
+
+            for x in range(x_start, min(edge_x, self.width)):
+                if x >= self.width:
+                    continue
+
+                # Building wall
+                if x == edge_x - 1:
+                    # Building edge
+                    self.scene[y][x] = ('│', Colors.ALLEY_MID)
+                elif (y - y_top) % 4 == 0 and x > x_start + 1:
+                    # Horizontal lines (floors)
+                    self.scene[y][x] = ('─', Colors.ALLEY_DARK)
+                elif (y - y_top) % 4 == 2 and (x - x_start) % 6 in [2, 3]:
+                    # Windows
+                    if random.random() < 0.3:
+                        # Lit window (blue)
+                        self.scene[y][x] = ('▪', Colors.ALLEY_BLUE)
+                    else:
+                        # Dark window
+                        self.scene[y][x] = ('▫', Colors.ALLEY_DARK)
+                elif x == edge_x - 2 and (y - y_top) % 2 == 0:
+                    # Fire escape
+                    self.scene[y][x] = ('┤', Colors.ALLEY_MID)
+                else:
+                    # Brick texture
+                    if (y + x) % 3 == 0:
+                        self.scene[y][x] = ('░', Colors.ALLEY_DARK)
+
+    def _draw_building_right(self, x_start: int, x_end: int, y_top: int, y_bottom: int):
+        """Draw right building with windows."""
+        if x_end <= x_start or x_start >= self.width:
+            return
+
+        for y in range(y_top, min(y_bottom + 1, self.height)):
+            # Building edge gets closer to center as we go up (perspective)
+            progress = (y - y_top) / max(1, (y_bottom - y_top))
+            edge_x = int(x_end - (x_end - x_start) * (0.3 + 0.7 * progress))
+
+            for x in range(max(0, edge_x), min(x_end, self.width)):
+                if x >= self.width:
+                    continue
+
+                # Building wall
+                if x == edge_x:
+                    # Building edge
+                    self.scene[y][x] = ('│', Colors.ALLEY_MID)
+                elif (y - y_top) % 4 == 0 and x < x_end - 2:
+                    # Horizontal lines (floors)
+                    self.scene[y][x] = ('─', Colors.ALLEY_DARK)
+                elif (y - y_top) % 4 == 2 and (x_end - x) % 5 in [2, 3]:
+                    # Windows
+                    if random.random() < 0.25:
+                        # Lit window (blue)
+                        self.scene[y][x] = ('▪', Colors.ALLEY_BLUE)
+                    else:
+                        # Dark window
+                        self.scene[y][x] = ('▫', Colors.ALLEY_DARK)
+                elif x == edge_x + 1 and (y - y_top) % 3 == 0:
+                    # Pipes
+                    self.scene[y][x] = ('┼', Colors.ALLEY_MID)
+                else:
+                    # Brick texture
+                    if (y + x) % 4 == 0:
+                        self.scene[y][x] = ('▒', Colors.ALLEY_DARK)
+
+    def _draw_floor(self, center_x: int, horizon_y: int, ground_y: int):
+        """Draw alley floor with perspective."""
+        for y in range(horizon_y, min(ground_y + 1, self.height)):
+            # Width of visible floor increases as we go down
+            progress = (y - horizon_y) / max(1, (ground_y - horizon_y))
+            floor_half_width = int(progress * (self.width // 4))
+
+            left_x = max(0, center_x - floor_half_width)
+            right_x = min(self.width - 1, center_x + floor_half_width)
+
+            for x in range(left_x, right_x + 1):
+                if x >= self.width:
+                    continue
+
+                # Perspective lines pointing to vanishing point
+                dist_from_center = abs(x - center_x)
+                if dist_from_center <= 1:
+                    # Center line (wet reflection)
+                    if y % 2 == 0:
+                        self.scene[y][x] = (':', Colors.ALLEY_BLUE)
+                elif (x + y) % 7 == 0:
+                    # Cobblestone pattern
+                    self.scene[y][x] = ('·', Colors.ALLEY_MID)
+                elif (x - center_x + y) % 5 == 0:
+                    # Perspective lines
+                    self.scene[y][x] = ('.', Colors.ALLEY_DARK)
+
+    def _add_details(self, center_x: int, horizon_y: int, ground_y: int):
+        """Add urban details like dumpsters, signs, etc."""
+        # Dumpster on left side near bottom
+        dumpster_y = ground_y - 3
+        dumpster_x = center_x // 4
+
+        if dumpster_y > horizon_y and dumpster_x + 5 < center_x:
+            if dumpster_y < self.height and dumpster_x + 4 < self.width:
+                # Dumpster body
+                for dx in range(4):
+                    if dumpster_x + dx < self.width:
+                        self.scene[dumpster_y][dumpster_x + dx] = ('▄', Colors.ALLEY_MID)
+                        if dumpster_y + 1 < self.height:
+                            self.scene[dumpster_y + 1][dumpster_x + dx] = ('█', Colors.ALLEY_DARK)
+                        if dumpster_y + 2 < self.height:
+                            self.scene[dumpster_y + 2][dumpster_x + dx] = ('▀', Colors.ALLEY_MID)
+
+        # Neon sign on right building
+        sign_y = horizon_y + 2
+        sign_x = self.width - self.width // 5
+
+        if sign_y < self.height - 2 and sign_x + 3 < self.width:
+            # Simple neon effect
+            if sign_x < self.width:
+                self.scene[sign_y][sign_x] = ('◊', Colors.ALLEY_BLUE)
+            if sign_x + 1 < self.width:
+                self.scene[sign_y][sign_x + 1] = ('◊', Colors.ALLEY_BLUE)
+
+        # Steam vent
+        if ground_y - 1 < self.height and center_x - 5 >= 0:
+            steam_x = center_x - 5
+            if steam_x < self.width:
+                for dy in range(min(3, ground_y - horizon_y)):
+                    if ground_y - 1 - dy >= 0 and ground_y - 1 - dy < self.height:
+                        if random.random() < 0.5:
+                            self.scene[ground_y - 1 - dy][steam_x] = ('~', Colors.ALLEY_MID)
+
+        # Distant vanishing point details
+        if horizon_y > 0 and horizon_y < self.height:
+            # Hint of street at end of alley
+            for dx in range(-2, 3):
+                x = center_x + dx
+                if 0 <= x < self.width:
+                    self.scene[horizon_y][x] = ('▬', Colors.ALLEY_BLUE)
+
+    def render(self, screen):
+        """Render the alley scene to the screen."""
+        for y, row in enumerate(self.scene):
+            if y >= self.height:
+                break
+            for x, (char, color) in enumerate(row):
+                if x >= self.width:
+                    break
+                if char != ' ':
+                    try:
+                        attr = curses.color_pair(color) | curses.A_DIM
+                        screen.attron(attr)
+                        screen.addstr(y, x, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
 
 
 class LightningBolt:
@@ -1145,6 +1365,7 @@ class Dashboard:
         self.show_help = False
         self.matrix_mode = matrix_mode
         self.matrix_rain: Optional[MatrixRain] = None
+        self.alley_scene: Optional[AlleyScene] = None
 
         # Data caches
         self.status: Dict = {}
@@ -1288,6 +1509,7 @@ class Dashboard:
             screen.timeout(100)  # 100ms for smooth rain animation
             screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
             self._update_dimensions()
+            self.alley_scene = AlleyScene(self.width, self.height)
             self.matrix_rain = MatrixRain(self.width, self.height)
             # Schedule first lightning strike (5-30 minutes from now)
             self._lightning_next_time = time.time() + random.uniform(300, 1800)
@@ -1309,6 +1531,8 @@ class Dashboard:
                 # Sync matrix rain dimensions if window resized
                 if self.matrix_mode and self.matrix_rain:
                     if self.width != old_width or self.height != old_height:
+                        if self.alley_scene:
+                            self.alley_scene.resize(self.width, self.height)
                         self.matrix_rain.resize(self.width, self.height)
                     self.matrix_rain.update()
 
@@ -1334,8 +1558,11 @@ class Dashboard:
     def _handle_resize(self):
         """Handle terminal resize."""
         self._update_dimensions()
-        if self.matrix_mode and self.matrix_rain:
-            self.matrix_rain.resize(self.width, self.height)
+        if self.matrix_mode:
+            if self.alley_scene:
+                self.alley_scene.resize(self.width, self.height)
+            if self.matrix_rain:
+                self.matrix_rain.resize(self.width, self.height)
         self.screen.clear()
 
     def _update_dimensions(self):
@@ -1438,7 +1665,11 @@ class Dashboard:
         """Draw the dashboard."""
         self.screen.clear()
 
-        # Render matrix rain in background first
+        # Render alley scene first (furthest back)
+        if self.matrix_mode and self.alley_scene:
+            self.alley_scene.render(self.screen)
+
+        # Render matrix rain on top of alley
         if self.matrix_mode and self.matrix_rain:
             self.matrix_rain.render(self.screen)
 
@@ -1818,9 +2049,12 @@ class Dashboard:
                     color = Colors.STATUS_OK if mode == current_mode else Colors.NORMAL
                     self._addstr(row, start_x + 4, mode, color)
 
-            # Render matrix rain if in matrix mode
-            if self.matrix_mode and self.matrix_rain:
-                self.matrix_rain.render(self.screen)
+            # Render alley and matrix rain if in matrix mode
+            if self.matrix_mode:
+                if self.alley_scene:
+                    self.alley_scene.render(self.screen)
+                if self.matrix_rain:
+                    self.matrix_rain.render(self.screen)
 
             self.screen.refresh()
 
