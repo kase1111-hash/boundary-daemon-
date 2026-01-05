@@ -5419,6 +5419,12 @@ class Dashboard:
         self._framerate_options = [100, 50, 25, 15]  # ms
         self._framerate_index = 1  # Start at 50ms
 
+        # CLI mode state
+        self._cli_history: List[str] = []
+        self._cli_history_index = 0
+        self._cli_results: List[str] = []
+        self._cli_results_scroll = 0
+
         # Moon state (arcs across sky every 15 minutes)
         self._moon_active = False
         self._moon_x = 0.0
@@ -5877,6 +5883,9 @@ class Dashboard:
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
                 self.alley_scene.handle_qte_key(chr(key))
+        # CLI mode (: or ;)
+        elif key == ord(':') or key == ord(';'):
+            self._start_cli()
 
     def _draw(self):
         """Draw the dashboard."""
@@ -6061,7 +6070,7 @@ class Dashboard:
         # Draw shortcuts at bottom of events panel (inside the box)
         shortcut_row = y + height - 2
         if self.matrix_mode:
-            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [m]Mode [a]Ack [e]Export [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -6177,7 +6186,7 @@ class Dashboard:
         """Draw the footer bar."""
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
-            shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [m]Mode [a]Ack [e]Export [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -6378,6 +6387,333 @@ class Dashboard:
             self._show_message(f"Exported {len(events)} events to {export_path}", Colors.STATUS_OK)
         except Exception as e:
             self._show_message(f"Export failed: {e}", Colors.STATUS_ERROR)
+
+    def _start_cli(self):
+        """Start CLI mode for running commands."""
+        curses.curs_set(1)  # Show cursor
+        cmd_text = ""
+        cursor_pos = 0
+
+        # Available commands help
+        cli_help = [
+            "COMMANDS:",
+            "  query <filter>     - Query events (e.g., query type:VIOLATION)",
+            "  trace <event_id>   - Trace event details",
+            "  violations         - Show recent violations",
+            "  alerts             - Show all alerts",
+            "  status             - Show daemon status",
+            "  mode [new_mode]    - Show/change mode",
+            "  export <file>      - Export events to file",
+            "  clear              - Clear results",
+            "  help               - Show this help",
+            "",
+            "QUERY FILTERS:",
+            "  type:<EVENT_TYPE>  - Filter by type (VIOLATION, TRIPWIRE, etc)",
+            "  severity:>=HIGH    - Minimum severity",
+            "  contains:<text>    - Full text search",
+            "  --last 24h         - Time range",
+        ]
+
+        while True:
+            self.screen.clear()
+
+            # Draw CLI header
+            header = "─" * (self.width - 1)
+            self._addstr(0, 0, " BOUNDARY CLI ", Colors.HEADER)
+            self._addstr(0, 15, header[15:], Colors.MUTED)
+
+            # Draw results area (scrollable)
+            results_height = self.height - 5
+            if self._cli_results:
+                for i, line in enumerate(self._cli_results[self._cli_results_scroll:]):
+                    row = 2 + i
+                    if row >= results_height:
+                        break
+                    # Color code based on content
+                    if line.startswith("ERROR:") or "VIOLATION" in line or "CRITICAL" in line:
+                        color = Colors.STATUS_ERROR
+                    elif line.startswith("OK:") or "SUCCESS" in line:
+                        color = Colors.STATUS_OK
+                    elif line.startswith("  ") or line.startswith("│"):
+                        color = Colors.MUTED
+                    elif "HIGH" in line:
+                        color = Colors.STATUS_WARN
+                    else:
+                        color = Colors.NORMAL
+                    self._addstr(row, 1, line[:self.width-3], color)
+
+                # Scroll indicator
+                if len(self._cli_results) > results_height - 2:
+                    scroll_info = f"[{self._cli_results_scroll+1}-{min(self._cli_results_scroll+results_height-2, len(self._cli_results))}/{len(self._cli_results)}]"
+                    self._addstr(1, self.width - len(scroll_info) - 2, scroll_info, Colors.MUTED)
+            else:
+                # Show help if no results
+                for i, line in enumerate(cli_help):
+                    row = 2 + i
+                    if row >= results_height:
+                        break
+                    self._addstr(row, 2, line, Colors.MUTED)
+
+            # Draw command line at bottom
+            prompt_y = self.height - 2
+            self._addstr(prompt_y, 0, ":" + cmd_text + " ", Colors.HEADER)
+            self._addstr(prompt_y, len(cmd_text) + 1, "_", Colors.ACCENT)
+
+            # Draw shortcuts
+            shortcuts = "[Enter] Run  [Tab] Complete  [↑↓] History  [PgUp/Dn] Scroll  [ESC] Exit"
+            self._addstr(self.height - 1, 0, shortcuts[:self.width-1], Colors.MUTED)
+
+            self.screen.refresh()
+
+            key = self.screen.getch()
+            if key == 27:  # ESC
+                break
+            elif key in (curses.KEY_ENTER, 10, 13):
+                if cmd_text.strip():
+                    # Add to history
+                    if not self._cli_history or self._cli_history[-1] != cmd_text:
+                        self._cli_history.append(cmd_text)
+                    self._cli_history_index = len(self._cli_history)
+
+                    # Execute command
+                    self._execute_cli_command(cmd_text.strip())
+                    cmd_text = ""
+                    self._cli_results_scroll = 0
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                cmd_text = cmd_text[:-1]
+            elif key == curses.KEY_UP:
+                # History navigation
+                if self._cli_history and self._cli_history_index > 0:
+                    self._cli_history_index -= 1
+                    cmd_text = self._cli_history[self._cli_history_index]
+            elif key == curses.KEY_DOWN:
+                if self._cli_history_index < len(self._cli_history) - 1:
+                    self._cli_history_index += 1
+                    cmd_text = self._cli_history[self._cli_history_index]
+                else:
+                    self._cli_history_index = len(self._cli_history)
+                    cmd_text = ""
+            elif key == curses.KEY_PPAGE:  # Page Up
+                self._cli_results_scroll = max(0, self._cli_results_scroll - 10)
+            elif key == curses.KEY_NPAGE:  # Page Down
+                max_scroll = max(0, len(self._cli_results) - (self.height - 6))
+                self._cli_results_scroll = min(max_scroll, self._cli_results_scroll + 10)
+            elif key == 9:  # Tab - autocomplete
+                completions = ['query', 'trace', 'violations', 'alerts', 'status', 'mode', 'export', 'clear', 'help']
+                for comp in completions:
+                    if comp.startswith(cmd_text):
+                        cmd_text = comp + " "
+                        break
+            elif 32 <= key <= 126:  # Printable characters
+                cmd_text += chr(key)
+
+        curses.curs_set(0)  # Hide cursor
+
+    def _execute_cli_command(self, cmd: str):
+        """Execute a CLI command and populate results."""
+        parts = cmd.split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        self._cli_results = []
+
+        try:
+            if command == 'help':
+                self._cli_results = [
+                    "BOUNDARY DAEMON CLI",
+                    "=" * 40,
+                    "",
+                    "query <filter>    - Query events from log",
+                    "  Examples:",
+                    "    query type:VIOLATION",
+                    "    query severity:>=HIGH --last 24h",
+                    "    query contains:unauthorized",
+                    "",
+                    "trace <text>      - Search and trace events",
+                    "violations        - Show recent violations",
+                    "alerts            - Show all current alerts",
+                    "status            - Show daemon status",
+                    "mode [MODE]       - Show or change mode",
+                    "export <file>     - Export events to file",
+                    "clear             - Clear results",
+                ]
+
+            elif command == 'clear':
+                self._cli_results = ["Results cleared."]
+
+            elif command == 'status':
+                status = self.client.get_status()
+                self._cli_results = [
+                    "DAEMON STATUS",
+                    "=" * 40,
+                    f"  Mode:       {status.get('mode', 'UNKNOWN')}",
+                    f"  Frozen:     {status.get('is_frozen', False)}",
+                    f"  Uptime:     {self._format_duration(status.get('uptime', 0))}",
+                    f"  Events:     {status.get('total_events', 0)}",
+                    f"  Violations: {status.get('violations', 0)}",
+                    f"  Connection: {'TCP:19847' if self.client._use_tcp else self.client.socket_path}",
+                    f"  Demo Mode:  {self.client.is_demo_mode()}",
+                ]
+
+            elif command == 'alerts':
+                alerts = self.client.get_alerts()
+                self._cli_results = [f"ALERTS ({len(alerts)} total)", "=" * 40]
+                for alert in alerts:
+                    ack = "✓" if alert.acknowledged else "○"
+                    self._cli_results.append(f"  {ack} [{alert.severity}] {alert.message}")
+                    self._cli_results.append(f"      Time: {alert.time_str}")
+                if not alerts:
+                    self._cli_results.append("  No alerts.")
+
+            elif command == 'violations':
+                # Query violations from events
+                violations = [e for e in self.events if 'VIOLATION' in e.event_type.upper()]
+                self._cli_results = [f"RECENT VIOLATIONS ({len(violations)})", "=" * 40]
+                for v in violations[:20]:
+                    self._cli_results.append(f"  [{v.time_short}] {v.event_type}")
+                    self._cli_results.append(f"      {v.details[:60]}")
+                if not violations:
+                    self._cli_results.append("  No violations in recent events.")
+                    self._cli_results.append("  Use 'query type:VIOLATION --last 24h' for full search.")
+
+            elif command == 'query':
+                self._cli_results = self._execute_query(args)
+
+            elif command == 'trace':
+                self._cli_results = self._execute_trace(args)
+
+            elif command == 'mode':
+                if args:
+                    # Try to change mode (would need ceremony in real use)
+                    self._cli_results = [
+                        f"Mode change to '{args}' requires ceremony.",
+                        "Use 'm' key from main dashboard to initiate mode change.",
+                    ]
+                else:
+                    status = self.client.get_status()
+                    self._cli_results = [
+                        f"Current Mode: {status.get('mode', 'UNKNOWN')}",
+                        f"Frozen: {status.get('is_frozen', False)}",
+                    ]
+
+            elif command == 'export':
+                if not args:
+                    self._cli_results = ["ERROR: Specify output file (e.g., export events.json)"]
+                else:
+                    try:
+                        events = self.client.get_events(1000)
+                        export_data = [{'time': e.time_str, 'type': e.event_type, 'details': e.details} for e in events]
+                        with open(args, 'w') as f:
+                            json.dump(export_data, f, indent=2)
+                        self._cli_results = [f"OK: Exported {len(events)} events to {args}"]
+                    except Exception as e:
+                        self._cli_results = [f"ERROR: Export failed: {e}"]
+
+            else:
+                self._cli_results = [
+                    f"ERROR: Unknown command '{command}'",
+                    "Type 'help' for available commands.",
+                ]
+
+        except Exception as e:
+            self._cli_results = [f"ERROR: {e}"]
+
+    def _execute_query(self, query_str: str) -> List[str]:
+        """Execute a query command."""
+        results = ["QUERY RESULTS", "=" * 40]
+
+        # Parse query parameters
+        query_lower = query_str.lower()
+        events = self.events
+
+        # Filter by type
+        if 'type:' in query_lower:
+            import re
+            type_match = re.search(r'type:(\w+)', query_lower)
+            if type_match:
+                event_type = type_match.group(1).upper()
+                events = [e for e in events if event_type in e.event_type.upper()]
+
+        # Filter by severity
+        if 'severity:' in query_lower:
+            severity_map = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+            import re
+            sev_match = re.search(r'severity:>=?(\w+)', query_lower)
+            if sev_match:
+                min_sev = severity_map.get(sev_match.group(1).lower(), 0)
+                # Filter events with severity (would need actual severity field)
+                events = [e for e in events if any(s in e.event_type.upper() for s in ['HIGH', 'CRITICAL', 'VIOLATION', 'ERROR'])]
+
+        # Full text search
+        if 'contains:' in query_lower:
+            import re
+            text_match = re.search(r'contains:(\S+)', query_lower)
+            if text_match:
+                search_text = text_match.group(1)
+                events = [e for e in events if search_text.lower() in e.details.lower() or search_text.lower() in e.event_type.lower()]
+
+        # Simple text search (no prefix)
+        remaining = query_str
+        for prefix in ['type:', 'severity:', 'contains:', '--last']:
+            import re
+            remaining = re.sub(rf'{prefix}\S*\s*', '', remaining, flags=re.IGNORECASE)
+        remaining = remaining.strip()
+        if remaining and not remaining.startswith('-'):
+            events = [e for e in events if remaining.lower() in e.details.lower() or remaining.lower() in e.event_type.lower()]
+
+        results.append(f"Found {len(events)} events matching: {query_str}")
+        results.append("")
+
+        for e in events[:30]:
+            results.append(f"  [{e.time_short}] {e.event_type}")
+            results.append(f"      {e.details[:70]}")
+
+        if len(events) > 30:
+            results.append(f"  ... and {len(events) - 30} more")
+
+        if not events:
+            results.append("  No matching events found.")
+            results.append("  Try: query type:VIOLATION")
+            results.append("       query contains:unauthorized")
+
+        return results
+
+    def _execute_trace(self, search_text: str) -> List[str]:
+        """Trace/search for events with detailed output."""
+        results = ["TRACE RESULTS", "=" * 40]
+
+        if not search_text:
+            results.append("Usage: trace <search_term>")
+            results.append("Example: trace unauthorized")
+            return results
+
+        # Search through events
+        matches = []
+        for e in self.events:
+            if search_text.lower() in e.event_type.lower() or search_text.lower() in e.details.lower():
+                matches.append(e)
+
+        results.append(f"Tracing '{search_text}': {len(matches)} matches")
+        results.append("")
+
+        for i, e in enumerate(matches[:15]):
+            results.append(f"┌─ Event {i+1} ─────────────────────────")
+            results.append(f"│ Time:    {e.time_str}")
+            results.append(f"│ Type:    {e.event_type}")
+            results.append(f"│ Details: {e.details[:50]}")
+            if len(e.details) > 50:
+                results.append(f"│          {e.details[50:100]}")
+            results.append(f"└{'─' * 40}")
+            results.append("")
+
+        if len(matches) > 15:
+            results.append(f"... and {len(matches) - 15} more matches")
+
+        if not matches:
+            results.append("No matches found.")
+            results.append("Try a different search term.")
+
+        return results
 
     def _start_search(self):
         """Start event search/filter with text input."""
