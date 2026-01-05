@@ -611,12 +611,17 @@ class MatrixRain:
         # Ensure length range is valid (max >= min)
         effective_max_len = max(len_min, min(len_max, max(1, self.height // 2)))
 
+        # Skip adding drops if no characters for this weather mode (e.g., CALM mode)
+        chars = weather_chars[depth]
+        if not chars:
+            return
+
         self.drops.append({
             'x': start_x,
             'y': start_y,
             'speed': random.uniform(speed_min, speed_max) * speed_mult,
             'length': random.randint(len_min, effective_max_len),
-            'char_offset': random.randint(0, len(weather_chars[depth]) - 1),
+            'char_offset': random.randint(0, len(chars) - 1),
             'depth': depth,
             'phase': float(start_y),
             'dx': dx,  # Horizontal movement
@@ -705,7 +710,9 @@ class MatrixRain:
             # Tiny rain (layer 0) rolls fastest for that streaking effect
             roll_speed = 5 - drop['depth']  # Layer 0 = 5, Layer 4 = 1
             chars = weather_chars[drop['depth']]
-            drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(chars)
+            # Skip char_offset update if no characters (e.g., CALM mode with existing drops)
+            if chars:
+                drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(chars)
 
             # Snow sticking behavior
             if self.weather_mode == WeatherMode.SNOW:
