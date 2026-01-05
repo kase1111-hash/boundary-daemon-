@@ -1057,16 +1057,22 @@ class AlleyScene:
         "|___|",
     ]
 
-    # Traffic light showing two sides (corner view) - 7 wide x 7 tall
+    # Traffic light showing two sides (corner view) - TALLER version
     # Left column is N/S direction, right column is E/W direction
     TRAFFIC_LIGHT_TEMPLATE = [
-        " .===. ",
-        " |L|R] ",  # L = left light, R = right light (top - red)
-        " |L|R] ",  # middle - yellow
-        " |L|R] ",  # bottom - green
-        " '===' ",
-        "   ||  ",
-        "   ||  ",
+        " .=====. ",
+        " |     | ",
+        " | L R | ",  # Red lights
+        " |     | ",
+        " | L R | ",  # Yellow lights
+        " |     | ",
+        " | L R | ",  # Green lights
+        " |     | ",
+        " '=====' ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
     ]
 
     # Car sprites - large side views (4x person size, ~16 chars wide)
@@ -1093,30 +1099,59 @@ class AlleyScene:
         "< \\",
     ]
 
-    # Building wireframe - LARGE (behind dumpster/box area)
-    BUILDING = [
-        ".------------------------.",
-        "|   []    []    []   []  |",
-        "|   []    []    []   []  |",
-        "|                        |",
-        "|   []    []    []   []  |",
-        "|   []    []    []   []  |",
-        "|                        |",
-        "|   []    []    []   []  |",
-        "|   []    []    []   []  |",
-        "|________________________|",
+    # Street light
+    STREET_LIGHT = [
+        " ___ ",
+        "[___]",
+        "  |  ",
+        "  |  ",
+        "  |  ",
+        "  |  ",
     ]
 
-    # Second building (across the street / right side)
+    # Building wireframe - TALL with BIG windows (2x height, 4x window size)
+    BUILDING = [
+        ".------------------------------.",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|                              |",
+        "|  [====]  [====]  [====]      |",
+        "|  [====]  [====]  [====]      |",
+        "|______________________________|",
+    ]
+
+    # Second building (right side) - TALL with BIG windows
     BUILDING2 = [
-        ".--------------------.",
-        "|  []   []   []   [] |",
-        "|  []   []   []   [] |",
-        "|                    |",
-        "|  []   []   []   [] |",
-        "|  []   []   []   [] |",
-        "|  []   []   []   [] |",
-        "|____________________|",
+        ".---------------------------.",
+        "|                           |",
+        "|    [====]  [====]  [====] |",
+        "|    [====]  [====]  [====] |",
+        "|                           |",
+        "|    [====]  [====]  [====] |",
+        "|    [====]  [====]  [====] |",
+        "|                           |",
+        "|    [====]  [====]  [====] |",
+        "|    [====]  [====]  [====] |",
+        "|                           |",
+        "|    [====]  [====]  [====] |",
+        "|    [====]  [====]  [====] |",
+        "|                           |",
+        "|    [====]  [====]  [====] |",
+        "|    [====]  [====]  [====] |",
+        "|___________________________|",
     ]
 
     def __init__(self, width: int, height: int):
@@ -1128,6 +1163,8 @@ class AlleyScene:
         self.dumpster_y = 0
         self.box_x = 0
         self.box_y = 0
+        # Store building bottom for rat constraints
+        self._building_bottom_y = height - 3
         # Traffic light state
         self._traffic_frame = 0
         self._traffic_state = 'NS_GREEN'  # NS_GREEN, NS_YELLOW, EW_GREEN, EW_YELLOW
@@ -1149,7 +1186,7 @@ class AlleyScene:
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate scene with buildings, dumpster, box, curb, and street."""
+        """Generate scene with buildings, dumpster, box, curb, street, and street lights."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
@@ -1158,16 +1195,24 @@ class AlleyScene:
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
 
-        # Draw first building wireframe in background (left side, behind dumpster)
-        building_x = 3
-        building_y = max(1, self.height - len(self.BUILDING) - 6)
-        self._draw_sprite(self.BUILDING, building_x, building_y, Colors.ALLEY_BLUE)
+        # Calculate common ground level (where dumpster/box bottom edge is)
+        ground_y = self.height - 3  # -2 for curb/street, -1 for ground level
 
-        # Draw second building on the right side (across the street area)
-        if self.width > 60:  # Only show second building if screen is wide enough
+        # Draw first building wireframe in background (left side)
+        # Position building so its bottom edge is at ground level
+        building_x = 3
+        building_y = ground_y - len(self.BUILDING) + 1
+        self._draw_sprite(self.BUILDING, building_x, max(1, building_y), Colors.ALLEY_BLUE)
+        self._building_bottom_y = ground_y  # Store for rat constraint
+
+        # Draw second building on the right side
+        if self.width > 60:
             building2_x = self.width - len(self.BUILDING2[0]) - 5
-            building2_y = max(1, self.height - len(self.BUILDING2) - 6)
-            self._draw_sprite(self.BUILDING2, building2_x, building2_y, Colors.ALLEY_BLUE)
+            building2_y = ground_y - len(self.BUILDING2) + 1
+            self._draw_sprite(self.BUILDING2, building2_x, max(1, building2_y), Colors.ALLEY_BLUE)
+
+        # Draw street lights along the scene
+        self._draw_street_lights(ground_y)
 
         # Draw street at the very bottom (last 2 rows)
         street_y = self.height - 1
@@ -1189,15 +1234,27 @@ class AlleyScene:
                     self.scene[street_y][x] = ('=', Colors.RAT_YELLOW)
                     self.scene[street_y][x + 1] = ('=', Colors.RAT_YELLOW)
 
-        # Place dumpster in lower-left area (above curb)
+        # Place dumpster in lower-left area (above curb) - drawn AFTER buildings (in front)
         self.dumpster_x = 8
         self.dumpster_y = self.height - len(self.DUMPSTER) - 3  # -3 to be above curb
         self._draw_sprite(self.DUMPSTER, self.dumpster_x, self.dumpster_y, Colors.ALLEY_MID)
 
-        # Place box to the right of dumpster (above curb)
+        # Place box to the right of dumpster (above curb) - drawn AFTER buildings (in front)
         self.box_x = self.dumpster_x + len(self.DUMPSTER[0]) + 6
         self.box_y = self.height - len(self.BOX) - 3  # -3 to be above curb
         self._draw_sprite(self.BOX, self.box_x, self.box_y, Colors.SAND_DIM)
+
+    def _draw_street_lights(self, ground_y: int):
+        """Draw street lights along the scene."""
+        light_height = len(self.STREET_LIGHT)
+        # Position lights so they stand on the ground
+        light_y = ground_y - light_height + 1
+
+        # Place street lights at intervals
+        light_positions = [45, self.width - 15]  # One in middle-ish, one on right
+        for light_x in light_positions:
+            if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
+                self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
 
     def _spawn_car(self):
         """Spawn a new car on the street."""
@@ -1365,11 +1422,11 @@ class AlleyScene:
         # Render pedestrians on the sidewalk
         self._render_pedestrians(screen)
 
-        # Render cars on the street
-        self._render_cars(screen)
-
         # Render traffic light (dynamic - lights change)
         self._render_traffic_light(screen)
+
+        # Render cars on the street LAST (on top of everything)
+        self._render_cars(screen)
 
     def _render_cars(self, screen):
         """Render cars on the street."""
@@ -1425,8 +1482,8 @@ class AlleyScene:
 
     def _render_traffic_light(self, screen):
         """Render the traffic light with current light states."""
-        # Position traffic light on right side of scene (shifted 10 chars right)
-        light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 20)
+        # Position traffic light on right side of scene (shifted 25 chars right = 10 + 15)
+        light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 35)
         light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 3  # Above curb
 
         if light_x < 0 or light_y < 0:
@@ -1436,6 +1493,7 @@ class AlleyScene:
         ns_red, ns_yellow, ns_green, ew_red, ew_yellow, ew_green = self._get_traffic_light_colors()
 
         # Render each row of traffic light
+        # Taller template has lights at rows 2 (red), 4 (yellow), 6 (green)
         for row_idx, row in enumerate(self.TRAFFIC_LIGHT_TEMPLATE):
             for col_idx, char in enumerate(row):
                 px = light_x + col_idx
@@ -1451,18 +1509,18 @@ class AlleyScene:
                 render_char = char
 
                 if char == 'L':  # Left side lights (N/S direction)
-                    if row_idx == 1:  # Red position
+                    if row_idx == 2:  # Red position
                         render_char, color = ns_red
-                    elif row_idx == 2:  # Yellow position
+                    elif row_idx == 4:  # Yellow position
                         render_char, color = ns_yellow
-                    elif row_idx == 3:  # Green position
+                    elif row_idx == 6:  # Green position
                         render_char, color = ns_green
                 elif char == 'R':  # Right side lights (E/W direction)
-                    if row_idx == 1:  # Red position
+                    if row_idx == 2:  # Red position
                         render_char, color = ew_red
-                    elif row_idx == 2:  # Yellow position
+                    elif row_idx == 4:  # Yellow position
                         render_char, color = ew_yellow
-                    elif row_idx == 3:  # Green position
+                    elif row_idx == 6:  # Green position
                         render_char, color = ew_green
                 else:
                     render_char = char
@@ -1635,6 +1693,9 @@ class AlleyRat:
         # Hiding spots (positions behind objects)
         self._hiding_spots: List[Tuple[float, float]] = []
 
+        # Floor constraint (building bottom level) - rat can't go above this
+        self._floor_y = height * 4 // 5  # Default, updated by set_hiding_spots
+
     def set_hiding_spots(self, alley_scene):
         """Set hiding spots based on alley scene objects."""
         self._hiding_spots = []
@@ -1648,6 +1709,9 @@ class AlleyRat:
             box_behind_x = alley_scene.box_x + 2
             box_y = alley_scene.box_y + 1
             self._hiding_spots.append((float(box_behind_x), float(box_y)))
+
+            # Set floor constraint from building bottom - rat can't climb above this
+            self._floor_y = alley_scene._building_bottom_y
 
     def resize(self, width: int, height: int):
         """Handle terminal resize."""
@@ -1663,10 +1727,9 @@ class AlleyRat:
             self.active = True
             self.visible = True
             self._hiding = False
-            # Spawn in lower 1/5 of screen, near dumpster area (above curb)
-            floor_y = self.height * 4 // 5
+            # Spawn at building bottom level, near dumpster area (above curb)
             self.x = float(random.randint(8, max(10, self.width // 4)))
-            self.y = float(random.randint(floor_y, self.height - 5))  # Stay above curb
+            self.y = float(random.randint(self._floor_y, self.height - 5))  # Stay above curb
             self._pick_new_target()
 
     def deactivate(self):
@@ -1680,8 +1743,7 @@ class AlleyRat:
 
     def _pick_new_target(self):
         """Pick a new target position for the rat to scurry to."""
-        # Stay in the lower 1/5 of the screen, above the curb
-        floor_y = self.height * 4 // 5
+        # Stay at building bottom level, above the curb (can hide behind building)
         max_y = self.height - 5  # Stay above curb and street
 
         if random.random() < 0.6:
@@ -1707,9 +1769,9 @@ class AlleyRat:
             else:
                 self.direction = 'left'
         else:
-            # Occasionally hop to a random spot in the lower area (above curb)
+            # Occasionally hop to a random spot at building bottom level (above curb)
             self.target_x = float(random.randint(6, max(7, self.width // 3)))
-            self.target_y = float(random.randint(floor_y, max_y))
+            self.target_y = float(random.randint(self._floor_y, max_y))
             # Use hopping - will move in discrete jumps
             self.speed = 0  # Don't move continuously
             self._hop_cooldown = 0  # Ready to hop
