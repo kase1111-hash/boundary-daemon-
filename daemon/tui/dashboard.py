@@ -273,8 +273,26 @@ class MatrixRain:
         WeatherMode.MATRIX: 1.0,
         WeatherMode.RAIN: 1.2,   # Rain falls fast
         WeatherMode.SNOW: 0.3,   # Snow falls slowly
-        WeatherMode.SAND: 0.8,   # Sand blows moderately
+        WeatherMode.SAND: 0.15,  # Sand falls very slowly (blows horizontally instead)
         WeatherMode.FOG: 0.15,   # Fog drifts very slowly
+    }
+
+    # Weather-specific length multipliers (sand/snow = short particles)
+    WEATHER_LENGTHS = {
+        WeatherMode.MATRIX: None,  # Use default DEPTH_LENGTHS
+        WeatherMode.RAIN: None,    # Use default DEPTH_LENGTHS
+        WeatherMode.SNOW: [(1, 1), (1, 1), (1, 2), (1, 2), (1, 2)],  # Single flakes
+        WeatherMode.SAND: [(1, 1), (1, 1), (1, 1), (1, 2), (1, 2)],  # Tiny grains
+        WeatherMode.FOG: [(1, 2), (1, 2), (1, 3), (2, 3), (2, 4)],   # Small wisps
+    }
+
+    # Weather-specific horizontal movement
+    WEATHER_HORIZONTAL = {
+        WeatherMode.MATRIX: (0, 0),       # No horizontal movement
+        WeatherMode.RAIN: (-0.1, 0.1),    # Slight wind variation
+        WeatherMode.SNOW: (-0.4, 0.4),    # Gentle drift both ways
+        WeatherMode.SAND: (1.5, 3.0),     # Strong wind blowing right
+        WeatherMode.FOG: (-0.2, 0.2),     # Gentle drift
     }
 
     # Weather-specific color mappings (bright, dim, fade1, fade2)
@@ -402,29 +420,42 @@ class MatrixRain:
             depth = random.choices(range(5), weights=self.DEPTH_WEIGHTS)[0]
 
         speed_min, speed_max = self.DEPTH_SPEEDS[depth]
-        len_min, len_max = self.DEPTH_LENGTHS[depth]
+
+        # Get weather-specific lengths or use defaults
+        weather_lengths = self.WEATHER_LENGTHS.get(self.weather_mode)
+        if weather_lengths:
+            len_min, len_max = weather_lengths[depth]
+        else:
+            len_min, len_max = self.DEPTH_LENGTHS[depth]
 
         # Apply weather-specific speed multiplier
         speed_mult = self._get_speed_multiplier()
         weather_chars = self._get_weather_chars()
 
-        # For snow, add horizontal drift
-        dx = 0.0
-        if self.weather_mode == WeatherMode.SNOW:
-            dx = random.uniform(-0.3, 0.3)  # Gentle sideways drift
-        elif self.weather_mode == WeatherMode.SAND:
-            dx = random.uniform(0.5, 1.5)  # Sand blows in one direction (wind)
+        # Get weather-specific horizontal movement
+        h_min, h_max = self.WEATHER_HORIZONTAL.get(self.weather_mode, (0, 0))
+        dx = random.uniform(h_min, h_max) if h_min != h_max else 0.0
+
+        # Determine spawn position
+        if self.weather_mode == WeatherMode.SAND:
+            # Sand spawns from left edge and blows across
+            start_x = random.randint(-10, 0)
+            start_y = random.randint(0, self.height - 1)
+        else:
+            # Normal: spawn across width, start above screen
+            start_x = random.randint(0, self.width - 1)
+            start_y = random.randint(-self.height, 0)
 
         self.drops.append({
-            'x': random.randint(0, self.width - 1),
-            'y': random.randint(-self.height, 0),
+            'x': start_x,
+            'y': start_y,
             'speed': random.uniform(speed_min, speed_max) * speed_mult,
             'length': random.randint(len_min, min(len_max, self.height // 2)),
             'char_offset': random.randint(0, len(weather_chars[depth]) - 1),
             'depth': depth,
-            'phase': 0.0,
+            'phase': float(start_y),
             'dx': dx,  # Horizontal movement
-            'fx': 0.0,  # Fractional x position for smooth movement
+            'fx': float(start_x),  # Fractional x position for smooth movement
         })
 
     def _add_splat(self, x: int, y: int):
@@ -468,7 +499,16 @@ class MatrixRain:
             # Update horizontal position for snow/sand
             if 'dx' in drop and drop['dx'] != 0:
                 drop['fx'] = drop.get('fx', float(drop['x'])) + drop['dx']
-                drop['x'] = int(drop['fx']) % self.width  # Wrap around
+                new_x = int(drop['fx'])
+
+                # Sand blows off right edge and is removed
+                if self.weather_mode == WeatherMode.SAND:
+                    if new_x >= self.width:
+                        continue  # Remove sand that went off right edge
+                    drop['x'] = new_x
+                else:
+                    # Other modes wrap around
+                    drop['x'] = new_x % self.width
 
             # Roll through characters as the drop falls
             # Tiny rain (layer 0) rolls fastest for that streaking effect
@@ -484,7 +524,7 @@ class MatrixRain:
                         self._add_splat(drop['x'], self.height - 1)
                 continue  # Don't keep this drop
 
-            # Keep drop if still on screen
+            # Keep drop if still on screen (vertically)
             if drop['y'] - drop['length'] < self.height:
                 new_drops.append(drop)
 
@@ -710,13 +750,15 @@ class AlleyScene:
     """
     Procedurally generated back alley scene for Matrix background.
     Creates a perspective view of a dark alley with buildings, windows,
-    fire escapes, and urban details.
+    fire escapes, and urban details. Uses ASCII-safe characters for
+    better terminal compatibility.
     """
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
         self.scene: List[List[Tuple[str, int]]] = []  # (char, color_id)
+        self._seed = 42  # Fixed seed for consistent scene
         self._generate_scene()
 
     def resize(self, width: int, height: int):
@@ -731,6 +773,9 @@ class AlleyScene:
             self.scene = []
             return
 
+        # Use fixed seed for deterministic scene (no flickering)
+        rng = random.Random(self._seed)
+
         # Initialize with empty space
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
@@ -741,18 +786,18 @@ class AlleyScene:
         ground_y = self.height - 1
 
         # Draw buildings on left side
-        self._draw_building_left(0, center_x // 3, horizon_y, ground_y)
+        self._draw_building_left(0, center_x // 3, horizon_y, ground_y, rng)
 
         # Draw buildings on right side
-        self._draw_building_right(self.width - center_x // 3, self.width, horizon_y, ground_y)
+        self._draw_building_right(self.width - center_x // 3, self.width, horizon_y, ground_y, rng)
 
         # Draw alley floor with perspective lines
         self._draw_floor(center_x, horizon_y, ground_y)
 
         # Add some atmospheric details
-        self._add_details(center_x, horizon_y, ground_y)
+        self._add_details(center_x, horizon_y, ground_y, rng)
 
-    def _draw_building_left(self, x_start: int, x_end: int, y_top: int, y_bottom: int):
+    def _draw_building_left(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
         """Draw left building with windows and fire escape."""
         if x_end <= x_start:
             return
@@ -766,30 +811,31 @@ class AlleyScene:
                 if x >= self.width:
                     continue
 
-                # Building wall
+                # Building wall - use simple ASCII
                 if x == edge_x - 1:
                     # Building edge
-                    self.scene[y][x] = ('│', Colors.ALLEY_MID)
+                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
                 elif (y - y_top) % 4 == 0 and x > x_start + 1:
                     # Horizontal lines (floors)
-                    self.scene[y][x] = ('─', Colors.ALLEY_DARK)
+                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
                 elif (y - y_top) % 4 == 2 and (x - x_start) % 6 in [2, 3]:
-                    # Windows
-                    if random.random() < 0.3:
+                    # Windows - use hash for consistency
+                    window_lit = ((x * 7 + y * 13) % 10) < 3  # Deterministic "random"
+                    if window_lit:
                         # Lit window (blue)
-                        self.scene[y][x] = ('▪', Colors.ALLEY_BLUE)
+                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
                     else:
                         # Dark window
-                        self.scene[y][x] = ('▫', Colors.ALLEY_DARK)
+                        self.scene[y][x] = ('[', Colors.ALLEY_DARK)
                 elif x == edge_x - 2 and (y - y_top) % 2 == 0:
                     # Fire escape
-                    self.scene[y][x] = ('┤', Colors.ALLEY_MID)
+                    self.scene[y][x] = ('+', Colors.ALLEY_MID)
                 else:
                     # Brick texture
                     if (y + x) % 3 == 0:
-                        self.scene[y][x] = ('░', Colors.ALLEY_DARK)
+                        self.scene[y][x] = ('.', Colors.ALLEY_DARK)
 
-    def _draw_building_right(self, x_start: int, x_end: int, y_top: int, y_bottom: int):
+    def _draw_building_right(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
         """Draw right building with windows."""
         if x_end <= x_start or x_start >= self.width:
             return
@@ -803,28 +849,29 @@ class AlleyScene:
                 if x >= self.width:
                     continue
 
-                # Building wall
+                # Building wall - use simple ASCII
                 if x == edge_x:
                     # Building edge
-                    self.scene[y][x] = ('│', Colors.ALLEY_MID)
+                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
                 elif (y - y_top) % 4 == 0 and x < x_end - 2:
                     # Horizontal lines (floors)
-                    self.scene[y][x] = ('─', Colors.ALLEY_DARK)
+                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
                 elif (y - y_top) % 4 == 2 and (x_end - x) % 5 in [2, 3]:
                     # Windows
-                    if random.random() < 0.25:
+                    window_lit = ((x * 11 + y * 17) % 10) < 2  # Deterministic "random"
+                    if window_lit:
                         # Lit window (blue)
-                        self.scene[y][x] = ('▪', Colors.ALLEY_BLUE)
+                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
                     else:
                         # Dark window
-                        self.scene[y][x] = ('▫', Colors.ALLEY_DARK)
+                        self.scene[y][x] = (']', Colors.ALLEY_DARK)
                 elif x == edge_x + 1 and (y - y_top) % 3 == 0:
                     # Pipes
-                    self.scene[y][x] = ('┼', Colors.ALLEY_MID)
+                    self.scene[y][x] = ('I', Colors.ALLEY_MID)
                 else:
                     # Brick texture
                     if (y + x) % 4 == 0:
-                        self.scene[y][x] = ('▒', Colors.ALLEY_DARK)
+                        self.scene[y][x] = (':', Colors.ALLEY_DARK)
 
     def _draw_floor(self, center_x: int, horizon_y: int, ground_y: int):
         """Draw alley floor with perspective."""
@@ -848,27 +895,25 @@ class AlleyScene:
                         self.scene[y][x] = (':', Colors.ALLEY_BLUE)
                 elif (x + y) % 7 == 0:
                     # Cobblestone pattern
-                    self.scene[y][x] = ('·', Colors.ALLEY_MID)
+                    self.scene[y][x] = ('.', Colors.ALLEY_MID)
                 elif (x - center_x + y) % 5 == 0:
                     # Perspective lines
                     self.scene[y][x] = ('.', Colors.ALLEY_DARK)
 
-    def _add_details(self, center_x: int, horizon_y: int, ground_y: int):
+    def _add_details(self, center_x: int, horizon_y: int, ground_y: int, rng):
         """Add urban details like dumpsters, signs, etc."""
-        # Dumpster on left side near bottom
-        dumpster_y = ground_y - 3
+        # Dumpster on left side near bottom - simple ASCII box
+        dumpster_y = ground_y - 2
         dumpster_x = center_x // 4
 
         if dumpster_y > horizon_y and dumpster_x + 5 < center_x:
             if dumpster_y < self.height and dumpster_x + 4 < self.width:
-                # Dumpster body
+                # Dumpster body - simple ASCII
                 for dx in range(4):
                     if dumpster_x + dx < self.width:
-                        self.scene[dumpster_y][dumpster_x + dx] = ('▄', Colors.ALLEY_MID)
+                        self.scene[dumpster_y][dumpster_x + dx] = ('=', Colors.ALLEY_MID)
                         if dumpster_y + 1 < self.height:
-                            self.scene[dumpster_y + 1][dumpster_x + dx] = ('█', Colors.ALLEY_DARK)
-                        if dumpster_y + 2 < self.height:
-                            self.scene[dumpster_y + 2][dumpster_x + dx] = ('▀', Colors.ALLEY_MID)
+                            self.scene[dumpster_y + 1][dumpster_x + dx] = ('#', Colors.ALLEY_DARK)
 
         # Neon sign on right building
         sign_y = horizon_y + 2
@@ -877,18 +922,20 @@ class AlleyScene:
         if sign_y < self.height - 2 and sign_x + 3 < self.width:
             # Simple neon effect
             if sign_x < self.width:
-                self.scene[sign_y][sign_x] = ('◊', Colors.ALLEY_BLUE)
+                self.scene[sign_y][sign_x] = ('*', Colors.ALLEY_BLUE)
             if sign_x + 1 < self.width:
-                self.scene[sign_y][sign_x + 1] = ('◊', Colors.ALLEY_BLUE)
+                self.scene[sign_y][sign_x + 1] = ('*', Colors.ALLEY_BLUE)
 
-        # Steam vent
+        # Steam vent - deterministic
         if ground_y - 1 < self.height and center_x - 5 >= 0:
             steam_x = center_x - 5
             if steam_x < self.width:
                 for dy in range(min(3, ground_y - horizon_y)):
-                    if ground_y - 1 - dy >= 0 and ground_y - 1 - dy < self.height:
-                        if random.random() < 0.5:
-                            self.scene[ground_y - 1 - dy][steam_x] = ('~', Colors.ALLEY_MID)
+                    y_pos = ground_y - 1 - dy
+                    if 0 <= y_pos < self.height:
+                        # Deterministic steam pattern
+                        if (dy + steam_x) % 2 == 0:
+                            self.scene[y_pos][steam_x] = ('~', Colors.ALLEY_MID)
 
         # Distant vanishing point details
         if horizon_y > 0 and horizon_y < self.height:
@@ -896,7 +943,7 @@ class AlleyScene:
             for dx in range(-2, 3):
                 x = center_x + dx
                 if 0 <= x < self.width:
-                    self.scene[horizon_y][x] = ('▬', Colors.ALLEY_BLUE)
+                    self.scene[horizon_y][x] = ('=', Colors.ALLEY_BLUE)
 
     def render(self, screen):
         """Render the alley scene to the screen."""
@@ -904,7 +951,7 @@ class AlleyScene:
             if y >= self.height:
                 break
             for x, (char, color) in enumerate(row):
-                if x >= self.width:
+                if x >= self.width - 1:  # Leave last column empty to avoid scroll
                     break
                 if char != ' ':
                     try:
