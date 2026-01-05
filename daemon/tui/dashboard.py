@@ -748,16 +748,17 @@ class MatrixRain:
 
 class AlleyScene:
     """
-    City backdrop for Matrix mode.
-    Draws building silhouettes and lit windows scattered across the screen
-    that show through the rain and between UI elements.
+    Procedurally generated back alley scene for Matrix background.
+    Creates a perspective view of a dark alley with buildings, windows,
+    fire escapes, and urban details. Uses ASCII-safe characters for
+    better terminal compatibility.
     """
 
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.scene: List[List[Tuple[str, int]]] = []
-        self._seed = 42
+        self.scene: List[List[Tuple[str, int]]] = []  # (char, color_id)
+        self._seed = 42  # Fixed seed for consistent scene
         self._generate_scene()
 
     def resize(self, width: int, height: int):
@@ -767,69 +768,190 @@ class AlleyScene:
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate city backdrop with scattered elements."""
+        """Generate the alley scene."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
 
-        # Initialize empty
+        # Use fixed seed for deterministic scene (no flickering)
+        rng = random.Random(self._seed)
+
+        # Initialize with empty space
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
 
-        rng = random.Random(self._seed)
+        # Calculate perspective points
+        center_x = self.width // 2
+        horizon_y = self.height // 3  # Vanishing point
+        ground_y = self.height - 1
 
-        # Scattered lit windows throughout the screen
-        # These will show through wherever rain/UI doesn't cover them
-        num_windows = (self.width * self.height) // 80  # ~1.25% coverage
-        for _ in range(num_windows):
-            x = rng.randint(0, self.width - 1)
-            y = rng.randint(0, self.height - 1)
-            if 0 <= x < self.width and 0 <= y < self.height:
-                char = rng.choice(['#', '*', '.'])
-                color = rng.choice([Colors.ALLEY_BLUE, Colors.MATRIX_DIM, Colors.ALLEY_MID])
-                self.scene[y][x] = (char, color)
+        # Draw buildings on left side
+        self._draw_building_left(0, center_x // 3, horizon_y, ground_y, rng)
 
-        # Skyline at the top (row 1, between header and panels)
-        if self.height > 3:
-            self._draw_skyline(1, rng)
+        # Draw buildings on right side
+        self._draw_building_right(self.width - center_x // 3, self.width, horizon_y, ground_y, rng)
 
-        # Ground details near bottom
-        if self.height > 5:
-            self._draw_ground(self.height - 2, rng)
+        # Draw alley floor with perspective lines
+        self._draw_floor(center_x, horizon_y, ground_y)
 
-    def _draw_skyline(self, row: int, rng):
-        """Draw a simple building skyline on a single row."""
-        if row >= self.height:
+        # Add some atmospheric details
+        self._add_details(center_x, horizon_y, ground_y, rng)
+
+    def _draw_building_left(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
+        """Draw left building with windows and fire escape."""
+        if x_end <= x_start:
             return
 
-        x = 0
-        while x < self.width - 1:
-            # Random building width
-            bwidth = rng.randint(3, 8)
-            # Draw rooftop
-            for i in range(bwidth):
-                if x + i < self.width:
-                    self.scene[row][x + i] = ('_', Colors.ALLEY_MID)
-            # Gap between buildings
-            x += bwidth + rng.randint(2, 6)
+        for y in range(y_top, min(y_bottom + 1, self.height)):
+            # Building edge gets closer to center as we go up (perspective)
+            progress = (y - y_top) / max(1, (y_bottom - y_top))
+            edge_x = int(x_start + (x_end - x_start) * (0.3 + 0.7 * progress))
 
-    def _draw_ground(self, row: int, rng):
-        """Draw ground/street details."""
-        if row >= self.height:
+            for x in range(x_start, min(edge_x, self.width)):
+                if x >= self.width:
+                    continue
+
+                # Building wall - use simple ASCII
+                if x == edge_x - 1:
+                    # Building edge
+                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
+                elif (y - y_top) % 4 == 0 and x > x_start + 1:
+                    # Horizontal lines (floors)
+                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
+                elif (y - y_top) % 4 == 2 and (x - x_start) % 6 in [2, 3]:
+                    # Windows - use hash for consistency
+                    window_lit = ((x * 7 + y * 13) % 10) < 3  # Deterministic "random"
+                    if window_lit:
+                        # Lit window (blue)
+                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
+                    else:
+                        # Dark window
+                        self.scene[y][x] = ('[', Colors.ALLEY_DARK)
+                elif x == edge_x - 2 and (y - y_top) % 2 == 0:
+                    # Fire escape
+                    self.scene[y][x] = ('+', Colors.ALLEY_MID)
+                else:
+                    # Brick texture
+                    if (y + x) % 3 == 0:
+                        self.scene[y][x] = ('.', Colors.ALLEY_DARK)
+
+    def _draw_building_right(self, x_start: int, x_end: int, y_top: int, y_bottom: int, rng):
+        """Draw right building with windows."""
+        if x_end <= x_start or x_start >= self.width:
             return
 
-        for x in range(self.width - 1):
-            if rng.random() < 0.3:
-                char = rng.choice(['.', '-', '=', '_'])
-                self.scene[row][x] = (char, Colors.ALLEY_DARK)
+        for y in range(y_top, min(y_bottom + 1, self.height)):
+            # Building edge gets closer to center as we go up (perspective)
+            progress = (y - y_top) / max(1, (y_bottom - y_top))
+            edge_x = int(x_end - (x_end - x_start) * (0.3 + 0.7 * progress))
+
+            for x in range(max(0, edge_x), min(x_end, self.width)):
+                if x >= self.width:
+                    continue
+
+                # Building wall - use simple ASCII
+                if x == edge_x:
+                    # Building edge
+                    self.scene[y][x] = ('|', Colors.ALLEY_MID)
+                elif (y - y_top) % 4 == 0 and x < x_end - 2:
+                    # Horizontal lines (floors)
+                    self.scene[y][x] = ('-', Colors.ALLEY_DARK)
+                elif (y - y_top) % 4 == 2 and (x_end - x) % 5 in [2, 3]:
+                    # Windows
+                    window_lit = ((x * 11 + y * 17) % 10) < 2  # Deterministic "random"
+                    if window_lit:
+                        # Lit window (blue)
+                        self.scene[y][x] = ('#', Colors.ALLEY_BLUE)
+                    else:
+                        # Dark window
+                        self.scene[y][x] = (']', Colors.ALLEY_DARK)
+                elif x == edge_x + 1 and (y - y_top) % 3 == 0:
+                    # Pipes
+                    self.scene[y][x] = ('I', Colors.ALLEY_MID)
+                else:
+                    # Brick texture
+                    if (y + x) % 4 == 0:
+                        self.scene[y][x] = (':', Colors.ALLEY_DARK)
+
+    def _draw_floor(self, center_x: int, horizon_y: int, ground_y: int):
+        """Draw alley floor with perspective."""
+        for y in range(horizon_y, min(ground_y + 1, self.height)):
+            # Width of visible floor increases as we go down
+            progress = (y - horizon_y) / max(1, (ground_y - horizon_y))
+            floor_half_width = int(progress * (self.width // 4))
+
+            left_x = max(0, center_x - floor_half_width)
+            right_x = min(self.width - 1, center_x + floor_half_width)
+
+            for x in range(left_x, right_x + 1):
+                if x >= self.width:
+                    continue
+
+                # Perspective lines pointing to vanishing point
+                dist_from_center = abs(x - center_x)
+                if dist_from_center <= 1:
+                    # Center line (wet reflection)
+                    if y % 2 == 0:
+                        self.scene[y][x] = (':', Colors.ALLEY_BLUE)
+                elif (x + y) % 7 == 0:
+                    # Cobblestone pattern
+                    self.scene[y][x] = ('.', Colors.ALLEY_MID)
+                elif (x - center_x + y) % 5 == 0:
+                    # Perspective lines
+                    self.scene[y][x] = ('.', Colors.ALLEY_DARK)
+
+    def _add_details(self, center_x: int, horizon_y: int, ground_y: int, rng):
+        """Add urban details like dumpsters, signs, etc."""
+        # Dumpster on left side near bottom - simple ASCII box
+        dumpster_y = ground_y - 2
+        dumpster_x = center_x // 4
+
+        if dumpster_y > horizon_y and dumpster_x + 5 < center_x:
+            if dumpster_y < self.height and dumpster_x + 4 < self.width:
+                # Dumpster body - simple ASCII
+                for dx in range(4):
+                    if dumpster_x + dx < self.width:
+                        self.scene[dumpster_y][dumpster_x + dx] = ('=', Colors.ALLEY_MID)
+                        if dumpster_y + 1 < self.height:
+                            self.scene[dumpster_y + 1][dumpster_x + dx] = ('#', Colors.ALLEY_DARK)
+
+        # Neon sign on right building
+        sign_y = horizon_y + 2
+        sign_x = self.width - self.width // 5
+
+        if sign_y < self.height - 2 and sign_x + 3 < self.width:
+            # Simple neon effect
+            if sign_x < self.width:
+                self.scene[sign_y][sign_x] = ('*', Colors.ALLEY_BLUE)
+            if sign_x + 1 < self.width:
+                self.scene[sign_y][sign_x + 1] = ('*', Colors.ALLEY_BLUE)
+
+        # Steam vent - deterministic
+        if ground_y - 1 < self.height and center_x - 5 >= 0:
+            steam_x = center_x - 5
+            if steam_x < self.width:
+                for dy in range(min(3, ground_y - horizon_y)):
+                    y_pos = ground_y - 1 - dy
+                    if 0 <= y_pos < self.height:
+                        # Deterministic steam pattern
+                        if (dy + steam_x) % 2 == 0:
+                            self.scene[y_pos][steam_x] = ('~', Colors.ALLEY_MID)
+
+        # Distant vanishing point details
+        if horizon_y > 0 and horizon_y < self.height:
+            # Hint of street at end of alley
+            for dx in range(-2, 3):
+                x = center_x + dx
+                if 0 <= x < self.width:
+                    self.scene[horizon_y][x] = ('=', Colors.ALLEY_BLUE)
 
     def render(self, screen):
-        """Render scene to screen."""
+        """Render the alley scene to the screen."""
         for y, row in enumerate(self.scene):
             if y >= self.height:
                 break
             for x, (char, color) in enumerate(row):
-                if x >= self.width - 1:
+                if x >= self.width - 1:  # Leave last column empty to avoid scroll
                     break
                 if char != ' ':
                     try:
@@ -2263,15 +2385,7 @@ class Dashboard:
         self.screen.refresh()
 
     def _draw_header(self):
-        """Draw the header bar with solid background."""
-        # First, fill rows 0-1 with spaces to block rain effect
-        try:
-            blank_line = ' ' * (self.width - 1)
-            self.screen.addstr(0, 0, blank_line)
-            self.screen.addstr(1, 0, blank_line)
-        except curses.error:
-            pass
-
+        """Draw the header bar."""
         header = " BOUNDARY DAEMON"
         if self.client.is_demo_mode():
             header += " [DEMO]"
@@ -2499,15 +2613,7 @@ class Dashboard:
         self._addstr(row, col, f"Shipped today: {shipped:,}", Colors.MUTED)
 
     def _draw_footer(self):
-        """Draw the footer bar with solid background."""
-        # First, fill footer rows (height-2 and height-1) to block rain effect
-        try:
-            blank_line = ' ' * (self.width - 1)
-            self.screen.addstr(self.height - 2, 0, blank_line)
-            self.screen.addstr(self.height - 1, 0, blank_line)
-        except curses.error:
-            pass
-
+        """Draw the footer bar."""
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
             shortcuts = "[w]Weather [m]Mode [a]Ack [e]Export [r]Refresh [?]Help [q]Quit"
@@ -2575,18 +2681,11 @@ class Dashboard:
             self._addstr(start_y + 1 + i, start_x + 2, line, Colors.NORMAL)
 
     def _draw_box(self, y: int, x: int, width: int, height: int, title: str, title_color: int = None):
-        """Draw a box with title and solid background to block rain effect."""
+        """Draw a box with title."""
         if title_color is None:
             title_color = Colors.HEADER
 
         try:
-            # First, fill the entire interior with spaces to create solid background
-            # This blocks the Matrix rain from showing through
-            for row in range(y, y + height):
-                for col in range(x, x + width):
-                    if row < self.height and col < self.width - 1:
-                        self.screen.addch(row, col, ' ')
-
             # Top border
             self.screen.addch(y, x, curses.ACS_ULCORNER)
             self.screen.addch(y, x + width - 1, curses.ACS_URCORNER)
