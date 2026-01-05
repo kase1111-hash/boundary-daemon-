@@ -1039,7 +1039,7 @@ class MatrixRain:
 
 class AlleyScene:
     """
-    Simple alley scene with dumpster, box, traffic light, building, and cars.
+    Simple alley scene with dumpster, box, traffic light, buildings, cars, and pedestrians.
     """
 
     # Dumpster ASCII art (6 wide x 4 tall)
@@ -1069,18 +1069,54 @@ class AlleyScene:
         "   ||  ",
     ]
 
-    # Car sprites - simple side views
-    CAR_RIGHT = ["<[##]>"]  # Car going right
-    CAR_LEFT = ["<[##]>"]   # Car going left (same sprite, just moves left)
+    # Car sprites - large side views (4x person size, ~16 chars wide)
+    CAR_RIGHT = [
+        "  __[########]__  ",
+        " (o)==========(o) ",
+    ]
+    CAR_LEFT = [
+        "  __[########]__  ",
+        " (o)==========(o) ",
+    ]
 
-    # Building wireframe (behind dumpster/box area)
+    # Person walking (bigger than rat, ~4 rows tall)
+    PERSON_RIGHT = [
+        " O ",
+        "/|\\",
+        " | ",
+        "/ >",
+    ]
+    PERSON_LEFT = [
+        " O ",
+        "/|\\",
+        " | ",
+        "< \\",
+    ]
+
+    # Building wireframe - LARGE (behind dumpster/box area)
     BUILDING = [
-        ".--------.",
-        "|  []  []|",
-        "|  []  []|",
-        "|  []  []|",
-        "|  []  []|",
-        "|________|",
+        ".------------------------.",
+        "|   []    []    []   []  |",
+        "|   []    []    []   []  |",
+        "|                        |",
+        "|   []    []    []   []  |",
+        "|   []    []    []   []  |",
+        "|                        |",
+        "|   []    []    []   []  |",
+        "|   []    []    []   []  |",
+        "|________________________|",
+    ]
+
+    # Second building (across the street / right side)
+    BUILDING2 = [
+        ".--------------------.",
+        "|  []   []   []   [] |",
+        "|  []   []   []   [] |",
+        "|                    |",
+        "|  []   []   []   [] |",
+        "|  []   []   []   [] |",
+        "|  []   []   []   [] |",
+        "|____________________|",
     ]
 
     def __init__(self, width: int, height: int):
@@ -1099,6 +1135,9 @@ class AlleyScene:
         # Cars on the street
         self._cars: List[Dict] = []
         self._car_spawn_timer = 0
+        # Pedestrians on the street
+        self._pedestrians: List[Dict] = []
+        self._pedestrian_spawn_timer = 0
         self._generate_scene()
 
     def resize(self, width: int, height: int):
@@ -1106,10 +1145,11 @@ class AlleyScene:
         self.width = width
         self.height = height
         self._cars = []  # Clear cars on resize
+        self._pedestrians = []  # Clear pedestrians on resize
         self._generate_scene()
 
     def _generate_scene(self):
-        """Generate scene with building, dumpster, box, curb, and street."""
+        """Generate scene with buildings, dumpster, box, curb, and street."""
         if self.width <= 0 or self.height <= 0:
             self.scene = []
             return
@@ -1118,10 +1158,16 @@ class AlleyScene:
         self.scene = [[(' ', Colors.ALLEY_DARK) for _ in range(self.width)]
                       for _ in range(self.height)]
 
-        # Draw building wireframe in background (upper area, behind where dumpster will be)
-        building_x = 5
-        building_y = max(2, self.height - len(self.BUILDING) - 8)
+        # Draw first building wireframe in background (left side, behind dumpster)
+        building_x = 3
+        building_y = max(1, self.height - len(self.BUILDING) - 6)
         self._draw_sprite(self.BUILDING, building_x, building_y, Colors.ALLEY_BLUE)
+
+        # Draw second building on the right side (across the street area)
+        if self.width > 60:  # Only show second building if screen is wide enough
+            building2_x = self.width - len(self.BUILDING2[0]) - 5
+            building2_y = max(1, self.height - len(self.BUILDING2) - 6)
+            self._draw_sprite(self.BUILDING2, building2_x, building2_y, Colors.ALLEY_BLUE)
 
         # Draw street at the very bottom (last 2 rows)
         street_y = self.height - 1
@@ -1174,7 +1220,7 @@ class AlleyScene:
             })
 
     def update(self):
-        """Update traffic light state and cars."""
+        """Update traffic light state, cars, and pedestrians."""
         self._traffic_frame += 1
 
         # State machine for traffic lights
@@ -1200,6 +1246,9 @@ class AlleyScene:
         # Update cars
         self._update_cars()
 
+        # Update pedestrians
+        self._update_pedestrians()
+
     def _update_cars(self):
         """Update car positions and spawn new cars."""
         # Spawn new cars occasionally
@@ -1219,6 +1268,46 @@ class AlleyScene:
                 new_cars.append(car)
 
         self._cars = new_cars
+
+    def _spawn_pedestrian(self):
+        """Spawn a new pedestrian on the sidewalk."""
+        # Randomly choose direction
+        if random.random() < 0.5:
+            # Pedestrian going right (spawn on left)
+            self._pedestrians.append({
+                'x': -5.0,
+                'direction': 1,
+                'speed': random.uniform(0.3, 0.6),  # Slower than cars
+                'sprite': self.PERSON_RIGHT,
+            })
+        else:
+            # Pedestrian going left (spawn on right)
+            self._pedestrians.append({
+                'x': float(self.width + 2),
+                'direction': -1,
+                'speed': random.uniform(0.3, 0.6),
+                'sprite': self.PERSON_LEFT,
+            })
+
+    def _update_pedestrians(self):
+        """Update pedestrian positions and spawn new pedestrians."""
+        # Spawn new pedestrians occasionally (less frequent than cars)
+        self._pedestrian_spawn_timer += 1
+        if self._pedestrian_spawn_timer >= random.randint(80, 200):
+            if len(self._pedestrians) < 2:  # Max 2 pedestrians at once
+                self._spawn_pedestrian()
+            self._pedestrian_spawn_timer = 0
+
+        # Update pedestrian positions
+        new_pedestrians = []
+        for ped in self._pedestrians:
+            ped['x'] += ped['direction'] * ped['speed']
+
+            # Keep pedestrian if still on screen (with margin)
+            if -10 < ped['x'] < self.width + 10:
+                new_pedestrians.append(ped)
+
+        self._pedestrians = new_pedestrians
 
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
@@ -1273,6 +1362,9 @@ class AlleyScene:
                     except curses.error:
                         pass
 
+        # Render pedestrians on the sidewalk
+        self._render_pedestrians(screen)
+
         # Render cars on the street
         self._render_cars(screen)
 
@@ -1281,21 +1373,50 @@ class AlleyScene:
 
     def _render_cars(self, screen):
         """Render cars on the street."""
+        # Cars are 2 rows tall, bottom row at street level
         street_y = self.height - 1
 
         for car in self._cars:
             x = int(car['x'])
             sprite = car['sprite']
+            sprite_height = len(sprite)
 
             for row_idx, row in enumerate(sprite):
                 for col_idx, char in enumerate(row):
                     px = x + col_idx
-                    py = street_y
+                    # Position sprite so bottom row is at street level
+                    py = street_y - (sprite_height - 1 - row_idx)
 
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
                             # Cars are white/bright
                             attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_pedestrians(self, screen):
+        """Render pedestrians on the sidewalk (curb level)."""
+        # Pedestrians walk on the curb/sidewalk area
+        curb_y = self.height - 2
+
+        for ped in self._pedestrians:
+            x = int(ped['x'])
+            sprite = ped['sprite']
+            sprite_height = len(sprite)
+
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    px = x + col_idx
+                    # Position sprite so bottom row is at curb level
+                    py = curb_y - (sprite_height - 1 - row_idx)
+
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            # Pedestrians in muted color
+                            attr = curses.color_pair(Colors.ALLEY_MID)
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
