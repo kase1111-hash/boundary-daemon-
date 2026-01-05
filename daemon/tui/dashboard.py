@@ -230,6 +230,7 @@ class WeatherMode(Enum):
     RAIN = "rain"          # Blue rain
     SNOW = "snow"          # White/gray snow
     SAND = "sand"          # Brown/yellow sandstorm
+    CALM = "calm"          # No particles, just wind (leaves/debris)
 
     @property
     def display_name(self) -> str:
@@ -239,6 +240,7 @@ class WeatherMode(Enum):
             WeatherMode.RAIN: "Rain",
             WeatherMode.SNOW: "Snow",
             WeatherMode.SAND: "Sandstorm",
+            WeatherMode.CALM: "Calm",
         }.get(self, self.value.title())
 
 
@@ -275,6 +277,13 @@ class MatrixRain:
             ",:;~^",  # Layer 3: Coarse sand
             "~^°º",  # Layer 4: Larger particles
         ],
+        WeatherMode.CALM: [
+            "",  # Layer 0: No particles
+            "",  # Layer 1: No particles
+            "",  # Layer 2: No particles
+            "",  # Layer 3: No particles
+            "",  # Layer 4: No particles (wind effects only)
+        ],
     }
 
     # Weather-specific speed multipliers (relative to base speeds)
@@ -283,6 +292,7 @@ class MatrixRain:
         WeatherMode.RAIN: 1.2,   # Rain falls fast
         WeatherMode.SNOW: 0.4,   # Base snow speed (modified per-depth below)
         WeatherMode.SAND: 0.15,  # Sand falls very slowly (blows horizontally instead)
+        WeatherMode.CALM: 0.0,   # No particles falling
     }
 
     # Snow-specific speeds: big flakes fall FASTER than small ones (opposite of rain)
@@ -301,6 +311,7 @@ class MatrixRain:
         WeatherMode.RAIN: None,    # Use default DEPTH_LENGTHS
         WeatherMode.SNOW: [(1, 1), (1, 1), (1, 2), (1, 2), (1, 2)],  # Single flakes
         WeatherMode.SAND: [(1, 1), (1, 1), (1, 1), (1, 2), (1, 2)],  # Tiny grains
+        WeatherMode.CALM: [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],  # No particles
     }
 
     # Weather-specific horizontal movement
@@ -309,6 +320,7 @@ class MatrixRain:
         WeatherMode.RAIN: (-0.1, 0.1),    # Slight wind variation
         WeatherMode.SNOW: (-0.4, 0.4),    # Gentle drift both ways
         WeatherMode.SAND: (1.5, 3.0),     # Strong wind blowing right
+        WeatherMode.CALM: (0, 0),         # No particles to move
     }
 
     # Weather-specific color mappings (bright, dim, fade1, fade2)
@@ -317,6 +329,7 @@ class MatrixRain:
         WeatherMode.RAIN: (Colors.RAIN_BRIGHT, Colors.RAIN_DIM, Colors.RAIN_FADE1, Colors.RAIN_FADE2),
         WeatherMode.SNOW: (Colors.SNOW_BRIGHT, Colors.SNOW_DIM, Colors.SNOW_FADE, Colors.SNOW_FADE),
         WeatherMode.SAND: (Colors.SAND_BRIGHT, Colors.SAND_DIM, Colors.SAND_FADE, Colors.SAND_FADE),
+        WeatherMode.CALM: (Colors.MATRIX_DIM, Colors.MATRIX_FADE1, Colors.MATRIX_FADE2, Colors.MATRIX_FADE3),
     }
 
     # 5 depth layers - each with different character sets (simple=far, complex=near)
@@ -1028,14 +1041,23 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
+    # Shell logo for Shell Cafe
+    SHELL_LOGO = [
+        "  .--.",
+        " /    \\",
+        "|  ()  |",
+        " \\    /",
+        "  '--'",
+    ]
+
     CAFE = [
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
-        "  |                          |  ",
-        "  |  [====]    O     [====]  |  ",
-        "  |  [    ]   /|\\    [    ]  |  ",
-        "  |  [    ]  [===]   [    ]  |  ",
-        "  |  [====]          [====]  |  ",
+        "  |   .--.                   |  ",
+        "  |  /    \\   O     [====]  |  ",
+        "  | |  ()  | /|\\    [    ]  |  ",
+        "  |  \\    / [===]   [    ]  |  ",
+        "  |   '--'          [====]  |  ",
         "  |                          |  ",
         "  |  [====]          [====]  |  ",
         "  |  [    ]          [    ]  |  ",
@@ -1345,6 +1367,30 @@ class AlleyScene:
         ["[=]", "\\|/", "[H]", " | "],    # Agent Smith
     ]
 
+    # UFO for abduction event
+    UFO_SPRITE = [
+        "    ___    ",
+        " __/   \\__ ",
+        "/  o   o  \\",
+        "\\____*____/",
+    ]
+
+    # Tractor beam (extends below UFO)
+    TRACTOR_BEAM = [
+        "    |||    ",
+        "   |||||   ",
+        "  |||||||  ",
+        " ||||||||| ",
+    ]
+
+    # Cow being abducted
+    COW_SPRITE = [
+        " ^__^",
+        " (oo)",
+        "/----\\",
+        "||  ||",
+    ]
+
     # Street light - taller pole
     STREET_LIGHT = [
         " ___ ",
@@ -1610,6 +1656,17 @@ class AlleyScene:
         self._open_sign_phase = 0  # 0=off, 1=O, 2=OP, 3=OPE, 4=OPEN, 5-9=flash
         self._open_sign_timer = 0
         self._open_sign_speed = 2  # Frames per phase (10x faster)
+        # Calm mode flag - more debris/leaves, no particles
+        self._calm_mode = False
+        # UFO abduction event - super rare
+        self._ufo_active = False
+        self._ufo_state = 'idle'  # idle, descend, abduct, ascend, cooldown
+        self._ufo_timer = 0
+        self._ufo_cooldown = 0
+        self._ufo_x = 0.0
+        self._ufo_y = 0.0
+        self._ufo_target_y = 0.0
+        self._cow_y = 0.0  # Cow being abducted
         # Cloud layer with wisps
         self._clouds: List[Dict] = []
         self._init_clouds()
@@ -1904,6 +1961,60 @@ class AlleyScene:
                 self._woman_red_active = False
                 self._woman_red_cooldown = 3000  # Long cooldown before next event
 
+    def set_calm_mode(self, calm: bool):
+        """Set calm mode - more debris/leaves, less mid-screen clutter."""
+        self._calm_mode = calm
+
+    def _update_ufo(self):
+        """Update UFO cow abduction event - super rare."""
+        # Handle cooldown
+        if self._ufo_cooldown > 0:
+            self._ufo_cooldown -= 1
+            return
+
+        # Very rare chance to trigger UFO event (about 1 in 50000 frames ~ once per 15 min)
+        if not self._ufo_active and random.random() < 0.00002:
+            self._ufo_active = True
+            self._ufo_state = 'descend'
+            self._ufo_timer = 0
+            # Position UFO above a building (behind building gap)
+            building1_right = self._building_x + len(self.BUILDING[0])
+            building2_left = self._building2_x if self._building2_x > 0 else self.width
+            gap_center = (building1_right + building2_left) // 2
+            self._ufo_x = float(gap_center)
+            self._ufo_y = -10.0  # Start above screen
+            self._ufo_target_y = float(self.height // 2 + 5)  # Descend to mid-low area
+            self._cow_y = self._ufo_target_y + 8  # Cow starts below UFO target
+
+        if not self._ufo_active:
+            return
+
+        self._ufo_timer += 1
+
+        if self._ufo_state == 'descend':
+            # UFO descends slowly behind buildings
+            self._ufo_y += 0.3
+            if self._ufo_y >= self._ufo_target_y:
+                self._ufo_y = self._ufo_target_y
+                self._ufo_state = 'abduct'
+                self._ufo_timer = 0
+
+        elif self._ufo_state == 'abduct':
+            # Cow rises up in tractor beam
+            self._cow_y -= 0.15
+            if self._cow_y <= self._ufo_y + len(self.UFO_SPRITE):
+                self._ufo_state = 'ascend'
+                self._ufo_timer = 0
+
+        elif self._ufo_state == 'ascend':
+            # UFO ascends with cow
+            self._ufo_y -= 0.4
+            self._cow_y = self._ufo_y + len(self.UFO_SPRITE)  # Cow attached
+            if self._ufo_y < -15:
+                self._ufo_state = 'idle'
+                self._ufo_active = False
+                self._ufo_cooldown = 36000  # ~10 minute cooldown
+
     def _update_wind(self):
         """Update windy city weather - debris, leaves, and wind wisps."""
         curb_y = self.height - 4
@@ -1919,11 +2030,16 @@ class AlleyScene:
         # Update tree sway animation
         self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
 
+        # Calm mode: faster debris spawn, more debris allowed
+        debris_spawn_min = 5 if self._calm_mode else 15
+        debris_spawn_max = 15 if self._calm_mode else 40
+        max_debris = 20 if self._calm_mode else 8
+
         # Spawn debris (newspapers, trash) on streets - spawn from upwind side
         self._debris_spawn_timer += 1
-        if self._debris_spawn_timer >= random.randint(15, 40):
+        if self._debris_spawn_timer >= random.randint(debris_spawn_min, debris_spawn_max):
             self._debris_spawn_timer = 0
-            if len(self._debris) < 8:
+            if len(self._debris) < max_debris:
                 debris_type = random.choice(['newspaper', 'trash'])
                 chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
                 # Spawn from upwind side
@@ -1940,11 +2056,16 @@ class AlleyScene:
                     'wobble': random.uniform(0, 6.28),
                 })
 
+        # Calm mode: fewer wind wisps (less mid-screen clutter)
+        max_wisps = 2 if self._calm_mode else 5
+        wisp_spawn_min = 60 if self._calm_mode else 30
+        wisp_spawn_max = 120 if self._calm_mode else 60
+
         # Spawn wind wisps in sky - spawn from upwind side
         self._wind_wisp_timer += 1
-        if self._wind_wisp_timer >= random.randint(30, 60):
+        if self._wind_wisp_timer >= random.randint(wisp_spawn_min, wisp_spawn_max):
             self._wind_wisp_timer = 0
-            if len(self._wind_wisps) < 5:
+            if len(self._wind_wisps) < max_wisps:
                 wisp_length = random.randint(3, 8)
                 wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
                 if self._wind_direction > 0:
@@ -1958,10 +2079,14 @@ class AlleyScene:
                     'speed': random.uniform(1.0, 2.5),
                 })
 
+        # Calm mode: more leaves
+        leaf_chance = 0.08 if self._calm_mode else 0.03
+        max_leaves = 30 if self._calm_mode else 15
+
         # Spawn leaves from trees
         for tree_x, tree_y in self._tree_positions:
-            if random.random() < 0.03:  # 3% chance per tree per frame
-                if len(self._leaves) < 15:
+            if random.random() < leaf_chance:
+                if len(self._leaves) < max_leaves:
                     self._leaves.append({
                         'x': float(tree_x + random.randint(2, 7)),
                         'y': float(tree_y + random.randint(0, 3)),
@@ -2464,6 +2589,71 @@ class AlleyScene:
                                 screen.attroff(attr)
                             except curses.error:
                                 pass
+
+    def _render_ufo(self, screen):
+        """Render UFO cow abduction event."""
+        if not self._ufo_active:
+            return
+
+        ufo_x = int(self._ufo_x) - len(self.UFO_SPRITE[0]) // 2
+        ufo_y = int(self._ufo_y)
+
+        # Render tractor beam first (behind cow)
+        if self._ufo_state in ('abduct', 'ascend'):
+            beam_x = ufo_x + (len(self.UFO_SPRITE[0]) - len(self.TRACTOR_BEAM[0])) // 2
+            beam_y = ufo_y + len(self.UFO_SPRITE)
+            for row_idx, row in enumerate(self.TRACTOR_BEAM):
+                # Repeat beam to reach cow
+                py = beam_y + row_idx
+                while py < int(self._cow_y):
+                    for col_idx, char in enumerate(row):
+                        px = beam_x + col_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                # Green tractor beam
+                                attr = curses.color_pair(Colors.MATRIX_DIM)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+                    py += len(self.TRACTOR_BEAM)
+
+        # Render UFO
+        for row_idx, row in enumerate(self.UFO_SPRITE):
+            py = ufo_y + row_idx
+            for col_idx, char in enumerate(row):
+                px = ufo_x + col_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        if char in 'o*':
+                            # Lights - yellow
+                            attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                        else:
+                            # Body - silver/white
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render cow (during abduct or ascend)
+        if self._ufo_state in ('abduct', 'ascend'):
+            cow_x = int(self._ufo_x) - len(self.COW_SPRITE[0]) // 2
+            cow_y = int(self._cow_y)
+            for row_idx, row in enumerate(self.COW_SPRITE):
+                py = cow_y + row_idx
+                for col_idx, char in enumerate(row):
+                    px = cow_x + col_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            attr = curses.color_pair(Colors.ALLEY_MID)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
 
     def _generate_scene(self):
         """Generate scene with buildings, dumpster, box, curb, street, and street lights."""
@@ -3121,6 +3311,9 @@ class AlleyScene:
         # Update meteor QTE event
         self._update_qte()
 
+        # Update UFO abduction event
+        self._update_ufo()
+
         # Update skyline window lights
         self._update_skyline_windows()
 
@@ -3633,6 +3826,9 @@ class AlleyScene:
         """Render the alley scene to the screen with proper layering."""
         # Render clouds first (behind everything)
         self._render_clouds(screen)
+
+        # Render UFO event (in sky, behind buildings)
+        self._render_ufo(screen)
 
         # Render static scene elements (except window frames - those go on top)
         for y, row in enumerate(self.scene):
@@ -6061,6 +6257,9 @@ class Dashboard:
                 new_mode = self.matrix_rain.cycle_weather()
                 # Store for header display
                 self._current_weather = new_mode
+                # Sync calm mode to alley scene
+                if self.alley_scene:
+                    self.alley_scene.set_calm_mode(new_mode == WeatherMode.CALM)
         elif key == ord('f') or key == ord('F'):
             # Cycle framerate (only in matrix mode)
             if self.matrix_mode:
