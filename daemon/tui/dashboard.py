@@ -1360,57 +1360,57 @@ class AlleyScene:
     # Person walking animation frames (arm swinging) - basic person
     # Pedestrian sprites with leg animation (4 frames for walking cycle)
     PERSON_RIGHT_FRAMES = [
-        [" O ", "/| ", " | ", "/ \\"],   # Right arm back, legs apart
-        [" O ", " |\\", " | ", " | "],   # Left arm back, legs together
-        [" O ", "/| ", " | ", "\\ /"],   # Right arm back, legs crossed
-        [" O ", " |\\", " | ", " | "],   # Left arm back, legs together
+        [" O ", "/| ", " | ", "/| "],   # Right arm back, right leg forward
+        [" O ", " |\\", " | ", "|| "],   # Left arm back, legs together
+        [" O ", "/| ", " | ", "|\\ "],   # Right arm back, left leg back
+        [" O ", " |\\", " | ", "|| "],   # Left arm back, legs together
     ]
     PERSON_LEFT_FRAMES = [
-        [" O ", " |\\", " | ", "/ \\"],  # Left arm back, legs apart
-        [" O ", "/| ", " | ", " | "],   # Right arm back, legs together
-        [" O ", " |\\", " | ", "\\ /"],  # Left arm back, legs crossed
-        [" O ", "/| ", " | ", " | "],   # Right arm back, legs together
+        [" O ", " |\\", " | ", " |\\"],  # Left arm back, left leg forward
+        [" O ", "/| ", " | ", " ||"],   # Right arm back, legs together
+        [" O ", " |\\", " | ", " /|"],  # Left arm back, right leg back
+        [" O ", "/| ", " | ", " ||"],   # Right arm back, legs together
     ]
 
     # Person with hat (= on head) - with leg animation
     PERSON_HAT_RIGHT_FRAMES = [
-        [" = ", " O ", "/| ", "/ \\"],   # Hat, legs apart
-        [" = ", " O ", " |\\", " | "],   # Hat, legs together
-        [" = ", " O ", "/| ", "\\ /"],   # Hat, legs crossed
-        [" = ", " O ", " |\\", " | "],   # Hat, legs together
+        [" = ", " O ", "/| ", "/| "],   # Hat, right leg forward
+        [" = ", " O ", " |\\", "|| "],   # Hat, legs together
+        [" = ", " O ", "/| ", "|\\ "],   # Hat, left leg back
+        [" = ", " O ", " |\\", "|| "],   # Hat, legs together
     ]
     PERSON_HAT_LEFT_FRAMES = [
-        [" = ", " O ", " |\\", "/ \\"],  # Hat, legs apart
-        [" = ", " O ", "/| ", " | "],   # Hat, legs together
-        [" = ", " O ", " |\\", "\\ /"],  # Hat, legs crossed
-        [" = ", " O ", "/| ", " | "],   # Hat, legs together
+        [" = ", " O ", " |\\", " |\\"],  # Hat, left leg forward
+        [" = ", " O ", "/| ", " ||"],   # Hat, legs together
+        [" = ", " O ", " |\\", " /|"],  # Hat, right leg back
+        [" = ", " O ", "/| ", " ||"],   # Hat, legs together
     ]
 
     # Person with briefcase (# carried) - with leg animation
     PERSON_BRIEFCASE_RIGHT_FRAMES = [
-        [" O ", "/|#", " | ", "/ \\"],   # Briefcase, legs apart
-        [" O ", " |#", " | ", " | "],   # Briefcase, legs together
-        [" O ", "/|#", " | ", "\\ /"],   # Briefcase, legs crossed
-        [" O ", " |#", " | ", " | "],   # Briefcase, legs together
+        [" O ", "/|#", " | ", "/| "],   # Briefcase, right leg forward
+        [" O ", " |#", " | ", "|| "],   # Briefcase, legs together
+        [" O ", "/|#", " | ", "|\\ "],   # Briefcase, left leg back
+        [" O ", " |#", " | ", "|| "],   # Briefcase, legs together
     ]
     PERSON_BRIEFCASE_LEFT_FRAMES = [
-        [" O ", "#|\\", " | ", "/ \\"],  # Briefcase, legs apart
-        [" O ", "#| ", " | ", " | "],   # Briefcase, legs together
-        [" O ", "#|\\", " | ", "\\ /"],  # Briefcase, legs crossed
-        [" O ", "#| ", " | ", " | "],   # Briefcase, legs together
+        [" O ", "#|\\", " | ", " |\\"],  # Briefcase, left leg forward
+        [" O ", "#| ", " | ", " ||"],   # Briefcase, legs together
+        [" O ", "#|\\", " | ", " /|"],  # Briefcase, right leg back
+        [" O ", "#| ", " | ", " ||"],   # Briefcase, legs together
     ]
 
     # Person with skirt (A-line shape) - with leg animation
     PERSON_SKIRT_RIGHT_FRAMES = [
-        [" O ", "/| ", "/A\\", "> |"],   # Skirt, walking right
+        [" O ", "/| ", "/A\\", "> |"],   # Skirt, right knee forward
         [" O ", " |\\", "/A\\", "| |"],   # Skirt, legs together
-        [" O ", "/| ", "/A\\", "| <"],   # Skirt, walking left
+        [" O ", "/| ", "/A\\", "| >"],   # Skirt, left knee forward (still facing right)
         [" O ", " |\\", "/A\\", "| |"],   # Skirt, legs together
     ]
     PERSON_SKIRT_LEFT_FRAMES = [
-        [" O ", " |\\", "/A\\", "| <"],  # Skirt, walking left
+        [" O ", " |\\", "/A\\", "| <"],  # Skirt, left knee forward
         [" O ", "/| ", "/A\\", "| |"],  # Skirt, legs together
-        [" O ", " |\\", "/A\\", "> |"],  # Skirt, walking right
+        [" O ", " |\\", "/A\\", "< |"],  # Skirt, right knee forward (still facing left)
         [" O ", "/| ", "/A\\", "| |"],  # Skirt, legs together
     ]
 
@@ -1744,17 +1744,55 @@ class AlleyScene:
         self._generate_scene()
 
     def _init_clouds(self):
-        """Initialize cloud layer with wisps."""
+        """Initialize cloud layer with cumulus clouds and wisps."""
         self._clouds = []
-        # Create upper cloud bank (solid layer at top)
-        # Create several cloud wisps that drift across
-        num_clouds = max(3, self.width // 40)
+
+        # Create big, slow-moving cumulus clouds (closer, more detailed)
+        num_cumulus = max(2, self.width // 60)
+        for i in range(num_cumulus):
+            # Large cumulus cloud shapes
+            self._clouds.append({
+                'x': random.uniform(0, self.width),
+                'y': random.randint(4, 8),  # Mid-sky area
+                'speed': random.uniform(0.02, 0.05),  # Very slow movement
+                'type': 'cumulus',
+                'chars': random.choice([
+                    # Big puffy cumulus
+                    ['      .-~~~-.      ',
+                     '    .~       ~.    ',
+                     '   (    ~~~    )   ',
+                     '  (  .~     ~.  )  ',
+                     ' (  (         )  ) ',
+                     '  ~~           ~~  '],
+                    # Wide cumulus
+                    ['    .--~~~--.    ',
+                     '  .~         ~.  ',
+                     ' (    ~~~~~    ) ',
+                     '(               )',
+                     ' ~~~~~~~~~~~~~~~'],
+                    # Tall cumulus
+                    ['     .~~.     ',
+                     '   .~    ~.   ',
+                     '  (        )  ',
+                     ' (    ~~    ) ',
+                     '(            )',
+                     ' ~~~~~~~~~~~~'],
+                    # Smaller cumulus
+                    ['   .~~~.   ',
+                     ' .~     ~. ',
+                     '(         )',
+                     ' ~~~~~~~~~'],
+                ]),
+            })
+
+        # Create smaller main clouds
+        num_clouds = max(2, self.width // 50)
         for i in range(num_clouds):
             # Main cloud body
             self._clouds.append({
                 'x': random.uniform(0, self.width),
-                'y': random.randint(2, 5),  # Upper area
-                'speed': random.uniform(0.05, 0.15),
+                'y': random.randint(3, 6),  # Upper area
+                'speed': random.uniform(0.05, 0.12),
                 'type': 'main',
                 'chars': random.choice([
                     ['  ___  ', ' (   ) ', '(_____)', '  ~~~  '],
@@ -1766,8 +1804,8 @@ class AlleyScene:
             for _ in range(2):
                 self._clouds.append({
                     'x': random.uniform(0, self.width),
-                    'y': random.randint(5, 10),
-                    'speed': random.uniform(0.08, 0.2),
+                    'y': random.randint(6, 12),
+                    'speed': random.uniform(0.08, 0.18),
                     'type': 'wisp',
                     'char': random.choice(['~', '≈', '-', '.']),
                     'length': random.randint(3, 8),
@@ -1778,7 +1816,7 @@ class AlleyScene:
         for cloud in self._clouds:
             cloud['x'] += cloud['speed']
             # Wrap around
-            if cloud['type'] == 'main':
+            if cloud['type'] in ['main', 'cumulus']:
                 cloud_width = len(cloud['chars'][0]) if cloud['chars'] else 5
                 if cloud['x'] > self.width + cloud_width:
                     cloud['x'] = -cloud_width
@@ -2228,6 +2266,10 @@ class AlleyScene:
 
     def _update_skyline_windows(self):
         """Update animated skyline windows - toggle lights on/off."""
+        # Get visibility bounds (set during _draw_distant_buildings)
+        vis_left = getattr(self, '_skyline_visible_left', 0)
+        vis_right = getattr(self, '_skyline_visible_right', self.width)
+
         for window in self._skyline_windows:
             if not window['animated']:
                 continue
@@ -2236,9 +2278,9 @@ class AlleyScene:
             if window['timer'] >= window['toggle_time']:
                 window['timer'] = 0
                 window['on'] = not window['on']
-                # Update the scene with new window state
+                # Update the scene with new window state (only if in visible region)
                 px, py = window['x'], window['y']
-                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                if vis_left <= px <= vis_right and 0 <= py < self.height:
                     if window['on']:
                         self.scene[py][px] = ('▪', Colors.RAT_YELLOW)
                     else:
@@ -2247,21 +2289,26 @@ class AlleyScene:
     def _render_clouds(self, screen):
         """Render cloud layer."""
         for cloud in self._clouds:
-            if cloud['type'] == 'main':
-                # Render multi-line cloud
+            if cloud['type'] in ['main', 'cumulus']:
+                # Render multi-line cloud (main or cumulus)
+                # Cumulus clouds are brighter (no A_DIM)
                 for row_idx, row in enumerate(cloud['chars']):
                     for col_idx, char in enumerate(row):
                         px = int(cloud['x']) + col_idx
                         py = cloud['y'] + row_idx
                         if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
                             try:
-                                attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                                if cloud['type'] == 'cumulus':
+                                    # Cumulus clouds are brighter/closer
+                                    attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                                else:
+                                    attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
                                 screen.attron(attr)
                                 screen.addstr(py, px, char)
                                 screen.attroff(attr)
                             except curses.error:
                                 pass
-            else:
+            elif cloud['type'] == 'wisp':
                 # Render wisp
                 for i in range(cloud['length']):
                     px = int(cloud['x']) + i
@@ -2462,7 +2509,7 @@ class AlleyScene:
                 self.scene[row][x] = (char, Colors.GREY_BLOCK)
 
     def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int):
-        """Draw distant building skyline across the full screen with skyscrapers and window lights."""
+        """Draw distant building skyline in visible areas (gap between main buildings)."""
         # Initialize skyline windows list
         self._skyline_windows = []
         self._skyline_buildings = []
@@ -2475,46 +2522,69 @@ class AlleyScene:
         # Skyline base y (where buildings touch the "horizon")
         skyline_y = ground_y - 8
 
-        # Generate buildings across the FULL width of the screen
-        pos_x = 2
-        while pos_x < self.width - 5:
-            # Randomly choose building type
-            btype = random.choice(['tiny', 'small', 'medium', 'tall', 'skyscraper', 'wide'])
+        # Store visible regions for skyline (only in gap between main buildings)
+        # left_boundary = building1_right, right_boundary = building2_x
+        # Also account for building2_right for far right area
+        building2_right = right_boundary + len(self.BUILDING2[0]) if right_boundary > 0 else self.width
 
-            # Determine building dimensions based on type
-            if btype == 'tiny':
-                width = random.randint(3, 4)
-                height = random.randint(3, 5)
-            elif btype == 'small':
-                width = random.randint(4, 6)
-                height = random.randint(5, 8)
-            elif btype == 'medium':
-                width = random.randint(5, 8)
-                height = random.randint(8, 12)
-            elif btype == 'tall':
-                width = random.randint(4, 6)
-                height = random.randint(12, 18)
-            elif btype == 'skyscraper':
-                width = random.randint(6, 10)
-                height = random.randint(18, 28)
-            else:  # wide
-                width = random.randint(8, 12)
-                height = random.randint(6, 10)
+        # Visible regions: only the center gap between buildings
+        # The main buildings cover x=9 to building1_right and building2_x to building2_right
+        visible_regions = []
 
-            # Calculate building position
-            building_top = skyline_y - height
-            building_bottom = skyline_y
+        # Center gap (between main buildings)
+        if left_boundary < right_boundary:
+            visible_regions.append((left_boundary + 1, right_boundary - 1))
 
-            # Skip if this would overlap with cafe
-            if not (cafe_left - 3 < pos_x < cafe_right + 3):
-                # Draw the building silhouette
-                self._draw_skyline_building(pos_x, building_top, width, height, btype)
+        # Store for visibility checking during window updates
+        self._skyline_visible_left = left_boundary + 1
+        self._skyline_visible_right = right_boundary - 1
 
-            # Move to next position with slight gap
-            pos_x += width + random.randint(1, 3)
+        # Generate buildings ONLY in visible center gap
+        for region_left, region_right in visible_regions:
+            pos_x = region_left + 1
+            while pos_x < region_right - 5:
+                # Skip cafe area
+                if cafe_left - 2 < pos_x < cafe_right + 2:
+                    pos_x = cafe_right + 2
+                    continue
 
-    def _draw_skyline_building(self, x: int, top_y: int, width: int, height: int, btype: str):
-        """Draw a single skyline building with windows."""
+                # Randomly choose building type (more variety in center)
+                btype = random.choice(['tiny', 'small', 'medium', 'tall', 'skyscraper', 'wide'])
+
+                # Determine building dimensions based on type
+                if btype == 'tiny':
+                    width = random.randint(3, 4)
+                    height = random.randint(3, 5)
+                elif btype == 'small':
+                    width = random.randint(4, 6)
+                    height = random.randint(5, 8)
+                elif btype == 'medium':
+                    width = random.randint(5, 8)
+                    height = random.randint(8, 12)
+                elif btype == 'tall':
+                    width = random.randint(4, 6)
+                    height = random.randint(12, 18)
+                elif btype == 'skyscraper':
+                    width = random.randint(6, 10)
+                    height = random.randint(18, 28)
+                else:  # wide
+                    width = random.randint(8, 12)
+                    height = random.randint(6, 10)
+
+                # Calculate building position
+                building_top = skyline_y - height
+
+                # Make sure building fits in region
+                if pos_x + width < region_right:
+                    self._draw_skyline_building(pos_x, building_top, width, height, btype,
+                                                region_left, region_right)
+
+                # Move to next position with slight gap
+                pos_x += width + random.randint(1, 3)
+
+    def _draw_skyline_building(self, x: int, top_y: int, width: int, height: int, btype: str,
+                                region_left: int, region_right: int):
+        """Draw a single skyline building with windows in visible region only."""
         # Draw building outline/fill
         for row in range(height):
             py = top_y + row
@@ -2524,6 +2594,9 @@ class AlleyScene:
             for col in range(width):
                 px = x + col
                 if px < 0 or px >= self.width - 1:
+                    continue
+                # Skip if outside visible region
+                if px < region_left or px > region_right:
                     continue
 
                 # Determine character based on position
@@ -2573,6 +2646,9 @@ class AlleyScene:
             for col in range(window_start_col, window_end_col, col_spacing):
                 px = x + col
                 if px < 0 or px >= self.width - 1:
+                    continue
+                # Skip windows outside visible region
+                if px < region_left or px > region_right:
                     continue
 
                 # Determine if window is on, off, or animated
