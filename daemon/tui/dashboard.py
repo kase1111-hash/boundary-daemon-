@@ -1157,10 +1157,11 @@ class AlleyScene:
         "|=====|",
     ]
 
-    # Cardboard box ASCII art (5 wide x 3 tall) - filled to prevent see-through
+    # Cardboard box ASCII art (5 wide x 4 tall) - filled with hashtags, white label
     BOX = [
         " ___ ",
         "|###|",
+        "|#X#|",
         "|___|",
     ]
 
@@ -1173,12 +1174,18 @@ class AlleyScene:
         "  ||  ",
     ]
 
-    # Cafe storefront (well-lit, between buildings) - larger size
+    # Cafe storefront (well-lit, between buildings) - taller size
     CAFE = [
         "   _______________________   ",
         "  |      C A F E         |  ",
         "  |                      |  ",
         "  |  [====]      [====]  |  ",
+        "  |  [    ]      [    ]  |  ",
+        "  |  [    ]      [    ]  |  ",
+        "  |  [====]      [====]  |  ",
+        "  |                      |  ",
+        "  |  [====]      [====]  |  ",
+        "  |  [    ]      [    ]  |  ",
         "  |  [    ]      [    ]  |  ",
         "  |  [====]      [====]  |  ",
         "  |                      |  ",
@@ -1330,14 +1337,14 @@ class AlleyScene:
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [========]    [====]  [====]    [========]    [====]        |",
-        "|                              _________                       |",
-        "|                             |  ____  |                       |",
-        "|                             | |    | |                       |",
-        "|                             | |    | |                       |",
-        "|                             | |____| |                       |",
-        "|                             |________|                       |",
-        "|_____________________________|________|_______________________|",
-        "                               ========                         ",
+        "|                              .------.                         |",
+        "|                              |      |                         |",
+        "|                              | [==] |                         |",
+        "|                              |      |                         |",
+        "|                              | [==] |                         |",
+        "|                              |______|                         |",
+        "|_____________________________|______|_________________________|",
+        "                               ======                           ",
     ]
 
     # Second building (right side) - 2X TALL, 2X WIDE with door, porch & steps
@@ -1377,14 +1384,14 @@ class AlleyScene:
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [========]    [====]    [========]    [====]          |",
-        "|   _________                                              |",
-        "|  |  ____  |                                              |",
-        "|  | |    | |                                              |",
-        "|  | |    | |                                              |",
-        "|  | |____| |                                              |",
-        "|  |________|                                              |",
-        "|__|________|______________________________________________|",
-        "    ========                                                ",
+        "|  .------.                                                 |",
+        "|  |      |                                                 |",
+        "|  | [==] |                                                 |",
+        "|  |      |                                                 |",
+        "|  | [==] |                                                 |",
+        "|  |______|                                                 |",
+        "|__|______|_________________________________________________|",
+        "    ======                                                   ",
     ]
 
     # Window positions for people animation (relative to building sprite)
@@ -1587,28 +1594,33 @@ class AlleyScene:
         self.dumpster_y = ground_y - len(self.DUMPSTER) + 1
         self._draw_sprite(self.DUMPSTER, self.dumpster_x, self.dumpster_y, Colors.ALLEY_MID)
 
-        # Place box in the alley between buildings
+        # Place box in front of left building
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
-        self.box_x = gap_center - 20
+        self.box_x = self._building_x + 5  # In front of left building
         self.box_y = ground_y - len(self.BOX) + 1
-        self._draw_sprite(self.BOX, self.box_x, self.box_y, Colors.SAND_DIM)
+        self._draw_box_with_label(self.box_x, self.box_y)
 
         # Place blue mailbox near building 1 (shifted 2 chars left)
         self.mailbox_x = self._building_x + len(self.BUILDING[0]) + 1
         self.mailbox_y = ground_y - len(self.MAILBOX) + 1
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
-        # Calculate cafe position first
-        self.cafe_x = gap_center - len(self.CAFE[0]) // 2
+        # Calculate cafe position first (shifted 8 chars left)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 8
         self.cafe_y = ground_y - len(self.CAFE) + 1
 
         # Draw distant buildings above cafe (behind everything, small, dark grey)
-        self._draw_distant_buildings(gap_center, self.cafe_y)
+        self._draw_distant_buildings(gap_center - 8, self.cafe_y)
 
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
+
+        # Draw crosswalk between cafe and right building
+        cafe_right = self.cafe_x + len(self.CAFE[0])
+        crosswalk_x = cafe_right + 5
+        self._draw_crosswalk(crosswalk_x, curb_y, street_y)
 
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
@@ -2060,6 +2072,32 @@ class AlleyScene:
                 if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                     self.scene[py][px] = (char, color)
 
+    def _draw_box_with_label(self, x: int, y: int):
+        """Draw box with hashtag fill and white label."""
+        for row_idx, row in enumerate(self.BOX):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    if char == 'X':
+                        # White label
+                        self.scene[py][px] = ('#', Colors.ALLEY_LIGHT)
+                    else:
+                        self.scene[py][px] = (char, Colors.SAND_DIM)
+
+    def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
+        """Draw a crosswalk with white stripes."""
+        crosswalk_width = 8
+        for cx in range(crosswalk_width):
+            px = x + cx
+            if 0 <= px < self.width - 1:
+                # Draw white stripes on the street (every 2 chars)
+                if cx % 2 == 0:
+                    if street_y < self.height:
+                        self.scene[street_y][px] = ('█', Colors.ALLEY_LIGHT)
+                    if curb_y < self.height:
+                        self.scene[curb_y][px] = ('▀', Colors.ALLEY_LIGHT)
+
     def _draw_building(self, sprite: List[str], x: int, y: int):
         """Draw a building with grey blocks on bottom half story and red bricks on upper.
 
@@ -2170,9 +2208,9 @@ class AlleyScene:
         for row_idx, row in enumerate(sprite):
             if '.------.' in row:
                 door_col = row.index('.------.')
-                # Door knob should be 2 rows below the top of door frame, on the right side
-                knob_row = row_idx + 4  # Middle of door
-                knob_col = door_col + 7  # Right side of door
+                # Door knob should be in middle of door, on the right side
+                knob_row = row_idx + 3  # Middle of door
+                knob_col = door_col + 6  # Right side of door
                 if knob_row < total_rows:
                     knob_px = x + knob_col
                     knob_py = y + knob_row
