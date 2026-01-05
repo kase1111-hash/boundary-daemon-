@@ -144,6 +144,8 @@ class Colors:
     FOG_BRIGHT = 30      # Bright fog (white)
     FOG_DIM = 31         # Dim fog (gray)
     MATRIX_DARK = 32     # Dark green for rain tails
+    BRICK_RED = 33       # Red brick color for upper building
+    GREY_BLOCK = 34      # Grey block color for lower building
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -216,6 +218,9 @@ class Colors:
         # Fog (gray/white)
         curses.init_pair(Colors.FOG_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.FOG_DIM, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        # Building colors
+        curses.init_pair(Colors.BRICK_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(Colors.GREY_BLOCK, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -290,12 +295,13 @@ class MatrixRain:
     }
 
     # Snow-specific speeds: big flakes fall FASTER than small ones (opposite of rain)
+    # Slowed down for more gentle snowfall
     SNOW_DEPTH_SPEEDS = [
-        0.3,   # Layer 0: Small flakes - slowest
-        0.4,   # Layer 1: Small-medium
-        0.6,   # Layer 2: Medium
-        0.9,   # Layer 3: Big - faster
-        1.2,   # Layer 4: Biggest - fastest
+        0.15,  # Layer 0: Small flakes - slowest
+        0.2,   # Layer 1: Small-medium
+        0.3,   # Layer 2: Medium
+        0.45,  # Layer 3: Big - faster
+        0.6,   # Layer 4: Biggest - fastest
     ]
 
     # Weather-specific length multipliers (sand/snow = short particles)
@@ -380,6 +386,8 @@ class MatrixRain:
 
         # Snow-specific state: stuck snowflakes that fade over time
         self._stuck_snow: List[Dict] = []
+        # Snow filter callback - returns True if position is valid for snow collection
+        self._snow_filter: Optional[callable] = None
 
         # Snow wind gusts - temporary bursts of sideways movement
         self._snow_gusts: List[Dict] = []
@@ -408,6 +416,13 @@ class MatrixRain:
                 self._init_snow_gusts()
             if mode == WeatherMode.SAND:
                 self._init_sand_gusts()
+
+    def set_snow_filter(self, filter_func: callable):
+        """Set a callback function that checks if a position is valid for snow collection.
+
+        The function should accept (x, y) and return True if snow can collect there.
+        """
+        self._snow_filter = filter_func
 
     def cycle_weather(self) -> WeatherMode:
         """Cycle to the next weather mode and return the new mode."""
@@ -694,6 +709,10 @@ class MatrixRain:
 
     def _add_stuck_snow(self, x: int, y: int, depth: int, char: str):
         """Add a snowflake that has stuck to the screen."""
+        # Check if position is valid for snow collection
+        if self._snow_filter and not self._snow_filter(x, y):
+            return  # Position is not valid for snow collection
+
         # Limit total stuck snow to prevent memory issues (4x accumulation)
         if len(self._stuck_snow) < 800:
             self._stuck_snow.append({
@@ -1326,18 +1345,22 @@ class AlleyScene:
 
         # Draw first building wireframe in background (left side)
         # Position building so its bottom edge is at ground level
-        self._building_x = 3
+        # Shifted 6 chars toward center (right)
+        # Uses grey blocks on bottom half story, red bricks on upper portions
+        self._building_x = 9
         self._building_y = ground_y - len(self.BUILDING) + 1
-        self._draw_sprite(self.BUILDING, self._building_x, max(1, self._building_y), Colors.ALLEY_BLUE)
+        self._draw_building(self.BUILDING, self._building_x, max(1, self._building_y))
         self._building_bottom_y = ground_y  # Store for rat constraint
 
         # Draw second building on the right side
+        # Shifted 6 chars toward center (left)
+        # Uses grey blocks on bottom half story, red bricks on upper portions
         if self.width > 60:
-            self._building2_x = self.width - len(self.BUILDING2[0]) - 5
+            self._building2_x = self.width - len(self.BUILDING2[0]) - 11
             self._building2_y = ground_y - len(self.BUILDING2) + 1
-            self._draw_sprite(self.BUILDING2, self._building2_x, max(1, self._building2_y), Colors.ALLEY_BLUE)
+            self._draw_building(self.BUILDING2, self._building2_x, max(1, self._building2_y))
 
-        # Draw street lights along the scene
+        # Draw street lights between buildings (in the gap)
         self._draw_street_lights(ground_y)
 
         # Draw curb - solid line separating alley from street (at bottom)
@@ -1372,14 +1395,64 @@ class AlleyScene:
         # Position lights so they stand on the ground
         light_y = ground_y - light_height + 1
 
-        # Place street lights at intervals
+        # Place street lights between the buildings (in the alley gap)
         self._street_light_positions = []
-        light_x_positions = [45, self.width - 15]  # One in middle-ish, one on right
+        # Calculate gap between buildings
+        building1_right = self._building_x + len(self.BUILDING[0])
+        building2_left = self._building2_x if self._building2_x > 0 else self.width
+        gap_center = (building1_right + building2_left) // 2
+        # Position lights in the gap between buildings
+        light_x_positions = [gap_center - 8, gap_center + 8]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
                 # Store position for flicker effect (center of light head)
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
+
+    def is_valid_snow_position(self, x: int, y: int) -> bool:
+        """Check if a position is valid for snow to collect.
+
+        Snow can collect on: roof, window sills, ground, dumpster, box, curb.
+        Snow should NOT collect on: building face (walls, between windows).
+        """
+        # Always allow snow on the ground/curb area (bottom 5 rows)
+        ground_y = self.height - 5
+        if y >= ground_y:
+            return True
+
+        # Check if position is on roof (within 2 rows of building top)
+        if y <= self._building_y + 1 or y <= self._building2_y + 1:
+            return True
+
+        # Check if position is in the gap between buildings (alley)
+        building1_right = self._building_x + len(self.BUILDING[0])
+        building2_left = self._building2_x if self._building2_x > 0 else self.width
+        if building1_right < x < building2_left:
+            return True  # In the alley gap, allow snow
+
+        # Check if position is on a window sill (rows with [====] pattern - every 6-7 rows)
+        # Window sill rows relative to building top are: row 7, 13, 19, 25, 31 (bottom of each window section)
+        # These correspond to building_y + row_offset
+        building_sill_offsets = [7, 13, 19, 25, 31]
+
+        # Check building 1
+        if self._building_x <= x < self._building_x + len(self.BUILDING[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+            return False  # On building face but not on sill
+
+        # Check building 2
+        if self._building2_x > 0 and self._building2_x <= x < self._building2_x + len(self.BUILDING2[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building2_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+            return False  # On building face but not on sill
+
+        # Outside buildings, allow snow
+        return True
 
     def _spawn_car(self):
         """Spawn a new car on the street."""
@@ -1641,6 +1714,42 @@ class AlleyScene:
                 px = x + col_idx
                 py = y + row_idx
                 if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    self.scene[py][px] = (char, color)
+
+    def _draw_building(self, sprite: List[str], x: int, y: int):
+        """Draw a building with grey blocks on bottom half story and red bricks on upper.
+
+        The bottom ~8 rows (near door/porch) get grey blocks, upper rows get red bricks.
+        Windows remain in blue/cyan color.
+        """
+        total_rows = len(sprite)
+        # Grey block section: bottom 10 rows (half story with door)
+        grey_start_row = total_rows - 10
+
+        for row_idx, row in enumerate(sprite):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Determine color based on character and position
+                    if char in '[]=' or (char == '-' and row_idx == 1):
+                        # Window frames and roof line - keep blue
+                        color = Colors.ALLEY_BLUE
+                    elif char in '|_.#' or char in '()/' or char == '\\':
+                        # Structural elements, door, roof items
+                        if row_idx >= grey_start_row:
+                            # Bottom half story - grey blocks
+                            color = Colors.GREY_BLOCK
+                        else:
+                            # Upper building - red bricks
+                            color = Colors.BRICK_RED
+                    else:
+                        # Default - use position-based color
+                        if row_idx >= grey_start_row:
+                            color = Colors.GREY_BLOCK
+                        else:
+                            color = Colors.BRICK_RED
+
                     self.scene[py][px] = (char, color)
 
     def render(self, screen):
@@ -2072,30 +2181,28 @@ class AlleyRat:
     """
 
     # Rat animation frames - no visible eyes
-    # Sitting: 2x2 chars, Moving: 1x2 chars (slim profile)
+    # Sitting: 2x2 chars, Moving: 1x3 chars (horizontal running)
     RAT_FRAMES = {
         'right': [
-            # Frame 1: running right - slim 1x2
-            ["~>", "vv"],
-            # Frame 2: running right - legs shifted
-            ["-)", " v"],
+            # Running right - 1x3 horizontal (tail-body-head)
+            ["~=>"],
+            ["_->"],
         ],
         'left': [
-            # Frame 1: running left - slim 1x2
-            ["<~", "vv"],
-            # Frame 2: running left - legs shifted
-            ["(-", "v "],
+            # Running left - 1x3 horizontal (head-body-tail)
+            ["<=~"],
+            ["<-_"],
         ],
         'idle': [
             # Sitting rat - 2x2, no eyes (just fur/shape)
             ["()", "vv"],  # Curled up
-            ["{}", "vv"],  # Slightly different
+            ["{}", "^^"],  # Slightly different
         ],
         'look_left': [
-            ["<)", "vv"],  # Head turned left
+            ["<)", "vv"],  # Head turned left, 2x2
         ],
         'look_right': [
-            ["(>", "vv"],  # Head turned right
+            ["(>", "vv"],  # Head turned right, 2x2
         ],
     }
 
@@ -3257,6 +3364,8 @@ class Dashboard:
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
             self.matrix_rain = MatrixRain(self.width, self.height)
+            # Connect snow filter so snow only collects on roofs/sills, not building faces
+            self.matrix_rain.set_snow_filter(self.alley_scene.is_valid_snow_position)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
             self.alley_rat.set_hiding_spots(self.alley_scene)
