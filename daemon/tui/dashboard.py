@@ -193,10 +193,11 @@ class MatrixRain:
         (12, 22),  # Layer 4: Very long trails
     ]
 
-    # Distribution - 500% more tiny rain! Layer 0 dominates
-    # Old was [0.10, 0.15, 0.30, 0.25, 0.20] - layer 0 was 10%
-    # New: layer 0 is 60% (6x more = 500% increase relative to others)
-    DEPTH_WEIGHTS = [0.60, 0.15, 0.12, 0.08, 0.05]
+    # Distribution - massive tiny rain!
+    # Layer 0: 3x more, Layer 1: 2x more, Layers 2-4: unchanged
+    # Calculated: [0.60*3, 0.15*2, 0.12, 0.08, 0.05] = [1.80, 0.30, 0.12, 0.08, 0.05]
+    # Normalized to sum to 1.0
+    DEPTH_WEIGHTS = [0.766, 0.128, 0.051, 0.034, 0.021]
 
     # Splat characters for when tiny rain hits
     SPLAT_CHARS = ['+', '*', '×', '·']
@@ -206,7 +207,8 @@ class MatrixRain:
         self.height = height
         self.drops: List[Dict] = []
         self.splats: List[Dict] = []  # Splat effects when tiny rain hits
-        self._target_drops = max(12, width * 3 // 10)  # Even more drops for the tiny rain
+        # Increased by 2.35x to maintain absolute counts for layers 2-4
+        self._target_drops = max(28, width * 7 // 10)
         self._init_drops()
 
         # Flicker state
@@ -306,7 +308,7 @@ class MatrixRain:
         old_width = self.width
         self.width = width
         self.height = height
-        self._target_drops = max(12, width * 3 // 10)  # More drops for tiny rain effect
+        self._target_drops = max(28, width * 7 // 10)  # Massive rain density
 
         # Remove drops and splats that are now out of bounds
         self.drops = [d for d in self.drops if d['x'] < width]
@@ -314,7 +316,7 @@ class MatrixRain:
 
         # Add more drops if window got bigger
         if width > old_width:
-            for _ in range(max(1, (width - old_width) * 3 // 10)):
+            for _ in range(max(1, (width - old_width) * 7 // 10)):
                 self._add_drop()
 
     def render(self, screen):
@@ -527,6 +529,7 @@ class DashboardClient:
         self._connected = False
         self._demo_mode = False
         self._demo_event_offset = 0
+        self._use_tcp = False  # Flag for Windows TCP mode
 
         # Build dynamic socket paths based on where daemon might create them
         self._socket_paths = self._build_socket_paths()
@@ -538,8 +541,16 @@ class DashboardClient:
         # Resolve token after finding socket (token might be near socket)
         self._token = self._resolve_token()
 
-        # Test connection
+        # Test connection - try socket first, then TCP
         self._connected = self._test_connection()
+
+        # On Windows (or if socket fails), try TCP connection
+        if not self._connected:
+            if self._try_tcp_connection():
+                self._connected = True
+                self._use_tcp = True
+                logger.info(f"Connected to daemon via TCP on port {self.WINDOWS_PORT}")
+
         if not self._connected:
             self._demo_mode = True
             logger.info("Daemon not available, running in demo mode")
@@ -589,20 +600,45 @@ class DashboardClient:
         """Find working directory of running daemon process."""
         try:
             import psutil
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'cwd']):
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'cwd', 'exe']):
                 try:
+                    # Check process name (works for .exe files)
+                    name = (proc.info.get('name') or '').lower()
+                    exe = (proc.info.get('exe') or '').lower()
                     cmdline = proc.info.get('cmdline') or []
                     cmdline_str = ' '.join(cmdline).lower()
-                    # Look for boundary daemon process
-                    if 'boundary' in cmdline_str and 'daemon' in cmdline_str:
+
+                    # Look for boundary daemon process by various methods
+                    is_daemon = False
+
+                    # Method 1: Process name contains 'boundary'
+                    if 'boundary' in name:
+                        is_daemon = True
+                    # Method 2: Exe path contains 'boundary'
+                    elif 'boundary' in exe:
+                        is_daemon = True
+                    # Method 3: Command line contains both 'boundary' and 'daemon'
+                    elif 'boundary' in cmdline_str and 'daemon' in cmdline_str:
+                        is_daemon = True
+                    # Method 4: Running boundary_daemon module
+                    elif 'boundary_daemon' in cmdline_str:
+                        is_daemon = True
+
+                    if is_daemon:
                         cwd = proc.info.get('cwd')
                         if cwd:
-                            logger.debug(f"Found daemon process {proc.info['pid']} at {cwd}")
+                            logger.debug(f"Found daemon process {proc.info['pid']} ({name}) at {cwd}")
                             return cwd
+                        # If no cwd, try exe directory
+                        if exe:
+                            exe_dir = os.path.dirname(exe)
+                            if exe_dir:
+                                logger.debug(f"Found daemon exe {proc.info['pid']} at {exe_dir}")
+                                return exe_dir
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
         except ImportError:
-            pass
+            logger.debug("psutil not available for process detection")
         except Exception as e:
             logger.debug(f"Error finding daemon process: {e}")
         return None
@@ -614,6 +650,15 @@ class DashboardClient:
             os.path.expanduser('~/.boundary-daemon/boundary.pid'),
             './boundary.pid',
         ]
+        # Add Windows-specific locations
+        if sys.platform == 'win32':
+            appdata = os.environ.get('APPDATA', '')
+            localappdata = os.environ.get('LOCALAPPDATA', '')
+            if appdata:
+                pid_file_locations.append(os.path.join(appdata, 'boundary-daemon', 'boundary.pid'))
+            if localappdata:
+                pid_file_locations.append(os.path.join(localappdata, 'boundary-daemon', 'boundary.pid'))
+
         for pid_file in pid_file_locations:
             if os.path.exists(pid_file):
                 # Socket is usually in api/ subdirectory relative to PID file
@@ -695,10 +740,45 @@ class DashboardClient:
         """Test if daemon is reachable."""
         try:
             response = self._send_request('status')
-            return response.get('success', False)
+            if response.get('success'):
+                logger.debug("Connection test successful")
+                return True
+            elif 'error' in response:
+                logger.debug(f"Connection test failed: {response.get('error')}")
+                # If auth error, we're connected but need token - that's still "connected"
+                if 'auth' in response.get('error', '').lower() or 'token' in response.get('error', '').lower():
+                    logger.debug("Connection works but auth failed - daemon is running")
+                    return True
+            return False
         except Exception as e:
             logger.debug(f"Connection test failed: {e}")
             return False
+
+    def _try_tcp_connection(self) -> bool:
+        """Try direct TCP connection to daemon (Windows primary, Unix fallback)."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.connect((self.WINDOWS_HOST, self.WINDOWS_PORT))
+
+            # Send a status request
+            request = {'command': 'status'}
+            if self._token:
+                request['token'] = self._token
+            sock.sendall(json.dumps(request).encode('utf-8'))
+
+            # Try to receive response
+            data = sock.recv(65536)
+            sock.close()
+
+            if data:
+                response = json.loads(data.decode('utf-8'))
+                if response.get('success') or 'error' in response:
+                    logger.debug(f"TCP connection successful on port {self.WINDOWS_PORT}")
+                    return True
+        except Exception as e:
+            logger.debug(f"TCP connection failed: {e}")
+        return False
 
     def _send_request(self, command: str, params: Optional[Dict] = None) -> Dict:
         """Send request to daemon API."""
@@ -710,7 +790,8 @@ class DashboardClient:
             request['token'] = self._token
 
         try:
-            if sys.platform == 'win32':
+            # Use TCP if we're in TCP mode or on Windows
+            if self._use_tcp or sys.platform == 'win32':
                 return self._send_tcp(request)
             else:
                 return self._send_unix(request)
@@ -753,33 +834,30 @@ class DashboardClient:
         # Rebuild socket paths (daemon might have started since last check)
         self._socket_paths = self._build_socket_paths()
 
-        # Try each socket path
-        for path in self._socket_paths:
-            if os.path.exists(path):
-                old_path = self.socket_path
-                self.socket_path = path
-                # Refresh token in case it changed
-                self._token = self._resolve_token()
-                if self._test_connection():
-                    self._connected = True
-                    self._demo_mode = False
-                    logger.info(f"Connected to daemon at {path}")
-                    return True
-                self.socket_path = old_path
+        # Refresh token
+        self._token = self._resolve_token()
 
-        # Also try Windows TCP on Windows
-        if sys.platform == 'win32':
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1.0)
-                sock.connect((self.WINDOWS_HOST, self.WINDOWS_PORT))
-                sock.close()
-                self._connected = True
-                self._demo_mode = False
-                logger.info(f"Connected to daemon via TCP {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
-                return True
-            except Exception:
-                pass
+        # Try each socket path (Unix sockets)
+        if sys.platform != 'win32':
+            for path in self._socket_paths:
+                if os.path.exists(path):
+                    old_path = self.socket_path
+                    self.socket_path = path
+                    self._use_tcp = False
+                    if self._test_connection():
+                        self._connected = True
+                        self._demo_mode = False
+                        logger.info(f"Connected to daemon at {path}")
+                        return True
+                    self.socket_path = old_path
+
+        # Try TCP connection (Windows primary, Unix fallback)
+        if self._try_tcp_connection():
+            self._connected = True
+            self._demo_mode = False
+            self._use_tcp = True
+            logger.info(f"Connected to daemon via TCP {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
+            return True
 
         return False
 
