@@ -386,8 +386,12 @@ class MatrixRain:
 
         # Snow-specific state: stuck snowflakes that fade over time
         self._stuck_snow: List[Dict] = []
+        # Roof/sill snow - lasts 10x longer and doesn't count towards max
+        self._roof_sill_snow: List[Dict] = []
         # Snow filter callback - returns True if position is valid for snow collection
         self._snow_filter: Optional[callable] = None
+        # Roof/sill checker callback - returns True if position is on roof or window sill
+        self._roof_sill_checker: Optional[callable] = None
 
         # Snow wind gusts - temporary bursts of sideways movement
         self._snow_gusts: List[Dict] = []
@@ -407,6 +411,7 @@ class MatrixRain:
             self.splats = []
             self._fog_particles = []
             self._stuck_snow = []
+            self._roof_sill_snow = []
             self._snow_gusts = []
             self._sand_gusts = []
             self._init_drops()
@@ -423,6 +428,33 @@ class MatrixRain:
         The function should accept (x, y) and return True if snow can collect there.
         """
         self._snow_filter = filter_func
+
+    def set_roof_sill_checker(self, checker_func: callable):
+        """Set a callback function that checks if a position is on roof or window sill.
+
+        Snow on these positions lasts 10x longer and doesn't count towards max.
+        """
+        self._roof_sill_checker = checker_func
+
+    def set_glow_positions(self, positions: List[Tuple[int, int]]):
+        """Set street light glow center positions for snow melting.
+
+        Snow near these positions will melt faster.
+        """
+        self._glow_positions = positions
+
+    def _is_in_glow_zone(self, x: int, y: int) -> bool:
+        """Check if a position is within a street light glow cone."""
+        if not hasattr(self, '_glow_positions') or not self._glow_positions:
+            return False
+        for light_x, light_y in self._glow_positions:
+            # Glow cone: 4 rows below light, widening
+            for row in range(5):
+                spread = row + 1
+                glow_y = light_y + 1 + row
+                if y == glow_y and abs(x - light_x) <= spread:
+                    return True
+        return False
 
     def cycle_weather(self) -> WeatherMode:
         """Cycle to the next weather mode and return the new mode."""
@@ -713,25 +745,56 @@ class MatrixRain:
         if self._snow_filter and not self._snow_filter(x, y):
             return  # Position is not valid for snow collection
 
-        # Limit total stuck snow to prevent memory issues (4x accumulation)
-        if len(self._stuck_snow) < 800:
-            self._stuck_snow.append({
+        # Check if this is roof/sill snow (lasts 10x longer, no max count)
+        is_roof_sill = self._roof_sill_checker and self._roof_sill_checker(x, y)
+
+        if is_roof_sill:
+            # Roof/sill snow: lasts 10x longer (1600-4800), no limit
+            self._roof_sill_snow.append({
                 'x': x,
                 'y': y,
                 'depth': depth,
                 'char': char,
-                'life': random.randint(160, 480),  # Longer melt time (4x)
-                'max_life': 480,
+                'life': random.randint(1600, 4800),  # 10x longer melt time
+                'max_life': 4800,
             })
+        else:
+            # Regular stuck snow: limit to 800
+            if len(self._stuck_snow) < 800:
+                self._stuck_snow.append({
+                    'x': x,
+                    'y': y,
+                    'depth': depth,
+                    'char': char,
+                    'life': random.randint(160, 480),
+                    'max_life': 480,
+                })
 
     def _update_stuck_snow(self):
         """Update stuck snow - slowly fade/melt away."""
+        # Update regular stuck snow
         new_stuck = []
         for snow in self._stuck_snow:
-            snow['life'] -= 1
+            # Snow in glow zones melts 10x faster (warmth from lights)
+            if self._is_in_glow_zone(snow['x'], snow['y']):
+                snow['life'] -= 10
+            else:
+                snow['life'] -= 1
             if snow['life'] > 0:
                 new_stuck.append(snow)
         self._stuck_snow = new_stuck
+
+        # Update roof/sill snow (separate list)
+        new_roof_sill = []
+        for snow in self._roof_sill_snow:
+            # Roof/sill snow also melts faster in glow zones
+            if self._is_in_glow_zone(snow['x'], snow['y']):
+                snow['life'] -= 10
+            else:
+                snow['life'] -= 1
+            if snow['life'] > 0:
+                new_roof_sill.append(snow)
+        self._roof_sill_snow = new_roof_sill
 
     def _update_sand_gusts(self):
         """Update sand gust columns - they shift position over time."""
@@ -939,7 +1002,27 @@ class MatrixRain:
 
         # Render stuck snow (melting snowflakes)
         if self.weather_mode == WeatherMode.SNOW:
+            # Render regular stuck snow
             for snow in self._stuck_snow:
+                try:
+                    if 0 <= snow['x'] < self.width - 1 and 0 <= snow['y'] < self.height:
+                        # Fade based on remaining life (melting effect)
+                        life_ratio = snow['life'] / snow['max_life']
+                        if life_ratio > 0.6:
+                            attr = curses.color_pair(Colors.SNOW_BRIGHT) | curses.A_BOLD
+                        elif life_ratio > 0.3:
+                            attr = curses.color_pair(Colors.SNOW_DIM)
+                        else:
+                            attr = curses.color_pair(Colors.SNOW_FADE) | curses.A_DIM
+
+                        screen.attron(attr)
+                        screen.addstr(snow['y'], snow['x'], snow['char'])
+                        screen.attroff(attr)
+                except curses.error:
+                    pass
+
+            # Render roof/sill snow (lasts longer)
+            for snow in self._roof_sill_snow:
                 try:
                     if 0 <= snow['x'] < self.width - 1 and 0 <= snow['y'] < self.height:
                         # Fade based on remaining life (melting effect)
@@ -1076,32 +1159,55 @@ class AlleyScene:
         "|___|",
     ]
 
-    # Traffic light showing two sides (corner view) - compact head, tall pole
-    # Left column is N/S direction, right column is E/W direction
-    TRAFFIC_LIGHT_TEMPLATE = [
-        " .===. ",
-        " |L R| ",  # Red lights
-        " |L R| ",  # Yellow lights
-        " |L R| ",  # Green lights
-        " '===' ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
-        "   ||  ",
+    # Blue street mailbox (4 wide x 5 tall)
+    MAILBOX = [
+        " __ ",
+        "|==|",
+        "|US|",
+        "|__|",
+        " || ",
     ]
 
-    # Car sprites - large side views (4x person size, ~16 chars wide)
+    # Cafe storefront (well-lit, between buildings)
+    CAFE = [
+        "  _______________  ",
+        " |   C A F E    | ",
+        " |  [=]    [=]  | ",
+        " |[=============]| ",
+        " |[ OPEN  .oOo. ]| ",
+        " |[_____________]| ",
+        " |_____[]______| ",
+    ]
+
+    # Traffic light showing two sides (corner view) - compact head, tall pole
+    # Left column is N/S direction (flat), right column is E/W direction (brackets)
+    # All 6 lights shown as circles, off lights are gray
+    TRAFFIC_LIGHT_TEMPLATE = [
+        " .=====. ",
+        " |L  (R) ",  # Red lights - right side has brackets
+        " |L  (R) ",  # Yellow lights
+        " |L  (R) ",  # Green lights
+        " '=====' ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+        "    ||   ",
+    ]
+
+    # Car sprites - large side views (3 rows tall, longer)
     CAR_RIGHT = [
-        "  __[########]__  ",
-        " (o)==========(o) ",
+        "    ___[######]___    ",
+        "   |   |====|    |    ",
+        "  (o)============(o)  ",
     ]
     CAR_LEFT = [
-        "  __[########]__  ",
-        " (o)==========(o) ",
+        "    ___[######]___    ",
+        "   |    |====|   |    ",
+        "  (o)============(o)  ",
     ]
 
     # Person walking animation frames (arm swinging) - basic person
@@ -1214,8 +1320,12 @@ class AlleyScene:
         "|  [========]    [====]  [====]    [========]    [====]        |",
         "|                              _____________                   |",
         "|                             |  .------.  |                   |",
-        "|                             |  |  ##  |  |                   |",
-        "|_____________________________|  |  ##  |  |___________________|",
+        "|                             |  | #  # |  |                   |",
+        "|                             |  |------|  |                   |",
+        "|                             |  | #  # |  |                   |",
+        "|                             |  |------|  |                   |",
+        "|                             |  | #  # |  |                   |",
+        "|_____________________________|  |______|  |___________________|",
         "                              |__|______|__|                    ",
         "                               ===========                      ",
     ]
@@ -1256,8 +1366,12 @@ class AlleyScene:
         "|    [========]    [====]    [========]    [====]          |",
         "|    _____________                                         |",
         "|   |  .------.  |                                         |",
-        "|   |  |  ##  |  |                                         |",
-        "|___|  |  ##  |  |_________________________________________|",
+        "|   |  | #  # |  |                                         |",
+        "|   |  |------|  |                                         |",
+        "|   |  | #  # |  |                                         |",
+        "|   |  |------|  |                                         |",
+        "|   |  | #  # |  |                                         |",
+        "|___|  |______|  |_________________________________________|",
         "    |__|______|__|                                          ",
         "     ===========                                            ",
     ]
@@ -1379,15 +1493,28 @@ class AlleyScene:
                     self.scene[street_y][x] = ('=', Colors.RAT_YELLOW)
                     self.scene[street_y][x + 1] = ('=', Colors.RAT_YELLOW)
 
-        # Place dumpster in lower-left area (above curb) - drawn AFTER buildings (in front)
-        self.dumpster_x = 8
+        # Place dumpster to the LEFT of building 1 (above curb)
+        self.dumpster_x = 2
         self.dumpster_y = ground_y - len(self.DUMPSTER) + 1
         self._draw_sprite(self.DUMPSTER, self.dumpster_x, self.dumpster_y, Colors.ALLEY_MID)
 
-        # Place box to the right of dumpster (above curb) - drawn AFTER buildings (in front)
-        self.box_x = self.dumpster_x + len(self.DUMPSTER[0]) + 6
+        # Place box in the alley between buildings
+        building1_right = self._building_x + len(self.BUILDING[0])
+        building2_left = self._building2_x if self._building2_x > 0 else self.width
+        gap_center = (building1_right + building2_left) // 2
+        self.box_x = gap_center - 20
         self.box_y = ground_y - len(self.BOX) + 1
         self._draw_sprite(self.BOX, self.box_x, self.box_y, Colors.SAND_DIM)
+
+        # Place blue mailbox near building 1
+        self.mailbox_x = self._building_x + len(self.BUILDING[0]) + 3
+        self.mailbox_y = ground_y - len(self.MAILBOX) + 1
+        self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
+
+        # Place well-lit Cafe between buildings (center of gap)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2
+        self.cafe_y = ground_y - len(self.CAFE) + 1
+        self._draw_cafe(self.cafe_x, self.cafe_y)
 
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
@@ -1401,13 +1528,47 @@ class AlleyScene:
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
-        # Position lights in the gap between buildings
-        light_x_positions = [gap_center - 8, gap_center + 8]
+        # Position lights in the gap between buildings (spread out more)
+        light_x_positions = [gap_center - 15, gap_center + 15]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
                 # Store position for flicker effect (center of light head)
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
+
+    def _draw_cafe(self, x: int, y: int):
+        """Draw a well-lit cafe storefront with warm lighting effect."""
+        # Store cafe position for lighting effect
+        self.cafe_x = x
+        self.cafe_y = y
+
+        # Draw the cafe with warm lighting colors
+        for row_idx, row in enumerate(self.CAFE):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Use warm yellow/white for the cafe (well-lit)
+                    if char in 'CAFE' or char in 'OPEN':
+                        color = Colors.RAT_YELLOW  # Bright yellow text
+                    elif char in '[]=' or char == '~':
+                        color = Colors.RAT_YELLOW  # Windows glow
+                    else:
+                        color = Colors.ALLEY_LIGHT  # Structure
+                    self.scene[py][px] = (char, color)
+
+        # Add warm glow around the cafe (light spill)
+        for dy in range(-1, len(self.CAFE) + 2):
+            for dx in range(-2, len(self.CAFE[0]) + 2):
+                px = x + dx
+                py = y + dy
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Only add glow to empty spaces
+                    if self.scene[py][px][0] == ' ':
+                        # Closer to cafe = brighter glow
+                        dist = min(abs(dx), abs(dy), abs(dx - len(self.CAFE[0])), abs(dy - len(self.CAFE)))
+                        if dist <= 1 and random.random() < 0.3:
+                            self.scene[py][px] = ('░', Colors.RAT_YELLOW)
 
     def is_valid_snow_position(self, x: int, y: int) -> bool:
         """Check if a position is valid for snow to collect.
@@ -1454,6 +1615,38 @@ class AlleyScene:
         # Outside buildings, allow snow
         return True
 
+    def is_roof_or_sill(self, x: int, y: int) -> bool:
+        """Check if a position is specifically on a roof or window sill.
+
+        Used to determine if snow should last 10x longer.
+        """
+        # Check if position is on roof (within 2 rows of building top)
+        if self._building_y > 0 and y <= self._building_y + 1:
+            if self._building_x <= x < self._building_x + len(self.BUILDING[0]):
+                return True
+        if self._building2_y > 0 and y <= self._building2_y + 1:
+            if self._building2_x <= x < self._building2_x + len(self.BUILDING2[0]):
+                return True
+
+        # Check if position is on a window sill
+        building_sill_offsets = [7, 13, 19, 25, 31]
+
+        # Check building 1
+        if self._building_x <= x < self._building_x + len(self.BUILDING[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+
+        # Check building 2
+        if self._building2_x > 0 and self._building2_x <= x < self._building2_x + len(self.BUILDING2[0]):
+            for offset in building_sill_offsets:
+                sill_y = self._building2_y + offset
+                if y == sill_y or y == sill_y + 1:
+                    return True
+
+        return False
+
     def _spawn_car(self):
         """Spawn a new car on the street."""
         # Randomly choose direction
@@ -1478,7 +1671,7 @@ class AlleyScene:
         """Update traffic light state, cars, pedestrians, street light flicker, and window people."""
         self._traffic_frame += 1
 
-        # State machine for traffic lights
+        # State machine for traffic lights (with all-red transition)
         self._state_duration += 1
 
         if self._traffic_state == 'NS_GREEN':
@@ -1487,6 +1680,10 @@ class AlleyScene:
                 self._state_duration = 0
         elif self._traffic_state == 'NS_YELLOW':
             if self._state_duration >= 20:
+                self._traffic_state = 'ALL_RED_TO_EW'
+                self._state_duration = 0
+        elif self._traffic_state == 'ALL_RED_TO_EW':
+            if self._state_duration >= 10:  # Brief all-red pause
                 self._traffic_state = 'EW_GREEN'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_GREEN':
@@ -1495,6 +1692,10 @@ class AlleyScene:
                 self._state_duration = 0
         elif self._traffic_state == 'EW_YELLOW':
             if self._state_duration >= 20:
+                self._traffic_state = 'ALL_RED_TO_NS'
+                self._state_duration = 0
+        elif self._traffic_state == 'ALL_RED_TO_NS':
+            if self._state_duration >= 10:  # Brief all-red pause
                 self._traffic_state = 'NS_GREEN'
                 self._state_duration = 0
 
@@ -1534,43 +1735,35 @@ class AlleyScene:
         self._cars = new_cars
 
     def _update_closeup_car(self):
-        """Update close-up car perspective effect (big car that shrinks as it passes)."""
+        """Update close-up car perspective effect (stays in place, grows then shrinks)."""
         # Spawn new close-up car occasionally
         self._closeup_car_timer += 1
         if self._closeup_car is None and self._closeup_car_timer >= random.randint(200, 400):
             self._closeup_car_timer = 0
-            # Spawn a big car that shrinks as it passes
-            direction = random.choice([-1, 1])
-            if direction == 1:
-                start_x = -20
-            else:
-                start_x = self.width + 20
+            # Spawn a car that stays in place and grows/shrinks
             self._closeup_car = {
-                'x': float(start_x),
-                'direction': direction,
-                'speed': 1.5,  # Faster than normal cars
-                'scale': 3.0,  # Start at 3x size
-                'phase': 0,    # 0=growing, 1=max, 2=shrinking
+                'x': float(random.randint(self.width // 3, 2 * self.width // 3)),  # Random position in middle third
+                'direction': random.choice([-1, 1]),  # Face left or right
+                'scale': 0.5,  # Start small
+                'phase': 0,    # 0=growing, 1=shrinking
+                'scale_speed': 0.15,  # Faster grow/shrink
             }
 
         # Update close-up car
         if self._closeup_car:
             car = self._closeup_car
-            car['x'] += car['direction'] * car['speed']
-
-            # Update scale based on position (bigger in middle, smaller at edges)
-            center_x = self.width / 2
-            dist_from_center = abs(car['x'] - center_x)
-            max_dist = self.width / 2 + 20
-
-            # Scale: 3.0 at center, 1.0 at edges
-            car['scale'] = 1.0 + 2.0 * max(0, 1.0 - dist_from_center / max_dist)
-
-            # Remove when off screen and small
-            if car['direction'] == 1 and car['x'] > self.width + 20:
-                self._closeup_car = None
-            elif car['direction'] == -1 and car['x'] < -20:
-                self._closeup_car = None
+            # Car stays in place, only scale changes
+            if car['phase'] == 0:
+                # Growing phase
+                car['scale'] += car['scale_speed']
+                if car['scale'] >= 3.0:
+                    car['scale'] = 3.0
+                    car['phase'] = 1  # Switch to shrinking
+            else:
+                # Shrinking phase
+                car['scale'] -= car['scale_speed']
+                if car['scale'] <= 0.5:
+                    self._closeup_car = None  # Done, remove car
 
     def _spawn_pedestrian(self):
         """Spawn a new pedestrian on the sidewalk with random accessories."""
@@ -1688,8 +1881,8 @@ class AlleyScene:
         Returns: (ns_red, ns_yellow, ns_green, ew_red, ew_yellow, ew_green)
         Each is a tuple of (char, color).
         """
-        # Define light states
-        off = ('o', Colors.ALLEY_DARK)
+        # Define light states - off lights are gray circles
+        off = ('o', Colors.GREY_BLOCK)
         red_on = ('O', Colors.SHADOW_RED)
         yellow_on = ('O', Colors.RAT_YELLOW)
         green_on = ('O', Colors.STATUS_OK)
@@ -1700,12 +1893,21 @@ class AlleyScene:
         elif self._traffic_state == 'NS_YELLOW':
             # NS has yellow, EW has red
             return (off, yellow_on, off, red_on, off, off)
+        elif self._traffic_state == 'ALL_RED_TO_EW':
+            # Both red (transition from NS to EW)
+            return (red_on, off, off, red_on, off, off)
         elif self._traffic_state == 'EW_GREEN':
             # NS has red, EW has green
             return (red_on, off, off, off, off, green_on)
-        else:  # EW_YELLOW
+        elif self._traffic_state == 'EW_YELLOW':
             # NS has red, EW has yellow
             return (red_on, off, off, off, yellow_on, off)
+        elif self._traffic_state == 'ALL_RED_TO_NS':
+            # Both red (transition from EW to NS)
+            return (red_on, off, off, red_on, off, off)
+        else:
+            # Default to NS green
+            return (off, off, green_on, red_on, off, off)
 
     def _draw_sprite(self, sprite: List[str], x: int, y: int, color: int):
         """Draw an ASCII sprite at the given position."""
@@ -1720,37 +1922,58 @@ class AlleyScene:
         """Draw a building with grey blocks on bottom half story and red bricks on upper.
 
         The bottom ~8 rows (near door/porch) get grey blocks, upper rows get red bricks.
-        Windows remain in blue/cyan color.
+        Windows remain in blue/cyan color. Satellite dishes are grey.
+        Random brick texture in red area, grey block fill in grey area.
         """
         total_rows = len(sprite)
         # Grey block section: bottom 10 rows (half story with door)
         grey_start_row = total_rows - 10
+        # Brick characters for texture
+        brick_chars = ['#', '▓', '░']
+        grey_block_chars = ['▒', '░', '▓']
 
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
                 py = y + row_idx
-                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
-                    # Determine color based on character and position
-                    if char in '[]=' or (char == '-' and row_idx == 1):
-                        # Window frames and roof line - keep blue
-                        color = Colors.ALLEY_BLUE
-                    elif char in '|_.#' or char in '()/' or char == '\\':
-                        # Structural elements, door, roof items
-                        if row_idx >= grey_start_row:
-                            # Bottom half story - grey blocks
-                            color = Colors.GREY_BLOCK
-                        else:
-                            # Upper building - red bricks
-                            color = Colors.BRICK_RED
-                    else:
-                        # Default - use position-based color
-                        if row_idx >= grey_start_row:
-                            color = Colors.GREY_BLOCK
-                        else:
-                            color = Colors.BRICK_RED
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Row 0 is rooftop items (satellite dishes, antennas) - grey
+                    if row_idx == 0 and char != ' ':
+                        self.scene[py][px] = (char, Colors.GREY_BLOCK)
+                        continue
 
-                    self.scene[py][px] = (char, color)
+                    if char != ' ':
+                        # Determine color based on character and position
+                        if char in '[]=' or (char == '-' and row_idx == 1):
+                            # Window frames and roof line - keep blue
+                            color = Colors.ALLEY_BLUE
+                        elif char in '|_.#':
+                            # Structural elements, door
+                            if row_idx >= grey_start_row:
+                                color = Colors.GREY_BLOCK
+                            else:
+                                color = Colors.BRICK_RED
+                        else:
+                            # Default
+                            if row_idx >= grey_start_row:
+                                color = Colors.GREY_BLOCK
+                            else:
+                                color = Colors.BRICK_RED
+
+                        self.scene[py][px] = (char, color)
+                    else:
+                        # Empty space - add texture based on zone
+                        # Skip if inside window area (between [ and ])
+                        if row_idx >= 2 and row_idx < grey_start_row:
+                            # Red brick zone - scatter random brick chars
+                            if random.random() < 0.08:  # 8% chance
+                                brick_char = random.choice(brick_chars)
+                                self.scene[py][px] = (brick_char, Colors.BRICK_RED)
+                        elif row_idx >= grey_start_row and row_idx < total_rows - 2:
+                            # Grey zone - fill with grey blocks
+                            if random.random() < 0.15:  # 15% chance
+                                block_char = random.choice(grey_block_chars)
+                                self.scene[py][px] = (block_char, Colors.GREY_BLOCK)
 
     def render(self, screen):
         """Render the alley scene to the screen."""
@@ -1816,8 +2039,8 @@ class AlleyScene:
 
     def _render_pedestrians(self, screen):
         """Render pedestrians on the sidewalk (curb level) with arm animation."""
-        # Pedestrians walk on the curb/sidewalk area
-        curb_y = self.height - 2
+        # Pedestrians walk on the curb/sidewalk area (moved up 2 rows)
+        curb_y = self.height - 4
 
         for ped in self._pedestrians:
             x = int(ped['x'])
@@ -2029,7 +2252,7 @@ class AlleyScene:
         """Render the traffic light with current light states."""
         # Position traffic light on right side of scene (shifted 45 chars right = 10 + 15 + 20)
         light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 55)
-        light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 3  # Above curb
+        light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 1  # Above curb, moved down
 
         if light_x < 0 or light_y < 0:
             return
@@ -2482,23 +2705,25 @@ class LurkingShadow:
 
     def _choose_lurk_position(self):
         """Choose a dark corner to lurk in."""
-        # Lurk in the corners/edges of the alley
+        # Lurk only at screen edges, in the lower half
         positions = []
 
-        # Top corners (in the distance)
-        horizon_y = self.height // 3
-        positions.append((random.randint(2, 8), horizon_y + random.randint(1, 3)))
-        positions.append((self.width - random.randint(4, 10), horizon_y + random.randint(1, 3)))
+        # Lower half starts at height // 2
+        lower_half_start = self.height // 2
+        lower_bound = self.height - 4  # Don't go too close to bottom
 
-        # Side edges (behind buildings)
-        mid_y = self.height // 2
-        positions.append((random.randint(0, 4), mid_y + random.randint(-2, 4)))
-        positions.append((self.width - random.randint(2, 6), mid_y + random.randint(-2, 4)))
+        # Left edge - lower half only
+        positions.append((random.randint(0, 5), random.randint(lower_half_start, lower_bound)))
+        positions.append((random.randint(0, 3), random.randint(lower_half_start, lower_bound)))
+
+        # Right edge - lower half only
+        positions.append((self.width - random.randint(3, 8), random.randint(lower_half_start, lower_bound)))
+        positions.append((self.width - random.randint(2, 6), random.randint(lower_half_start, lower_bound)))
 
         # Pick one
         pos = random.choice(positions)
         self.x = max(0, min(pos[0], self.width - 3))
-        self.y = max(0, min(pos[1], self.height - 2))
+        self.y = max(lower_half_start, min(pos[1], self.height - 2))
 
         # Reset blink/move timers
         self.blink_interval = random.randint(30, 80)
@@ -3238,6 +3463,13 @@ class Dashboard:
         # Weather mode (for matrix mode)
         self._current_weather: WeatherMode = WeatherMode.MATRIX
 
+        # Moon state (arcs across sky every 15 minutes)
+        self._moon_active = False
+        self._moon_x = 0.0
+        self._moon_start_time = 0.0
+        self._moon_next_time = 0.0  # When to start next moon arc
+        self._moon_duration = 900.0  # 15 minutes (900 seconds) to cross screen
+
     def run(self):
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
@@ -3366,12 +3598,18 @@ class Dashboard:
             self.matrix_rain = MatrixRain(self.width, self.height)
             # Connect snow filter so snow only collects on roofs/sills, not building faces
             self.matrix_rain.set_snow_filter(self.alley_scene.is_valid_snow_position)
+            # Connect roof/sill checker so snow on roofs/sills lasts 10x longer
+            self.matrix_rain.set_roof_sill_checker(self.alley_scene.is_roof_or_sill)
+            # Connect street light glow positions so snow melts faster in warm light
+            self.matrix_rain.set_glow_positions(self.alley_scene._street_light_positions)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
             self.alley_rat.set_hiding_spots(self.alley_scene)
             self.lurking_shadow = LurkingShadow(self.width, self.height)
             # Schedule first lightning strike (5-30 minutes from now)
             self._lightning_next_time = time.time() + random.uniform(300, 1800)
+            # Schedule first moon arc (start immediately, then every 15 minutes)
+            self._moon_next_time = time.time() + 5.0  # Start in 5 seconds
         else:
             screen.timeout(int(self.refresh_interval * 1000))
 
@@ -3392,6 +3630,8 @@ class Dashboard:
                     if self.width != old_width or self.height != old_height:
                         if self.alley_scene:
                             self.alley_scene.resize(self.width, self.height)
+                            # Update glow positions for snow melting
+                            self.matrix_rain.set_glow_positions(self.alley_scene._street_light_positions)
                         self.matrix_rain.resize(self.width, self.height)
                         if self.alley_rat:
                             self.alley_rat.resize(self.width, self.height)
@@ -3409,6 +3649,9 @@ class Dashboard:
 
                     # Check for lightning strike
                     self._update_lightning()
+
+                    # Update moon arc
+                    self._update_moon()
 
                 self._draw()
 
@@ -3434,6 +3677,9 @@ class Dashboard:
                 self.alley_scene.resize(self.width, self.height)
             if self.matrix_rain:
                 self.matrix_rain.resize(self.width, self.height)
+                # Update glow positions for snow melting
+                if self.alley_scene:
+                    self.matrix_rain.set_glow_positions(self.alley_scene._street_light_positions)
             if self.alley_rat:
                 self.alley_rat.resize(self.width, self.height)
                 self.alley_rat.set_hiding_spots(self.alley_scene)
@@ -3473,6 +3719,74 @@ class Dashboard:
                 self._lightning_bolt = None
                 # Schedule next lightning (5-30 minutes from now)
                 self._lightning_next_time = current_time + random.uniform(300, 1800)
+
+    def _update_moon(self):
+        """Update moon arc across the sky (15 minute cycle)."""
+        current_time = time.time()
+
+        # Check if it's time to start a new moon arc
+        if not self._moon_active and current_time >= self._moon_next_time:
+            self._moon_active = True
+            self._moon_start_time = current_time
+            self._moon_x = 0.0
+
+        # Update active moon
+        if self._moon_active:
+            elapsed = current_time - self._moon_start_time
+            progress = elapsed / self._moon_duration  # 0.0 to 1.0
+
+            if progress >= 1.0:
+                # Moon has crossed the sky
+                self._moon_active = False
+                # Schedule next moon arc (15 minutes from now)
+                self._moon_next_time = current_time + 900.0  # 15 minutes
+            else:
+                # Update moon x position
+                self._moon_x = progress * self.width
+
+    def _render_moon(self, screen):
+        """Render the moon in a high arc across the sky."""
+        if not self._moon_active:
+            return
+
+        # Calculate moon position in arc
+        progress = (self._moon_x / self.width) if self.width > 0 else 0
+
+        # High arc: y = height at edges, low (near top) in middle
+        # Using parabola: y = a * (x - 0.5)^2 + min_y
+        # At edges (x=0 or 1): y = a * 0.25 + min_y = max_y
+        # At center (x=0.5): y = min_y
+        min_y = 2  # Highest point (near top of screen)
+        max_y = self.height // 3  # Lowest point of arc (at edges)
+        arc_height = max_y - min_y
+
+        # Parabola centered at 0.5
+        x_centered = progress - 0.5
+        moon_y = int(min_y + arc_height * 4 * (x_centered ** 2))
+        moon_x = int(self._moon_x)
+
+        # Moon ASCII art (simple crescent)
+        moon_chars = [
+            " @@@ ",
+            "@   @",
+            "@    ",
+            "@   @",
+            " @@@ ",
+        ]
+
+        # Render moon
+        for row_idx, row in enumerate(moon_chars):
+            for col_idx, char in enumerate(row):
+                px = moon_x + col_idx - 2  # Center the moon
+                py = moon_y + row_idx - 2
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
 
     def _update_creatures(self):
         """Update creature state based on alerts."""
@@ -3602,6 +3916,9 @@ class Dashboard:
                 self.alley_rat.render(self.screen)
             if self.lurking_shadow:
                 self.lurking_shadow.render(self.screen)
+
+            # Render moon (behind other effects)
+            self._render_moon(self.screen)
 
             # Render lightning bolt if active
             if self._lightning_active and self._lightning_bolt:
