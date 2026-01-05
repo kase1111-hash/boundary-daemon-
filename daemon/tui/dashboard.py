@@ -440,6 +440,37 @@ class Dashboard:
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
 
+        # Install project dependencies for Python 3.12
+        # Find the project root (where requirements.txt should be)
+        project_root = Path(__file__).parent.parent.parent
+        requirements_file = project_root / 'requirements.txt'
+
+        if requirements_file.exists():
+            print("Installing project dependencies for Python 3.12...")
+            try:
+                install_result = subprocess.run(
+                    ['py', '-3.12', '-m', 'pip', 'install', '-q', '-r', str(requirements_file)],
+                    capture_output=True, text=True, timeout=300
+                )
+                if install_result.returncode != 0:
+                    # Try installing just the essential packages
+                    print("Full install failed, trying essential packages...")
+                    subprocess.run(
+                        ['py', '-3.12', '-m', 'pip', 'install', '-q', 'psutil'],
+                        capture_output=True, text=True, timeout=60
+                    )
+            except subprocess.SubprocessError:
+                pass  # Continue anyway, might still work
+        else:
+            # No requirements.txt, just install psutil
+            try:
+                subprocess.run(
+                    ['py', '-3.12', '-m', 'pip', 'install', '-q', 'psutil'],
+                    capture_output=True, text=True, timeout=60
+                )
+            except subprocess.SubprocessError:
+                pass
+
         # Relaunch with Python 3.12
         print("Relaunching with Python 3.12...")
         env = os.environ.copy()
