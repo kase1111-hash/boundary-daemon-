@@ -2518,7 +2518,7 @@ class AlleyScene:
         cafe_x = self.cafe_x
         cafe_y = self.cafe_y
 
-        # Render big shell on roof in yellow/gold
+        # Render big shell on roof - green on top, brown on bottom (like Mario kicked koopa shell)
         for row_idx in range(8):  # First 8 rows are the shell roof
             if row_idx < len(self.CAFE):
                 for col_idx, char in enumerate(self.CAFE[row_idx]):
@@ -2527,7 +2527,11 @@ class AlleyScene:
                         py = cafe_y + row_idx
                         if 0 <= px < self.width - 1 and 0 <= py < self.height:
                             try:
-                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                # Green on top (rows 0-4), brown on bottom (rows 5-7)
+                                if row_idx <= 4:
+                                    attr = curses.color_pair(Colors.MATRIX_DIM) | curses.A_BOLD  # Green
+                                else:
+                                    attr = curses.color_pair(Colors.BOX_BROWN)  # Brown/yellow
                                 screen.attron(attr)
                                 screen.addstr(py, px, char)
                                 screen.attroff(attr)
@@ -2884,7 +2888,7 @@ class AlleyScene:
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
         # Calculate cafe position first (shifted 11 chars left)
-        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 18  # 4 more left (was -14)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 28  # 10 more left (was -18)
         self.cafe_y = ground_y - len(self.CAFE) + 1
 
         # Place well-lit Cafe between buildings (center of gap)
@@ -2925,11 +2929,11 @@ class AlleyScene:
         # Draw numbers to the LEFT side of each door
         number1_x = self._building_x + 8  # Left side of first door
         number2_x = self._building_x + 36  # Left side of second door
-        number_y = self._building_y + door_row
+        number_y = self._building_y + door_row - 2  # Raised 2 rows
 
-        # Building 1 - odd side (1741, 1743) - vertical numbers beside door
-        numbers1 = "1741"
-        numbers2 = "1743"
+        # Building 1 - odd side (741, 743) - 3 digit vertical numbers beside door
+        numbers1 = "741"
+        numbers2 = "743"
         for i, char in enumerate(numbers1):
             py = number_y + i
             if 0 <= number1_x < self.width - 1 and 0 <= py < self.height:
@@ -2939,13 +2943,13 @@ class AlleyScene:
             if 0 <= number2_x < self.width - 1 and 0 <= py < self.height:
                 self.scene[py][number2_x] = (char, Colors.DOOR_KNOB_GOLD)
 
-        # Building 2 numbers - even side (1742, 1744)
+        # Building 2 numbers - even side (742, 744)
         if self._building2_x > 0:
             number3_x = self._building2_x + 8  # Left side of first door
             number4_x = self._building2_x + 36  # Left side of second door
-            number_y2 = self._building2_y + door_row
-            numbers3 = "1742"
-            numbers4 = "1744"
+            number_y2 = self._building2_y + door_row - 2  # Raised 2 rows
+            numbers3 = "742"
+            numbers4 = "744"
             for i, char in enumerate(numbers3):
                 py = number_y2 + i
                 if 0 <= number3_x < self.width - 1 and 0 <= py < self.height:
@@ -4615,10 +4619,10 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # Lower window is at row 14-15 of CAFE sprite (0-indexed)
+        # Lower window is at rows 17-18 of CAFE sprite (0-indexed)
         # The window content area starts at column 4 and spans ~20 chars
-        window_row = 14  # Row with people heads
-        body_row = 15    # Row with bodies/arms
+        window_row = 17  # Row with people heads (bottom window)
+        body_row = 18    # Row with bodies/arms
         window_start_col = 4  # Start of window content area
 
         # Arm animation frames (both arms shown)
