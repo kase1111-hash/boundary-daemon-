@@ -501,8 +501,8 @@ class MatrixRain:
         # Create fog as tightly clustered patches
         num_patch_centers = max(20, self.width // 5)
 
-        # Only block characters - no small particles
-        block_chars = ['░', '▒', '▓', '█']
+        # Only block characters - no small particles (removed solid █ for transparency)
+        block_chars = ['░', '▒', '▓']
 
         for _ in range(num_patch_centers):
             # Each patch has a center point (below cloud layer at rows 1-2)
@@ -1223,8 +1223,8 @@ class AlleyScene:
         "  |  [====]          [====]  |  ",
         "  |                          |  ",
         "  |[=======================]|  ",
-        "  |[ O  O   .oOo.  OPEN    ]|  ",
-        "  |[/|\\-|\\__________       ]|  ",
+        "  |[                  OPEN ]|  ",
+        "  |[__________________     ]|  ",
         "  |__________[  ]__________|  ",
     ]
 
@@ -1547,6 +1547,25 @@ class AlleyScene:
         "     ||     ",
     ]
 
+    # Static cityscape backdrop (drawn behind main buildings in the gap)
+    # 100 chars wide, various building heights
+    CITYSCAPE = [
+        "                              |~|                              T                              ",  # Row 0 - antenna tips
+        "            ___               |=|      ___                    /|\\                 ___         ",  # Row 1
+        "    ___    |   |    ___      .|=|.    |   |     ___     ___  |=|=|    ___        |   |   ___  ",  # Row 2
+        "   |   |   |   |   |   |   .:|=|:.   |   |    |   |   |   | |=|=|   |   |  ___  |   |  |   | ",  # Row 3
+        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |   | |[ ]|  |[ ]| ",  # Row 4
+        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 5
+        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 6
+        "   |[ ]|   |[ ]|   |[ ]|   |:|=|:|   |[ ]|    |[ ]|   |[ ]| |=|=|   |[ ]| |[ ]| |[ ]|  |[ ]| ",  # Row 7
+        "   |___|   |___|   |___|   |:|=|:|   |___|    |___|   |___| |=|=|   |___| |[ ]| |___|  |___| ",  # Row 8
+        "                           |:|=|:|                          |=|=|         |[ ]|              ",  # Row 9
+        "                           |:|=|:|                          |=|=|         |___|              ",  # Row 10
+        "                           |:|=|:|                          |=|=|                            ",  # Row 11
+        "                           |:|=|:|                          |___|                            ",  # Row 12
+        "                           |_|=|_|                                                           ",  # Row 13
+    ]
+
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, two doors with stoops
     BUILDING = [
         "                        _____                                  ",
@@ -1695,6 +1714,14 @@ class AlleyScene:
         # Window positions for layering (filled during _draw_building)
         self._window_interior_positions: List[Tuple[int, int]] = []
         self._window_frame_positions: List[Tuple[int, int, str]] = []  # (x, y, char)
+        self._sidewalk_positions: List[Tuple[int, int, str, int]] = []  # (x, y, char, color)
+        # Cafe people in the lower window (Shell Cafe)
+        self._cafe_people: List[Dict] = [
+            {'x_offset': 0.0, 'direction': 1, 'arm_frame': 0, 'move_timer': 0, 'arm_timer': 0},
+            {'x_offset': 6.0, 'direction': -1, 'arm_frame': 1, 'move_timer': 30, 'arm_timer': 15},
+            {'x_offset': 12.0, 'direction': 1, 'arm_frame': 0, 'move_timer': 60, 'arm_timer': 45},
+        ]
+        self._cafe_people_timer = 0
         # Manholes and drains with occasional steam
         self._manhole_positions: List[Tuple[int, int]] = []  # (x, y)
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
@@ -1776,14 +1803,14 @@ class AlleyScene:
         """Initialize cloud layer with cumulus clouds and wisps."""
         self._clouds = []
 
-        # Create big, slow-moving cumulus clouds (closer, more detailed)
+        # Create big, FAST-moving cumulus clouds (closer, more detailed)
         num_cumulus = max(2, self.width // 60)
         for i in range(num_cumulus):
-            # Large cumulus cloud shapes
+            # Large cumulus cloud shapes - move fast
             self._clouds.append({
                 'x': random.uniform(0, self.width),
                 'y': random.randint(4, 8),  # Mid-sky area
-                'speed': random.uniform(0.02, 0.05),  # Very slow movement
+                'speed': random.uniform(0.15, 0.30),  # Fast movement for big clouds
                 'type': 'cumulus',
                 'chars': random.choice([
                     # Big puffy cumulus
@@ -1814,14 +1841,14 @@ class AlleyScene:
                 ]),
             })
 
-        # Create smaller main clouds
+        # Create smaller main clouds - move slower
         num_clouds = max(2, self.width // 50)
         for i in range(num_clouds):
-            # Main cloud body
+            # Main cloud body - slow
             self._clouds.append({
                 'x': random.uniform(0, self.width),
                 'y': random.randint(3, 6),  # Upper area
-                'speed': random.uniform(0.05, 0.12),
+                'speed': random.uniform(0.03, 0.08),  # Slow movement for small clouds
                 'type': 'main',
                 'chars': random.choice([
                     ['  ___  ', ' (   ) ', '(_____)', '  ~~~  '],
@@ -1829,12 +1856,12 @@ class AlleyScene:
                     ['_____', '(   )', '~~~~~'],
                 ]),
             })
-            # Wisps below main clouds
+            # Wisps below main clouds - slowest
             for _ in range(2):
                 self._clouds.append({
                     'x': random.uniform(0, self.width),
                     'y': random.randint(6, 12),
-                    'speed': random.uniform(0.08, 0.18),
+                    'speed': random.uniform(0.02, 0.05),  # Slowest for wisps
                     'type': 'wisp',
                     'char': random.choice(['~', '≈', '-', '.']),
                     'length': random.randint(3, 8),
@@ -2477,9 +2504,11 @@ class AlleyScene:
         # Draw street lights between buildings (in the gap)
         self._draw_street_lights(ground_y)
 
-        # Draw curb - solid line separating alley from street (at bottom)
+        # Draw curb/sidewalk - store positions for front-layer rendering
+        self._sidewalk_positions = []
         for x in range(self.width - 1):
-            self.scene[curb_y][x] = ('▄', Colors.ALLEY_MID)
+            # Store sidewalk position for rendering on top of scene (but behind sprites)
+            self._sidewalk_positions.append((x, curb_y, '▄', Colors.ALLEY_MID))
 
         # Draw street surface (two rows)
         for x in range(self.width - 1):
@@ -2517,18 +2546,18 @@ class AlleyScene:
                     if drain_x + i < self.width - 1:
                         self.scene[curb_y][drain_x + i] = (char, Colors.ALLEY_DARK)
 
-        # Place trees - one on left side, two on far right of screen
+        # Place trees - one on left side, two on right side (in the gap before building 2)
         self._tree_positions = []
         tree_height = len(self.TREE)
         tree_width = len(self.TREE[0])
-        # Tree 1: left side in the gap
+        # Tree 1: left side in the gap (past building 1)
         tree1_x = building1_right + 15
-        # Tree 2 and 3: far right of screen (past building 2)
-        building2_right = self._building2_x + len(self.BUILDING2[0]) if self._building2_x > 0 else self.width
-        tree2_x = building2_right + 3
-        tree3_x = building2_right + 15
+        # Tree 2 and 3: right side in the gap (before building 2)
+        building2_left = self._building2_x if self._building2_x > 0 else self.width
+        tree2_x = building2_left - tree_width - 8   # 8 chars before building 2
+        tree3_x = building2_left - tree_width - 22  # 22 chars before building 2
         for tree_x in [tree1_x, tree2_x, tree3_x]:
-            if tree_x > 0 and tree_x + tree_width < self.width - 2:
+            if tree_x > building1_right and tree_x + tree_width < building2_left:
                 tree_y = ground_y - tree_height + 1
                 self._tree_positions.append((tree_x, tree_y))
                 self._draw_tree(tree_x, tree_y)
@@ -2552,7 +2581,7 @@ class AlleyScene:
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
         # Calculate cafe position first (shifted 11 chars left)
-        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 14  # 3 more left (was -11)
+        self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 18  # 4 more left (was -14)
         self.cafe_y = ground_y - len(self.CAFE) + 1
 
         # Place well-lit Cafe between buildings (center of gap)
@@ -2564,8 +2593,8 @@ class AlleyScene:
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
-        # Draw street sign near crosswalk
-        sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2
+        # Draw street sign near crosswalk (shifted 12 chars right)
+        sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2 + 12
         sign_y = ground_y - len(self.STREET_SIGN) + 1
         self._draw_street_sign(sign_x, sign_y)
 
@@ -2662,179 +2691,103 @@ class AlleyScene:
                 self.scene[row][x] = (char, Colors.GREY_BLOCK)
 
     def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int):
-        """Draw distant building skyline in visible areas (gap between main buildings)."""
+        """Draw static cityscape backdrop in the gap between main buildings."""
         # Initialize skyline windows list
         self._skyline_windows = []
         self._skyline_buildings = []
 
-        # Calculate cafe position to avoid overlap
-        cafe_width = len(self.CAFE[0]) + 4
-        cafe_left = center_x - cafe_width // 2 - 11
-        cafe_right = cafe_left + cafe_width
-
-        # Skyline base y (where buildings touch the "horizon")
-        skyline_y = ground_y - 8
-
-        # Store visible regions for skyline (only in gap between main buildings)
-        # left_boundary = building1_right, right_boundary = building2_x
-        # Also account for building2_right for far right area
-        building2_right = right_boundary + len(self.BUILDING2[0]) if right_boundary > 0 else self.width
-
-        # Visible regions: only the center gap between buildings
-        # The main buildings cover x=9 to building1_right and building2_x to building2_right
-        visible_regions = []
-
-        # Center gap (between main buildings)
-        if left_boundary < right_boundary:
-            visible_regions.append((left_boundary + 1, right_boundary - 1))
-
-        # Store for visibility checking during window updates
+        # Store visibility bounds
         self._skyline_visible_left = left_boundary + 1
         self._skyline_visible_right = right_boundary - 1
 
-        # Generate buildings ONLY in visible center gap
-        for region_left, region_right in visible_regions:
-            pos_x = region_left + 1
-            while pos_x < region_right - 5:
-                # Skip cafe area
-                if cafe_left - 2 < pos_x < cafe_right + 2:
-                    pos_x = cafe_right + 2
-                    continue
+        # Position cityscape centered in the gap
+        cityscape_width = len(self.CITYSCAPE[0]) if self.CITYSCAPE else 0
+        cityscape_height = len(self.CITYSCAPE)
+        gap_width = right_boundary - left_boundary
 
-                # Randomly choose building type (more variety in center)
-                btype = random.choice(['tiny', 'small', 'medium', 'tall', 'skyscraper', 'wide'])
+        # Center the cityscape in the gap
+        cityscape_x = left_boundary + (gap_width - cityscape_width) // 2
 
-                # Determine building dimensions based on type
-                if btype == 'tiny':
-                    width = random.randint(3, 4)
-                    height = random.randint(3, 5)
-                elif btype == 'small':
-                    width = random.randint(4, 6)
-                    height = random.randint(5, 8)
-                elif btype == 'medium':
-                    width = random.randint(5, 8)
-                    height = random.randint(8, 12)
-                elif btype == 'tall':
-                    width = random.randint(4, 6)
-                    height = random.randint(12, 18)
-                elif btype == 'skyscraper':
-                    width = random.randint(6, 10)
-                    height = random.randint(18, 28)
-                else:  # wide
-                    width = random.randint(8, 12)
-                    height = random.randint(6, 10)
+        # Position at top of the visible gap area (above the cafe/street level)
+        cityscape_y = ground_y - cityscape_height - 6
 
-                # Calculate building position
-                building_top = skyline_y - height
-
-                # Make sure building fits in region
-                if pos_x + width < region_right:
-                    self._draw_skyline_building(pos_x, building_top, width, height, btype,
-                                                region_left, region_right)
-
-                # Move to next position with slight gap
-                pos_x += width + random.randint(1, 3)
-
-    def _draw_skyline_building(self, x: int, top_y: int, width: int, height: int, btype: str,
-                                region_left: int, region_right: int):
-        """Draw a single skyline building with windows in visible region only."""
-        # Draw building outline/fill
-        for row in range(height):
-            py = top_y + row
-            if py < 3 or py >= self.height:  # Stay below clouds
+        # Draw the static cityscape
+        for row_idx, row in enumerate(self.CITYSCAPE):
+            py = cityscape_y + row_idx
+            if py < 2 or py >= self.height:
                 continue
 
-            for col in range(width):
-                px = x + col
+            for col_idx, char in enumerate(row):
+                px = cityscape_x + col_idx
                 if px < 0 or px >= self.width - 1:
                     continue
-                # Skip if outside visible region
-                if px < region_left or px > region_right:
+                # Only draw in visible gap
+                if px <= left_boundary or px >= right_boundary:
+                    continue
+                if char == ' ':
                     continue
 
-                # Determine character based on position
-                if row == 0:
-                    # Roof
-                    if col == 0:
-                        char = '/'
-                    elif col == width - 1:
-                        char = '\\'
-                    else:
-                        char = '_'
-                elif col == 0 or col == width - 1:
-                    # Walls
-                    char = '|'
-                elif row == height - 1:
-                    # Bottom
-                    char = '_'
+                # Color based on character
+                if char in '[]':
+                    # Window brackets
+                    color = Colors.ALLEY_MID
+                    # Check if this is a window position (between brackets)
+                    # and set up animation
+                elif char in '|_/\\':
+                    # Building structure
+                    color = Colors.ALLEY_DARK
+                elif char in '~T':
+                    # Antenna/tower tops
+                    color = Colors.ALLEY_MID
+                elif char in '.:\'"':
+                    # Building details
+                    color = Colors.ALLEY_DARK
+                elif char == '=':
+                    # Window/structure fill
+                    color = Colors.ALLEY_MID
                 else:
-                    # Interior - mostly empty, some windows
-                    char = ' '
+                    color = Colors.ALLEY_DARK
 
-                if char != ' ':
-                    self.scene[py][px] = (char, Colors.ALLEY_DARK)
+                self.scene[py][px] = (char, color)
 
-        # Add windows to the building
-        window_start_row = 2
-        window_end_row = height - 2
-        window_start_col = 1
-        window_end_col = width - 1
-
-        # Window spacing based on building type
-        if btype == 'skyscraper':
-            row_spacing = 2
-            col_spacing = 2
-        elif btype in ['tall', 'medium']:
-            row_spacing = 3
-            col_spacing = 2
-        else:
-            row_spacing = 2
-            col_spacing = 2
-
-        for row in range(window_start_row, window_end_row, row_spacing):
-            py = top_y + row
-            if py < 3 or py >= self.height:
+        # Add animated windows at window bracket positions [ ]
+        # Find all window positions in the cityscape
+        for row_idx, row in enumerate(self.CITYSCAPE):
+            py = cityscape_y + row_idx
+            if py < 2 or py >= self.height:
                 continue
 
-            for col in range(window_start_col, window_end_col, col_spacing):
-                px = x + col
-                if px < 0 or px >= self.width - 1:
-                    continue
-                # Skip windows outside visible region
-                if px < region_left or px > region_right:
-                    continue
+            col_idx = 0
+            while col_idx < len(row) - 2:
+                # Look for [ ] pattern (window)
+                if row[col_idx:col_idx+3] == '[ ]':
+                    px = cityscape_x + col_idx + 1  # Center of window
+                    if left_boundary < px < right_boundary and 0 <= px < self.width - 1:
+                        # Add animated window
+                        rand_val = random.random()
+                        if rand_val < 0.3:
+                            is_on = True
+                            is_animated = random.random() < 0.3
+                        else:
+                            is_on = False
+                            is_animated = random.random() < 0.15
 
-                # Determine if window is on, off, or animated
-                rand_val = random.random()
-                if rand_val < 0.15:
-                    # Window is on (bright)
-                    is_on = True
-                    is_animated = False
-                elif rand_val < 0.25:
-                    # Window toggles on/off
-                    is_on = random.choice([True, False])
-                    is_animated = True
+                        toggle_time = random.randint(100, 400) if is_animated else 0
+                        self._skyline_windows.append({
+                            'x': px,
+                            'y': py,
+                            'on': is_on,
+                            'animated': is_animated,
+                            'timer': random.randint(0, toggle_time) if is_animated else 0,
+                            'toggle_time': toggle_time,
+                        })
+
+                        # Draw initial window state
+                        if is_on:
+                            self.scene[py][px] = ('▪', Colors.RAT_YELLOW)
+                    col_idx += 3
                 else:
-                    # Window is off (dark)
-                    is_on = False
-                    is_animated = False
-
-                # Store window info for animation
-                toggle_time = random.randint(100, 500) if is_animated else 0
-                self._skyline_windows.append({
-                    'x': px,
-                    'y': py,
-                    'on': is_on,
-                    'animated': is_animated,
-                    'timer': random.randint(0, toggle_time) if is_animated else 0,
-                    'toggle_time': toggle_time,
-                })
-
-                # Draw initial window state
-                if is_on:
-                    self.scene[py][px] = ('▪', Colors.RAT_YELLOW)
-                else:
-                    self.scene[py][px] = ('▫', Colors.ALLEY_DARK)
+                    col_idx += 1
 
     def _draw_outline_building(self, building: List[str], x: int, base_y: int, color: int):
         """Draw a building outline at the given position."""
@@ -3094,6 +3047,9 @@ class AlleyScene:
         # Update window people
         self._update_window_people()
 
+        # Update cafe people in Shell Cafe
+        self._update_cafe_people()
+
         # Update clouds
         self._update_clouds()
 
@@ -3323,6 +3279,34 @@ class AlleyScene:
 
         self._window_people = new_window_people
 
+    def _update_cafe_people(self):
+        """Update the 3 people in Shell Cafe's lower window - gentle movement and arm animation."""
+        self._cafe_people_timer += 1
+
+        for person in self._cafe_people:
+            person['move_timer'] += 1
+            person['arm_timer'] += 1
+
+            # Move person slightly back and forth within their zone
+            if person['move_timer'] >= random.randint(30, 60):
+                person['move_timer'] = 0
+                # Small movements within their section of the window
+                person['x_offset'] += person['direction'] * 0.5
+                # Bounds check - each person has a ~5 char zone
+                base_x = self._cafe_people.index(person) * 6.0
+                if person['x_offset'] > base_x + 2.0:
+                    person['direction'] = -1
+                elif person['x_offset'] < base_x - 2.0:
+                    person['direction'] = 1
+                # Occasionally reverse direction randomly
+                if random.random() < 0.2:
+                    person['direction'] *= -1
+
+            # Animate arms - cycle through arm positions
+            if person['arm_timer'] >= random.randint(20, 50):
+                person['arm_timer'] = 0
+                person['arm_frame'] = (person['arm_frame'] + 1) % 4
+
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
         """Get the current light colors for both directions.
@@ -3381,20 +3365,17 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw a crosswalk with white stripes (4x wider) and vanishing street above."""
-        crosswalk_width = 32  # 4x wider
+        """Draw vanishing street with ==== line across (no crosswalk stripes)."""
+        crosswalk_width = 32
+
+        # Draw "====" line across the street instead of crosswalk stripes
         for cx in range(crosswalk_width):
             px = x + cx
             if 0 <= px < self.width - 1:
-                # Draw white stripes on street and blank out sidewalk every other tile
-                if cx % 2 == 0:
-                    if street_y < self.height:
-                        self.scene[street_y][px] = ('█', Colors.ALLEY_LIGHT)
-                    # Blank out sidewalk (curb) every other tile for crosswalk effect
-                    if curb_y < self.height:
-                        self.scene[curb_y][px] = (' ', Colors.ALLEY_DARK)
+                if street_y < self.height:
+                    self.scene[street_y][px] = ('=', Colors.RAT_YELLOW)
 
-        # Draw vanishing street effect above crosswalk
+        # Draw vanishing street effect above
         # Starts at curb and ends at lower 1/5th of screen
         vanish_end_y = self.height - (self.height // 5)  # Lower 1/5th of screen
         vanish_start_y = curb_y - 1  # Just above curb
@@ -3413,11 +3394,11 @@ class AlleyScene:
                 if 0 <= px < self.width - 1 and vanish_end_y <= row_y < vanish_start_y:
                     # Draw street surface with lane markings
                     if offset == 0:
-                        # Center line - vertical ll pattern (yellow, lowercase L)
-                        self.scene[row_y][px] = ('l', Colors.RAT_YELLOW)
+                        # Center line - vertical || pattern (yellow)
+                        self.scene[row_y][px] = ('|', Colors.RAT_YELLOW)
                     elif offset == 1:
-                        # Second l of the ll center line
-                        self.scene[row_y][px] = ('l', Colors.RAT_YELLOW)
+                        # Second | of the || center line
+                        self.scene[row_y][px] = ('|', Colors.RAT_YELLOW)
                     elif offset == -half_width:
                         # Left edge line (use forward slash for perspective - narrows toward top)
                         self.scene[row_y][px] = ('/', Colors.ALLEY_MID)
@@ -3524,14 +3505,14 @@ class AlleyScene:
                             # Red brick zone - fill completely
                             self.scene[py][px] = (brick_char, Colors.BRICK_RED)
                         elif row_idx >= grey_start_row and row_idx < total_rows - 2:
-                            # Grey zone - fill with blocks (but NOT the bottom 2 porch rows)
-                            # Use consistent block character for uniform appearance
-                            if random.random() < 0.92:
-                                # Mostly filled with consistent blocks
-                                self.scene[py][px] = ('▓', Colors.GREY_BLOCK)
-                            else:
-                                # Occasional lighter block for subtle texture
+                            # Grey zone - fill with consistent blocks (no random smudges)
+                            # Bottom row of grey zone gets smudged texture
+                            if row_idx == total_rows - 3:
+                                # Smudge row at bottom of building (just above porch)
                                 self.scene[py][px] = ('▒', Colors.GREY_BLOCK)
+                            else:
+                                # Solid consistent grey blocks
+                                self.scene[py][px] = ('▓', Colors.GREY_BLOCK)
                         # Bottom 2 rows (porch/stoop level) - leave empty, no blocks
 
         # Second pass: add door knobs
@@ -3572,8 +3553,14 @@ class AlleyScene:
         # Render window people silhouettes (behind window frames)
         self._render_window_people(screen)
 
+        # Render cafe people in Shell Cafe lower window
+        self._render_cafe_people(screen)
+
         # Render window frames on top of window people (so people appear inside)
         self._render_window_frames(screen)
+
+        # Render sidewalk/curb on top of scene but behind all sprites
+        self._render_sidewalk(screen)
 
         # Render street light flicker effects
         self._render_street_light_flicker(screen)
@@ -3611,6 +3598,18 @@ class AlleyScene:
             if 0 <= px < self.width - 1 and 0 <= py < self.height:
                 try:
                     attr = curses.color_pair(Colors.ALLEY_BLUE) | curses.A_DIM
+                    screen.attron(attr)
+                    screen.addstr(py, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    def _render_sidewalk(self, screen):
+        """Render sidewalk/curb on top of scene but behind sprites."""
+        for px, py, char, color in self._sidewalk_positions:
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    attr = curses.color_pair(color)
                     screen.attron(attr)
                     screen.addstr(py, px, char)
                     screen.attroff(attr)
@@ -3935,6 +3934,8 @@ class AlleyScene:
         """Render cars on the street."""
         # Cars are 2 rows tall, bottom row at street level
         street_y = self.height - 1
+        # Cars can't render above the 1/5th line
+        min_car_y = self.height // 5
 
         for car in self._cars:
             x = int(car['x'])
@@ -3947,7 +3948,8 @@ class AlleyScene:
                     # Position sprite so bottom row is at street level
                     py = street_y - (sprite_height - 1 - row_idx)
 
-                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    # Don't render cars above the 1/5th line
+                    if 0 <= px < self.width - 1 and min_car_y <= py < self.height and char != ' ':
                         try:
                             # Cars are white/bright
                             attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
@@ -4187,6 +4189,53 @@ class AlleyScene:
                     y = window_y + i
                     if 0 <= silhouette_x < self.width - 2 and 0 <= y < self.height:
                         screen.addstr(y, silhouette_x, char)
+                screen.attroff(attr)
+            except curses.error:
+                pass
+
+    def _render_cafe_people(self, screen):
+        """Render the 3 people in Shell Cafe's lower window with animated arms."""
+        if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
+            return
+
+        # Lower window is at row 14-15 of CAFE sprite (0-indexed)
+        # The window content area starts at column 4 and spans ~20 chars
+        window_row = 14  # Row with people heads
+        body_row = 15    # Row with bodies/arms
+        window_start_col = 4  # Start of window content area
+
+        # Arm animation frames (both arms shown)
+        # Frame 0: arms down, Frame 1: left up, Frame 2: both up, Frame 3: right up
+        arm_frames = [
+            ('/|\\', '/ \\'),   # Frame 0: arms down
+            ('\\|\\', '\\ \\'),  # Frame 1: left arm up
+            ('\\|/', '\\ /'),    # Frame 2: both arms up (wave)
+            ('/|/', '/ /'),      # Frame 3: right arm up
+        ]
+
+        for person in self._cafe_people:
+            x_offset = int(person['x_offset'])
+            arm_frame = person['arm_frame'] % len(arm_frames)
+
+            # Calculate screen position
+            px = self.cafe_x + window_start_col + x_offset
+            py_head = self.cafe_y + window_row
+            py_body = self.cafe_y + body_row
+
+            if not (0 <= px < self.width - 3 and 0 <= py_head < self.height and 0 <= py_body < self.height):
+                continue
+
+            try:
+                # Draw head
+                attr = curses.color_pair(Colors.CAFE_WARM)
+                screen.attron(attr)
+                screen.addstr(py_head, px + 1, 'O')  # Head centered above body
+                screen.attroff(attr)
+
+                # Draw body with animated arms
+                upper_body, lower_body = arm_frames[arm_frame]
+                screen.attron(attr)
+                screen.addstr(py_body, px, upper_body)  # Arms and torso
                 screen.attroff(attr)
             except curses.error:
                 pass
