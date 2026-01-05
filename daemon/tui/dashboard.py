@@ -1305,6 +1305,58 @@ class AlleyScene:
     # Wind wisp characters
     WIND_WISPS = ['~', '≈', '≋', '～', '-', '=']
 
+    # ==========================================
+    # METEOR QTE EVENT - Quick Time Event
+    # ==========================================
+
+    # Meteor sprites (falling chunks)
+    METEOR_LARGE = [
+        " @@@ ",
+        "@@@@@",
+        "@@@@@",
+        " @@@ ",
+    ]
+
+    METEOR_MEDIUM = [
+        " @@ ",
+        "@@@@",
+        " @@ ",
+    ]
+
+    METEOR_SMALL = [
+        " @ ",
+        "@@@",
+    ]
+
+    # Missile sprite (rising from bottom)
+    MISSILE = [
+        " ^ ",
+        "/|\\",
+        " | ",
+    ]
+
+    # Explosion animation frames
+    EXPLOSION_FRAMES = [
+        [" * "],
+        ["***", " * "],
+        ["*.*", "***", "*.*"],
+        [" . ", ".*.", " . "],
+        ["   "],
+    ]
+
+    # NPC caller (person waving for help)
+    NPC_CALLER = [
+        " O/ ",
+        "/|  ",
+        "/ \\ ",
+    ]
+
+    # QTE key mappings: key -> (column_index, row_index)
+    # Columns spread across screen, rows are vertical layers
+    # Keys: 6, 7, 8, 9, 0 for columns
+    # Rows: top (0), middle (1), bottom (2)
+    QTE_KEYS = ['6', '7', '8', '9', '0']
+
     # Person walking animation frames (arm swinging) - basic person
     # Pedestrian sprites with leg animation (4 frames for walking cycle)
     PERSON_RIGHT_FRAMES = [
@@ -1649,6 +1701,23 @@ class AlleyScene:
         self._agent_frame = 0
         self._transform_frame = 0
         self._frame_timer = 0
+        # Meteor QTE event - quick time event
+        self._qte_active = False
+        self._qte_state = 'idle'  # idle, warning, active, success, failure, cooldown
+        self._qte_timer = 0
+        self._qte_cooldown = 0
+        self._qte_meteors: List[Dict] = []  # {x, y, col, row, speed, size, called}
+        self._qte_missiles: List[Dict] = []  # {x, y, target_col, target_row, speed}
+        self._qte_explosions: List[Dict] = []  # {x, y, frame, timer}
+        self._qte_current_callout = None  # (col, row, key) - current key NPC is calling
+        self._qte_callout_timer = 0
+        self._qte_score = 0
+        self._qte_misses = 0
+        self._qte_npc_x = 0
+        self._qte_npc_message = ""
+        self._qte_wave = 0  # Current wave of meteors
+        self._qte_total_waves = 5  # Total waves per event
+        self._qte_pending_keys: List[str] = []  # Keys player needs to press
         # Cloud layer with wisps
         self._clouds: List[Dict] = []
         self._init_clouds()
@@ -1663,6 +1732,11 @@ class AlleyScene:
         self._pedestrians = []  # Clear pedestrians on resize
         self._woman_red_active = False  # Reset woman in red event
         self._woman_red_state = 'idle'
+        self._qte_active = False  # Reset QTE event
+        self._qte_state = 'idle'
+        self._qte_meteors = []
+        self._qte_missiles = []
+        self._qte_explosions = []
         self._init_clouds()  # Reinit clouds for new size
         self._generate_scene()
 
@@ -1912,6 +1986,242 @@ class AlleyScene:
             if leaf['x'] > -5 and leaf['y'] < street_y + 2:
                 new_leaves.append(leaf)
         self._leaves = new_leaves
+
+    def _update_qte(self):
+        """Update meteor QTE event - quick time event."""
+        # Handle cooldown
+        if self._qte_cooldown > 0:
+            self._qte_cooldown -= 1
+            return
+
+        ground_y = self.height - 5  # Ground level for meteor impact
+
+        # If idle, check for rare trigger
+        if self._qte_state == 'idle':
+            # Rare trigger - about 1 in 3000 frames
+            if random.randint(1, 3000) == 1:
+                self._qte_active = True
+                self._qte_state = 'warning'
+                self._qte_timer = 0
+                self._qte_score = 0
+                self._qte_misses = 0
+                self._qte_wave = 0
+                self._qte_meteors = []
+                self._qte_missiles = []
+                self._qte_explosions = []
+                self._qte_pending_keys = []
+                # NPC appears on the left side
+                self._qte_npc_x = 5
+                self._qte_npc_message = "HELP! METEORS!"
+            return
+
+        self._qte_timer += 1
+
+        if self._qte_state == 'warning':
+            # Warning phase - NPC appears and warns
+            if self._qte_timer >= 60:
+                self._qte_state = 'active'
+                self._qte_timer = 0
+                self._qte_wave = 1
+                self._spawn_qte_wave()
+
+        elif self._qte_state == 'active':
+            # Update callout timer
+            self._qte_callout_timer += 1
+
+            # Spawn new callout if needed
+            if self._qte_current_callout is None and self._qte_callout_timer >= 30:
+                self._spawn_qte_callout()
+                self._qte_callout_timer = 0
+
+            # Update meteors (falling)
+            new_meteors = []
+            for meteor in self._qte_meteors:
+                if meteor['called']:
+                    meteor['y'] += meteor['speed']
+                    # Check if meteor hit ground
+                    if meteor['y'] >= ground_y:
+                        self._qte_misses += 1
+                        self._spawn_explosion(meteor['x'], ground_y)
+                        continue
+                new_meteors.append(meteor)
+            self._qte_meteors = new_meteors
+
+            # Update missiles (rising)
+            new_missiles = []
+            for missile in self._qte_missiles:
+                missile['y'] -= missile['speed']
+                # Check collision with meteors
+                hit = False
+                for meteor in self._qte_meteors:
+                    if meteor['called'] and abs(missile['x'] - meteor['x']) < 4 and abs(missile['y'] - meteor['y']) < 3:
+                        self._spawn_explosion(meteor['x'], meteor['y'])
+                        self._qte_meteors.remove(meteor)
+                        self._qte_score += 1
+                        hit = True
+                        break
+                if not hit and missile['y'] > 3:
+                    new_missiles.append(missile)
+            self._qte_missiles = new_missiles
+
+            # Update explosions
+            new_explosions = []
+            for exp in self._qte_explosions:
+                exp['timer'] += 1
+                if exp['timer'] % 4 == 0:
+                    exp['frame'] += 1
+                if exp['frame'] < len(self.EXPLOSION_FRAMES):
+                    new_explosions.append(exp)
+            self._qte_explosions = new_explosions
+
+            # Check wave completion
+            active_meteors = [m for m in self._qte_meteors if m['called']]
+            uncalled_meteors = [m for m in self._qte_meteors if not m['called']]
+            if len(active_meteors) == 0 and len(uncalled_meteors) == 0 and len(self._qte_missiles) == 0:
+                self._qte_wave += 1
+                if self._qte_wave > self._qte_total_waves:
+                    # All waves complete
+                    if self._qte_misses <= 2:
+                        self._qte_state = 'success'
+                    else:
+                        self._qte_state = 'failure'
+                    self._qte_timer = 0
+                else:
+                    self._spawn_qte_wave()
+
+        elif self._qte_state == 'success':
+            self._qte_npc_message = f"WE DID IT! Score: {self._qte_score}"
+            if self._qte_timer >= 120:
+                self._qte_state = 'idle'
+                self._qte_active = False
+                self._qte_cooldown = 5000
+
+        elif self._qte_state == 'failure':
+            self._qte_npc_message = f"THE CITY... Hits: {self._qte_score}"
+            if self._qte_timer >= 120:
+                self._qte_state = 'idle'
+                self._qte_active = False
+                self._qte_cooldown = 5000
+
+    def _spawn_qte_wave(self):
+        """Spawn a wave of meteors for QTE."""
+        # Calculate column positions spread across screen
+        col_width = (self.width - 40) // 5
+        col_starts = [20 + i * col_width + col_width // 2 for i in range(5)]
+
+        # Row heights (3 layers)
+        row_heights = [8, 15, 22]  # Top, middle, bottom starting y
+
+        # Spawn 2-4 meteors per wave
+        num_meteors = min(self._qte_wave + 1, 4)
+        used_positions = set()
+
+        for _ in range(num_meteors):
+            col = random.randint(0, 4)
+            row = random.randint(0, 2)
+            pos_key = (col, row)
+
+            # Avoid duplicate positions
+            attempts = 0
+            while pos_key in used_positions and attempts < 10:
+                col = random.randint(0, 4)
+                row = random.randint(0, 2)
+                pos_key = (col, row)
+                attempts += 1
+
+            used_positions.add(pos_key)
+
+            # Determine meteor size based on row
+            if row == 0:
+                size = 'large'
+                speed = 0.15
+            elif row == 1:
+                size = 'medium'
+                speed = 0.2
+            else:
+                size = 'small'
+                speed = 0.25
+
+            self._qte_meteors.append({
+                'x': col_starts[col],
+                'y': float(row_heights[row]),
+                'col': col,
+                'row': row,
+                'speed': speed,
+                'size': size,
+                'called': False,  # Not falling yet until called
+            })
+
+        self._qte_current_callout = None
+        self._qte_callout_timer = 0
+
+    def _spawn_qte_callout(self):
+        """Spawn a new callout for the NPC to say."""
+        # Find uncalled meteors
+        uncalled = [m for m in self._qte_meteors if not m['called']]
+        if not uncalled:
+            self._qte_current_callout = None
+            return
+
+        # Pick a random uncalled meteor
+        meteor = random.choice(uncalled)
+        key = self.QTE_KEYS[meteor['col']]
+        row_name = ['TOP', 'MID', 'LOW'][meteor['row']]
+
+        self._qte_current_callout = (meteor['col'], meteor['row'], key)
+        self._qte_npc_message = f"PRESS [{key}] {row_name}!"
+
+        # Start the meteor falling
+        meteor['called'] = True
+
+    def _spawn_explosion(self, x: float, y: float):
+        """Spawn an explosion at the given position."""
+        self._qte_explosions.append({
+            'x': int(x),
+            'y': int(y),
+            'frame': 0,
+            'timer': 0,
+        })
+
+    def handle_qte_key(self, key: str) -> bool:
+        """Handle a key press for the QTE event. Returns True if key was consumed."""
+        if not self._qte_active or self._qte_state != 'active':
+            return False
+
+        if key not in self.QTE_KEYS:
+            return False
+
+        col = self.QTE_KEYS.index(key)
+
+        # Check if there's a called meteor in this column to hit with missile
+        called_meteors = [m for m in self._qte_meteors if m['called'] and m['col'] == col]
+        if called_meteors:
+            # Launch missile at the meteor
+            meteor = called_meteors[0]
+            col_width = (self.width - 40) // 5
+            col_x = 20 + col * col_width + col_width // 2
+            self._qte_missiles.append({
+                'x': col_x,
+                'y': float(self.height - 6),
+                'target_col': col,
+                'target_row': meteor['row'],
+                'speed': 1.5,
+            })
+            # Clear current callout so NPC calls next one
+            if self._qte_current_callout and self._qte_current_callout[0] == col:
+                self._qte_current_callout = None
+                self._qte_callout_timer = 20  # Short delay before next callout
+            return True
+
+        # Check if there's an uncalled meteor to activate
+        uncalled = [m for m in self._qte_meteors if not m['called'] and m['col'] == col]
+        if uncalled:
+            # Activate the meteor (start it falling)
+            meteor = uncalled[0]
+            meteor['called'] = True
+            return True
+
+        return False
 
     def _render_clouds(self, screen):
         """Render cloud layer."""
@@ -2443,6 +2753,9 @@ class AlleyScene:
         # Update windy weather effects
         self._update_wind()
 
+        # Update meteor QTE event
+        self._update_qte()
+
     def _update_cars(self):
         """Update car positions and spawn new cars."""
         # Spawn new cars occasionally
@@ -2926,6 +3239,9 @@ class AlleyScene:
         # Render horizontal cars on the street LAST (on top of everything)
         self._render_cars(screen)
 
+        # Render QTE event (meteors, missiles, explosions, NPC) on top of everything
+        self._render_qte(screen)
+
     def _render_window_frames(self, screen):
         """Render window frames on top of window people for proper layering."""
         for px, py, char in self._window_frame_positions:
@@ -3002,6 +3318,146 @@ class AlleyScene:
                     attr = curses.color_pair(Colors.MATRIX_DIM)
                     screen.attron(attr)
                     screen.addstr(py, px, leaf['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    def _render_qte(self, screen):
+        """Render the meteor QTE event - meteors, missiles, explosions, NPC."""
+        if not self._qte_active:
+            return
+
+        # Render meteors
+        for meteor in self._qte_meteors:
+            px = int(meteor['x'])
+            py = int(meteor['y'])
+
+            # Select sprite based on size
+            if meteor['size'] == 'large':
+                sprite = self.METEOR_LARGE
+            elif meteor['size'] == 'medium':
+                sprite = self.METEOR_MEDIUM
+            else:
+                sprite = self.METEOR_SMALL
+
+            # Draw meteor sprite
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    cx = px + col_idx - len(row) // 2
+                    cy = py + row_idx
+                    if 0 <= cx < self.width - 1 and 0 <= cy < self.height and char != ' ':
+                        try:
+                            # Meteors are orange/red when falling, gray when waiting
+                            if meteor['called']:
+                                attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+                            else:
+                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            screen.attron(attr)
+                            screen.addstr(cy, cx, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+            # Draw key indicator above meteor
+            if not meteor['called']:
+                key = self.QTE_KEYS[meteor['col']]
+                key_x = px
+                key_y = py - 1
+                if 0 <= key_x < self.width - 1 and 0 <= key_y < self.height:
+                    try:
+                        attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                        screen.attron(attr)
+                        screen.addstr(key_y, key_x, f"[{key}]")
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render missiles
+        for missile in self._qte_missiles:
+            px = int(missile['x'])
+            py = int(missile['y'])
+
+            for row_idx, row in enumerate(self.MISSILE):
+                for col_idx, char in enumerate(row):
+                    cx = px + col_idx - len(row) // 2
+                    cy = py + row_idx
+                    if 0 <= cx < self.width - 1 and 0 <= cy < self.height and char != ' ':
+                        try:
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                            screen.attron(attr)
+                            screen.addstr(cy, cx, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+        # Render explosions
+        for exp in self._qte_explosions:
+            frame_idx = min(exp['frame'], len(self.EXPLOSION_FRAMES) - 1)
+            frame = self.EXPLOSION_FRAMES[frame_idx]
+            px = exp['x']
+            py = exp['y']
+
+            for row_idx, row in enumerate(frame):
+                for col_idx, char in enumerate(row):
+                    cx = px + col_idx - len(row) // 2
+                    cy = py + row_idx - len(frame) // 2
+                    if 0 <= cx < self.width - 1 and 0 <= cy < self.height and char != ' ':
+                        try:
+                            attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                            screen.attron(attr)
+                            screen.addstr(cy, cx, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+        # Render NPC caller
+        npc_x = self._qte_npc_x
+        npc_y = self.height - 8
+
+        for row_idx, row in enumerate(self.NPC_CALLER):
+            for col_idx, char in enumerate(row):
+                cx = npc_x + col_idx
+                cy = npc_y + row_idx
+                if 0 <= cx < self.width - 1 and 0 <= cy < self.height and char != ' ':
+                    try:
+                        attr = curses.color_pair(Colors.MATRIX_BRIGHT) | curses.A_BOLD
+                        screen.attron(attr)
+                        screen.addstr(cy, cx, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render NPC message/callout
+        if self._qte_npc_message:
+            msg_x = npc_x + 5
+            msg_y = npc_y
+            msg = self._qte_npc_message
+            if 0 <= msg_y < self.height and msg_x + len(msg) < self.width:
+                try:
+                    # Message box background
+                    attr = curses.color_pair(Colors.ALLEY_DARK)
+                    screen.attron(attr)
+                    screen.addstr(msg_y, msg_x - 1, ' ' * (len(msg) + 2))
+                    screen.attroff(attr)
+
+                    # Message text
+                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                    screen.attron(attr)
+                    screen.addstr(msg_y, msg_x, msg)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+        # Render wave/score info
+        if self._qte_state == 'active':
+            info = f"Wave {self._qte_wave}/{self._qte_total_waves} | Score: {self._qte_score} | Miss: {self._qte_misses}"
+            info_x = self.width // 2 - len(info) // 2
+            info_y = 5
+            if 0 <= info_y < self.height and 0 <= info_x < self.width:
+                try:
+                    attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                    screen.attron(attr)
+                    screen.addstr(info_y, info_x, info)
                     screen.attroff(attr)
                 except curses.error:
                     pass
