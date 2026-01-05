@@ -1148,12 +1148,13 @@ class AlleyScene:
     Simple alley scene with dumpster, box, traffic light, buildings, cars, and pedestrians.
     """
 
-    # Dumpster ASCII art (6 wide x 4 tall)
+    # Dumpster ASCII art (7 wide x 5 tall)
     DUMPSTER = [
-        " ____ ",
-        "|####|",
-        "|####|",
-        "|____|",
+        " _____ ",
+        "|#####|",
+        "|#####|",
+        "|#####|",
+        "|_____|",
     ]
 
     # Cardboard box ASCII art (5 wide x 3 tall) - filled to prevent see-through
@@ -1163,43 +1164,47 @@ class AlleyScene:
         "|___|",
     ]
 
-    # Blue street mailbox (4 wide x 5 tall)
+    # Blue street mailbox (6 wide x 5 tall)
     MAILBOX = [
-        " __ ",
-        "|==|",
-        "|US|",
-        "|__|",
-        " || ",
+        " ____ ",
+        "|====|",
+        "|MAIL|",
+        "|____|",
+        "  ||  ",
     ]
 
-    # Cafe storefront (well-lit, between buildings)
+    # Cafe storefront (well-lit, between buildings) - larger size
     CAFE = [
-        "  _______________  ",
-        " |   C A F E    | ",
-        " |  [=]    [=]  | ",
-        " |[=============]| ",
-        " |[ OPEN  .oOo. ]| ",
-        " |[_____________]| ",
-        " |_____[]______| ",
+        "   _______________________   ",
+        "  |      C A F E         |  ",
+        "  |                      |  ",
+        "  |  [====]      [====]  |  ",
+        "  |  [    ]      [    ]  |  ",
+        "  |  [====]      [====]  |  ",
+        "  |                      |  ",
+        "  |[===================]|  ",
+        "  |[  OPEN    .oOo.    ]|  ",
+        "  |[___________________]|  ",
+        "  |________[  ]________|  ",
     ]
 
     # Traffic light showing two sides (corner view) - compact head, tall pole
     # Left column is N/S direction (flat), right column is E/W direction (brackets)
     # All 6 lights shown as circles, off lights are gray
     TRAFFIC_LIGHT_TEMPLATE = [
-        " .=====. ",
-        " |L  (R) ",  # Red lights - right side has brackets
-        " |L  (R) ",  # Yellow lights
-        " |L  (R) ",  # Green lights
-        " '=====' ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
-        "    ||   ",
+        " .===. ",
+        " |L(R) ",  # Red lights - right side has brackets
+        " |L(R) ",  # Yellow lights
+        " |L(R) ",  # Green lights
+        " '===' ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
+        "   ||  ",
     ]
 
     # Car sprites - large side views (3 rows tall, longer)
@@ -1290,7 +1295,9 @@ class AlleyScene:
 
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, door, porch & steps
     BUILDING = [
-        "        (/)            [=]               (\\)                   ",
+        "                            ___                                ",
+        "        _O_            [===]|_|               _O_              ",
+        "       (/ \\)           [===]                 (/ \\)             ",
         ".--------------------------------------------------------------.",
         "|                                                              |",
         "|  [========]    [====]  [====]    [========]    [====]        |",
@@ -1322,21 +1329,21 @@ class AlleyScene:
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [        ]    [    ]  [    ]    [        ]    [    ]        |",
         "|  [========]    [====]  [====]    [========]    [====]        |",
-        "|                              _____________                   |",
-        "|                             |  .------.  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|                             |  |------|  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|                             |  |------|  |                   |",
-        "|                             |  | #  # |  |                   |",
-        "|_____________________________|  |______|  |___________________|",
-        "                              |__|______|__|                    ",
-        "                               ===========                      ",
+        "|                              _________                       |",
+        "|                             |  ____  |                       |",
+        "|                             | |    | |                       |",
+        "|                             | |    | |                       |",
+        "|                             | |____| |                       |",
+        "|                             |________|                       |",
+        "|_____________________________|________|_______________________|",
+        "                               ========                         ",
     ]
 
     # Second building (right side) - 2X TALL, 2X WIDE with door, porch & steps
     BUILDING2 = [
-        "      [=]        (/)                    (\\)          |T|   ",
+        "               ___                                         ",
+        "      [===]   |_|       _O_                  _O_     |T|   ",
+        "      [===]            (/ \\)                (/ \\)    |=|   ",
         ".----------------------------------------------------------.",
         "|                                                          |",
         "|    [========]    [====]    [========]    [====]          |",
@@ -1368,16 +1375,14 @@ class AlleyScene:
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [        ]    [    ]    [        ]    [    ]          |",
         "|    [========]    [====]    [========]    [====]          |",
-        "|    _____________                                         |",
-        "|   |  .------.  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|   |  |------|  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|   |  |------|  |                                         |",
-        "|   |  | #  # |  |                                         |",
-        "|___|  |______|  |_________________________________________|",
-        "    |__|______|__|                                          ",
-        "     ===========                                            ",
+        "|   _________                                              |",
+        "|  |  ____  |                                              |",
+        "|  | |    | |                                              |",
+        "|  | |    | |                                              |",
+        "|  | |____| |                                              |",
+        "|  |________|                                              |",
+        "|__|________|______________________________________________|",
+        "    ========                                                ",
     ]
 
     # Window positions for people animation (relative to building sprite)
@@ -1515,6 +1520,9 @@ class AlleyScene:
         self.mailbox_y = ground_y - len(self.MAILBOX) + 1
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
+        # Draw distant buildings above cafe (behind everything, small, dark grey)
+        self._draw_distant_buildings(gap_center, self.cafe_y)
+
         # Place well-lit Cafe between buildings (center of gap)
         self.cafe_x = gap_center - len(self.CAFE[0]) // 2
         self.cafe_y = ground_y - len(self.CAFE) + 1
@@ -1533,20 +1541,78 @@ class AlleyScene:
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
         # Position lights in the gap between buildings (spread out more)
-        light_x_positions = [gap_center - 25, gap_center + 25]
+        light_x_positions = [gap_center - 40, gap_center + 40]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
                 # Store position for flicker effect (center of light head)
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
 
+    def _draw_distant_buildings(self, center_x: int, cafe_y: int):
+        """Draw small, dark grey distant buildings above the cafe area."""
+        # Distant building sprites - small and simple
+        distant_buildings = [
+            # Tall narrow building
+            [
+                " _ ",
+                "|█|",
+                "|█|",
+                "|█|",
+                "|_|",
+            ],
+            # Wide short building
+            [
+                " ___ ",
+                "|███|",
+                "|___|",
+            ],
+            # Medium building with detail
+            [
+                "  _  ",
+                " |█| ",
+                "|███|",
+                "|___|",
+            ],
+            # Small building
+            [
+                " __ ",
+                "|██|",
+                "|__|",
+            ],
+        ]
+
+        # Position distant buildings above cafe, spread across the gap
+        # They should appear behind (above) the cafe
+        distant_y = cafe_y - 6  # Above cafe
+
+        # Draw several distant buildings spread out
+        positions = [center_x - 20, center_x - 10, center_x, center_x + 10, center_x + 18]
+
+        for i, pos_x in enumerate(positions):
+            building = distant_buildings[i % len(distant_buildings)]
+            building_height = len(building)
+            building_width = len(building[0])
+
+            # Position building
+            bx = pos_x - building_width // 2
+            by = distant_y - building_height + 3
+
+            # Draw building in dark grey (dim)
+            for row_idx, row in enumerate(building):
+                for col_idx, char in enumerate(row):
+                    px = bx + col_idx
+                    py = by + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        # Use dark grey for distant buildings
+                        self.scene[py][px] = (char, Colors.ALLEY_DARK)
+
     def _draw_cafe(self, x: int, y: int):
-        """Draw a well-lit cafe storefront with warm lighting effect."""
-        # Store cafe position for lighting effect
+        """Draw a well-lit cafe storefront."""
+        # Store cafe position
         self.cafe_x = x
         self.cafe_y = y
 
-        # Draw the cafe with warm lighting colors
+        # Draw the cafe with warm lighting colors (no exterior glow)
         for row_idx, row in enumerate(self.CAFE):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
@@ -1560,19 +1626,6 @@ class AlleyScene:
                     else:
                         color = Colors.ALLEY_LIGHT  # Structure
                     self.scene[py][px] = (char, color)
-
-        # Add warm glow around the cafe (light spill)
-        for dy in range(-1, len(self.CAFE) + 2):
-            for dx in range(-2, len(self.CAFE[0]) + 2):
-                px = x + dx
-                py = y + dy
-                if 0 <= px < self.width - 1 and 0 <= py < self.height:
-                    # Only add glow to empty spaces
-                    if self.scene[py][px][0] == ' ':
-                        # Closer to cafe = brighter glow
-                        dist = min(abs(dx), abs(dy), abs(dx - len(self.CAFE[0])), abs(dy - len(self.CAFE)))
-                        if dist <= 1 and random.random() < 0.3:
-                            self.scene[py][px] = ('░', Colors.RAT_YELLOW)
 
     def is_valid_snow_position(self, x: int, y: int) -> bool:
         """Check if a position is valid for snow to collect.
@@ -1683,11 +1736,11 @@ class AlleyScene:
                 self._traffic_state = 'NS_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'NS_YELLOW':
-            if self._state_duration >= 20:
+            if self._state_duration >= 40:  # Increased yellow duration for visibility
                 self._traffic_state = 'ALL_RED_TO_EW'
                 self._state_duration = 0
         elif self._traffic_state == 'ALL_RED_TO_EW':
-            if self._state_duration >= 10:  # Brief all-red pause
+            if self._state_duration >= 15:  # Brief all-red pause
                 self._traffic_state = 'EW_GREEN'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_GREEN':
@@ -1695,11 +1748,11 @@ class AlleyScene:
                 self._traffic_state = 'EW_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_YELLOW':
-            if self._state_duration >= 20:
+            if self._state_duration >= 40:  # Increased yellow duration for visibility
                 self._traffic_state = 'ALL_RED_TO_NS'
                 self._state_duration = 0
         elif self._traffic_state == 'ALL_RED_TO_NS':
-            if self._state_duration >= 10:  # Brief all-red pause
+            if self._state_duration >= 15:  # Brief all-red pause
                 self._traffic_state = 'NS_GREEN'
                 self._state_duration = 0
 
@@ -1798,10 +1851,10 @@ class AlleyScene:
 
     def _update_pedestrians(self):
         """Update pedestrian positions and spawn new pedestrians."""
-        # Spawn new pedestrians occasionally (less frequent than cars)
+        # Spawn new pedestrians frequently (5x more people)
         self._pedestrian_spawn_timer += 1
-        if self._pedestrian_spawn_timer >= random.randint(80, 200):
-            if len(self._pedestrians) < 2:  # Max 2 pedestrians at once
+        if self._pedestrian_spawn_timer >= random.randint(15, 40):
+            if len(self._pedestrians) < 10:  # Max 10 pedestrians at once
                 self._spawn_pedestrian()
             self._pedestrian_spawn_timer = 0
 
@@ -1931,14 +1984,10 @@ class AlleyScene:
         Door knobs rendered in gold.
         """
         total_rows = len(sprite)
-        # Grey block section: bottom 10 rows (half story with door)
-        grey_start_row = total_rows - 10
-        # Brick characters for texture
-        brick_chars = ['#', '▓', '░']
-        # Grey block chars - mix of solid and transparent for texture
-        grey_block_chars = ['▒', '░', '▓', '█']
-        # Transparent block chars for subtle texture variety
-        transparent_chars = ['░', ' ']
+        # Grey block section: bottom 11 rows (half story with door, one row lower)
+        grey_start_row = total_rows - 11
+        # Brick character for even texture
+        brick_char = '▓'
 
         # First pass: find window boundaries for each row
         def is_inside_window(row_str: str, col: int) -> bool:
@@ -2010,30 +2059,26 @@ class AlleyScene:
                         if inside_window:
                             continue  # Leave window interior empty
 
-                        if row_idx >= 2 and row_idx < grey_start_row:
-                            # Red brick zone
+                        if row_idx >= 4 and row_idx < grey_start_row:
+                            # Red brick zone - fill more evenly
                             # Higher chance of bricks near window outlines
                             if is_window_outline(row, col_idx):
-                                # Brick outline around windows - higher density
-                                if random.random() < 0.35:
-                                    brick_char = random.choice(brick_chars)
+                                # Brick outline around windows - high density
+                                if random.random() < 0.50:
                                     self.scene[py][px] = (brick_char, Colors.BRICK_RED)
                             else:
-                                # Regular scattered bricks elsewhere
-                                if random.random() < 0.08:
-                                    brick_char = random.choice(brick_chars)
+                                # Fill bricks elsewhere more densely and evenly
+                                if random.random() < 0.25:
                                     self.scene[py][px] = (brick_char, Colors.BRICK_RED)
-                        elif row_idx >= grey_start_row and row_idx < total_rows - 2:
-                            # Grey zone - fill completely with texture
-                            # Mix of solid blocks and transparent for variety
-                            if random.random() < 0.85:
-                                # Mostly filled
-                                block_char = random.choice(grey_block_chars)
-                                self.scene[py][px] = (block_char, Colors.GREY_BLOCK)
+                        elif row_idx >= grey_start_row:
+                            # Grey zone - fill completely with even texture (to bottom)
+                            # Use consistent block character for uniform appearance
+                            if random.random() < 0.92:
+                                # Mostly filled with consistent blocks
+                                self.scene[py][px] = ('▓', Colors.GREY_BLOCK)
                             else:
-                                # Some transparent gaps for texture
-                                if random.random() < 0.5:
-                                    self.scene[py][px] = ('░', Colors.GREY_BLOCK)
+                                # Occasional lighter block for subtle texture
+                                self.scene[py][px] = ('▒', Colors.GREY_BLOCK)
 
         # Second pass: add door knobs
         # Find door positions (look for the door pattern .------.)
@@ -2150,9 +2195,13 @@ class AlleyScene:
             return
 
         car = self._closeup_car
-        x = int(car['x']) - 4  # Shifted left 4 characters
+        x = int(car['x']) - 10  # Shifted left 10 characters (4 + 6)
         scale = car['scale']
         direction = car['direction']
+        # Calculate vertical offset based on scale (moves up as car shrinks)
+        # At scale 3.0 (largest) = 0 offset, at scale 0.8 (smallest) = moves up
+        scale_progress = (3.0 - scale) / 2.2  # 0 to 1 as car shrinks
+        y_offset = int(scale_progress * (self.height // 5))  # Move up 1/5 of screen
 
         # Different car sprites based on scale (biggest to smallest)
         if scale >= 2.5:
@@ -2220,8 +2269,8 @@ class AlleyScene:
                     " () ",
                 ]
 
-        # Position car at street level (shifted up 2 rows)
-        street_y = self.height - 3
+        # Position car at street level (shifted up 2 rows + y_offset for perspective)
+        street_y = self.height - 3 - y_offset
         sprite_height = len(sprite)
 
         for row_idx, row in enumerate(sprite):
@@ -3665,7 +3714,7 @@ class Dashboard:
 
         # Matrix mode: faster refresh for smooth animation, black background
         if self.matrix_mode:
-            screen.timeout(100)  # 100ms for smooth rain animation
+            screen.timeout(50)  # 50ms for smooth rain animation (doubled framerate)
             screen.bkgd(' ', curses.color_pair(Colors.MATRIX_DIM))
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
@@ -3839,12 +3888,12 @@ class Dashboard:
         moon_y = int(min_y + arc_height * 4 * (x_centered ** 2))
         moon_x = int(self._moon_x)
 
-        # Moon ASCII art (simple crescent)
+        # Moon ASCII art (filled moon)
         moon_chars = [
             " @@@ ",
-            "@   @",
-            "@    ",
-            "@   @",
+            "@@@@@",
+            "@@@@@",
+            "@@@@@",
             " @@@ ",
         ]
 
