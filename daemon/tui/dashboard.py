@@ -1287,11 +1287,23 @@ class AlleyScene:
         "   _||_   ",
     ]
 
-    TREE_WINDY = [
+    # Tree blowing right (wind from left)
+    TREE_WINDY_RIGHT = [
         "    (@@)  ",
         "   (@@@@@)",
         "  (@@@@@@@)",
         "   (@@@@) ",
+        "    ||    ",
+        "    ||    ",
+        "   _||_   ",
+    ]
+
+    # Tree blowing left (wind from right)
+    TREE_WINDY_LEFT = [
+        "  (@@)    ",
+        "(@@@@@)   ",
+        "(@@@@@@@) ",
+        " (@@@@)   ",
         "    ||    ",
         "    ||    ",
         "   _||_   ",
@@ -1525,6 +1537,16 @@ class AlleyScene:
         "  |  ",
     ]
 
+    # Street sign - Claude Av
+    STREET_SIGN = [
+        ".----------.",
+        "| Claude Av|",
+        "'----------'",
+        "     ||     ",
+        "     ||     ",
+        "     ||     ",
+    ]
+
     # Building wireframe - 2X TALL, 2X WIDE with mixed window sizes, two doors with stoops
     BUILDING = [
         "                        _____                                  ",
@@ -1686,6 +1708,13 @@ class AlleyScene:
         self._wind_wisp_timer = 0
         self._tree_positions: List[Tuple[int, int]] = []  # (x, y) for trees
         self._tree_sway_frame = 0
+        # Wind direction: 1 = blowing right (from left), -1 = blowing left (from right)
+        self._wind_direction = 1
+        self._wind_direction_timer = 0
+        self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 minutes at ~60fps
+        # Meteor damage overlays - {x, y, char, timer, fade_time}
+        self._damage_overlays: List[Dict] = []
+        self._damage_fade_time = 18000  # ~5 minutes at 60fps (300 seconds * 60)
         # Woman in Red event - rare Matrix scene
         self._woman_red_active = False
         self._woman_red_state = 'idle'  # idle, neo_morpheus_enter, woman_enters, woman_passes, woman_waves, woman_pauses, transform, chase, cooldown
@@ -1951,18 +1980,30 @@ class AlleyScene:
         curb_y = self.height - 4
         street_y = self.height - 3
 
+        # Update wind direction timer - change direction every 3-15 minutes
+        self._wind_direction_timer += 1
+        if self._wind_direction_timer >= self._wind_direction_change_interval:
+            self._wind_direction_timer = 0
+            self._wind_direction *= -1  # Flip direction
+            self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 min at ~60fps
+
         # Update tree sway animation
         self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
 
-        # Spawn debris (newspapers, trash) on streets
+        # Spawn debris (newspapers, trash) on streets - spawn from upwind side
         self._debris_spawn_timer += 1
         if self._debris_spawn_timer >= random.randint(15, 40):
             self._debris_spawn_timer = 0
             if len(self._debris) < 8:
                 debris_type = random.choice(['newspaper', 'trash'])
                 chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
+                # Spawn from upwind side
+                if self._wind_direction > 0:
+                    spawn_x = -5.0  # Wind blowing right, spawn from left
+                else:
+                    spawn_x = float(self.width + 5)  # Wind blowing left, spawn from right
                 self._debris.append({
-                    'x': float(self.width + 5) if random.random() < 0.5 else -5.0,
+                    'x': spawn_x,
                     'y': float(random.choice([curb_y, street_y, street_y - 1])),
                     'char': random.choice(chars),
                     'type': debris_type,
@@ -1970,15 +2011,19 @@ class AlleyScene:
                     'wobble': random.uniform(0, 6.28),
                 })
 
-        # Spawn wind wisps in sky
+        # Spawn wind wisps in sky - spawn from upwind side
         self._wind_wisp_timer += 1
         if self._wind_wisp_timer >= random.randint(30, 60):
             self._wind_wisp_timer = 0
             if len(self._wind_wisps) < 5:
                 wisp_length = random.randint(3, 8)
                 wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
+                if self._wind_direction > 0:
+                    spawn_x = -5.0  # Wind blowing right
+                else:
+                    spawn_x = float(self.width + 5)  # Wind blowing left
                 self._wind_wisps.append({
-                    'x': float(self.width + 5),
+                    'x': spawn_x,
                     'y': float(random.randint(3, self.height // 3)),
                     'chars': wisp_chars,
                     'speed': random.uniform(1.0, 2.5),
@@ -1997,34 +2042,34 @@ class AlleyScene:
                         'wobble': random.uniform(0, 6.28),
                     })
 
-        # Update debris positions
+        # Update debris positions - move in wind direction
         new_debris = []
         for d in self._debris:
-            d['x'] -= d['speed']  # Blow left
+            d['x'] += d['speed'] * self._wind_direction  # Blow in wind direction
             d['wobble'] += 0.3
             d['y'] += math.sin(d['wobble']) * 0.2  # Wobble up/down
             # Keep on screen
-            if d['x'] > -10:
+            if -10 < d['x'] < self.width + 10:
                 new_debris.append(d)
         self._debris = new_debris
 
-        # Update wind wisps
+        # Update wind wisps - move in wind direction
         new_wisps = []
         for w in self._wind_wisps:
-            w['x'] -= w['speed']
-            if w['x'] > -len(w['chars']) - 5:
+            w['x'] += w['speed'] * self._wind_direction
+            if -len(w['chars']) - 5 < w['x'] < self.width + 10:
                 new_wisps.append(w)
         self._wind_wisps = new_wisps
 
-        # Update leaves
+        # Update leaves - blow in wind direction
         new_leaves = []
         for leaf in self._leaves:
-            leaf['x'] -= leaf['speed']  # Blow left
+            leaf['x'] += leaf['speed'] * self._wind_direction  # Blow in wind direction
             leaf['y'] += leaf['fall_speed']  # Fall down
             leaf['wobble'] += 0.2
             leaf['x'] += math.sin(leaf['wobble']) * 0.3  # Wobble
             # Keep if on screen and above street
-            if leaf['x'] > -5 and leaf['y'] < street_y + 2:
+            if -5 < leaf['x'] < self.width + 5 and leaf['y'] < street_y + 2:
                 new_leaves.append(leaf)
         self._leaves = new_leaves
 
@@ -2083,7 +2128,7 @@ class AlleyScene:
                     # Check if meteor hit ground
                     if meteor['y'] >= ground_y:
                         self._qte_misses += 1
-                        self._spawn_explosion(meteor['x'], ground_y)
+                        self._spawn_explosion(meteor['x'], ground_y, ground_impact=True)
                         continue
                 new_meteors.append(meteor)
             self._qte_meteors = new_meteors
@@ -2215,7 +2260,7 @@ class AlleyScene:
         # Start the meteor falling
         meteor['called'] = True
 
-    def _spawn_explosion(self, x: float, y: float):
+    def _spawn_explosion(self, x: float, y: float, ground_impact: bool = False):
         """Spawn an explosion at the given position."""
         self._qte_explosions.append({
             'x': int(x),
@@ -2223,6 +2268,40 @@ class AlleyScene:
             'frame': 0,
             'timer': 0,
         })
+
+        # If this is a ground impact, create damage overlay
+        if ground_impact:
+            self._spawn_damage_overlay(int(x), int(y))
+
+    def _spawn_damage_overlay(self, x: int, y: int):
+        """Spawn a damage overlay at impact site (lasts 5 minutes)."""
+        damage_chars = ['░', '▒', '▓', '█', '#', 'X', '*']
+        # Create a crater/damage pattern around impact point
+        for dx in range(-3, 4):
+            for dy in range(-2, 2):
+                px = x + dx
+                py = y + dy
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Damage intensity decreases with distance
+                    dist = abs(dx) + abs(dy)
+                    if dist <= 4 and random.random() < (1.0 - dist * 0.15):
+                        char = random.choice(damage_chars[:3] if dist > 2 else damage_chars)
+                        self._damage_overlays.append({
+                            'x': px,
+                            'y': py,
+                            'char': char,
+                            'timer': 0,
+                            'fade_time': self._damage_fade_time + random.randint(-1000, 1000),
+                        })
+
+    def _update_damage_overlays(self):
+        """Update damage overlays - fade after 5 minutes."""
+        new_overlays = []
+        for overlay in self._damage_overlays:
+            overlay['timer'] += 1
+            if overlay['timer'] < overlay['fade_time']:
+                new_overlays.append(overlay)
+        self._damage_overlays = new_overlays
 
     def handle_qte_key(self, key: str) -> bool:
         """Handle a key press for the QTE event. Returns True if key was consumed."""
@@ -2470,6 +2549,65 @@ class AlleyScene:
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
+        # Draw street sign near crosswalk
+        sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2
+        sign_y = ground_y - len(self.STREET_SIGN) + 1
+        self._draw_street_sign(sign_x, sign_y)
+
+        # Add building street numbers
+        self._draw_building_numbers(ground_y)
+
+    def _draw_street_sign(self, x: int, y: int):
+        """Draw a street sign at the given position."""
+        for row_idx, row in enumerate(self.STREET_SIGN):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    if char in '.-\'|':
+                        self.scene[py][px] = (char, Colors.ALLEY_MID)
+                    else:
+                        # Text - green like street signs
+                        self.scene[py][px] = (char, Colors.MATRIX_DIM)
+
+    def _draw_building_numbers(self, ground_y: int):
+        """Draw building street numbers near doorways."""
+        # Building 1 numbers - "1742" and "1744" for the two doors
+        # Find door positions in BUILDING sprite
+        door_row = len(self.BUILDING) - 7  # Row with doors
+        # Draw numbers above doors
+        number1_x = self._building_x + 14  # Above first door
+        number2_x = self._building_x + 42  # Above second door
+        number_y = self._building_y + door_row - 1
+
+        # Building 1 - odd side (1741, 1743)
+        numbers1 = "1741"
+        numbers2 = "1743"
+        for i, char in enumerate(numbers1):
+            px = number1_x + i
+            if 0 <= px < self.width - 1 and 0 <= number_y < self.height:
+                self.scene[number_y][px] = (char, Colors.ALLEY_LIGHT)
+        for i, char in enumerate(numbers2):
+            px = number2_x + i
+            if 0 <= px < self.width - 1 and 0 <= number_y < self.height:
+                self.scene[number_y][px] = (char, Colors.ALLEY_LIGHT)
+
+        # Building 2 numbers - even side (1742, 1744)
+        if self._building2_x > 0:
+            number3_x = self._building2_x + 14
+            number4_x = self._building2_x + 42
+            number_y2 = self._building2_y + door_row - 1
+            numbers3 = "1742"
+            numbers4 = "1744"
+            for i, char in enumerate(numbers3):
+                px = number3_x + i
+                if 0 <= px < self.width - 1 and 0 <= number_y2 < self.height:
+                    self.scene[number_y2][px] = (char, Colors.ALLEY_LIGHT)
+            for i, char in enumerate(numbers4):
+                px = number4_x + i
+                if 0 <= px < self.width - 1 and 0 <= number_y2 < self.height:
+                    self.scene[number_y2][px] = (char, Colors.ALLEY_LIGHT)
+
     def _draw_street_lights(self, ground_y: int):
         """Draw street lights along the scene and store positions for flicker effect."""
         light_height = len(self.STREET_LIGHT)
@@ -2482,8 +2620,8 @@ class AlleyScene:
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
-        # Position lights in the gap between buildings (2 chars closer)
-        light_x_positions = [gap_center - 38, gap_center + 38]
+        # Position lights in the gap between buildings (moved 4 chars outward)
+        light_x_positions = [gap_center - 42, gap_center + 42]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
@@ -2752,9 +2890,12 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.ALLEY_MID)
 
     def _draw_tree(self, x: int, y: int):
-        """Draw a tree at the given position."""
-        # Use the windy tree sprite (animated during render based on sway frame)
-        tree_sprite = self.TREE
+        """Draw a tree at the given position, blowing in wind direction."""
+        # Use windy tree sprite based on wind direction
+        if self._wind_direction > 0:
+            tree_sprite = self.TREE_WINDY_RIGHT  # Wind blowing right
+        else:
+            tree_sprite = self.TREE_WINDY_LEFT  # Wind blowing left
         for row_idx, row in enumerate(tree_sprite):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
@@ -2955,6 +3096,9 @@ class AlleyScene:
 
         # Update skyline window lights
         self._update_skyline_windows()
+
+        # Update meteor damage overlays
+        self._update_damage_overlays()
 
     def _update_cars(self):
         """Update car positions and spawn new cars."""
@@ -3254,11 +3398,11 @@ class AlleyScene:
                 if 0 <= px < self.width - 1 and vanish_end_y <= row_y < vanish_start_y:
                     # Draw street surface with lane markings
                     if offset == 0:
-                        # Center line - vertical II pattern (yellow)
-                        self.scene[row_y][px] = ('I', Colors.RAT_YELLOW)
+                        # Center line - vertical ll pattern (yellow, lowercase L)
+                        self.scene[row_y][px] = ('l', Colors.RAT_YELLOW)
                     elif offset == 1:
-                        # Second I of the II center line
-                        self.scene[row_y][px] = ('I', Colors.RAT_YELLOW)
+                        # Second l of the ll center line
+                        self.scene[row_y][px] = ('l', Colors.RAT_YELLOW)
                     elif offset == -half_width:
                         # Left edge line (use forward slash for perspective - narrows toward top)
                         self.scene[row_y][px] = ('/', Colors.ALLEY_MID)
@@ -3364,8 +3508,8 @@ class AlleyScene:
                         if row_idx >= 4 and row_idx < grey_start_row:
                             # Red brick zone - fill completely
                             self.scene[py][px] = (brick_char, Colors.BRICK_RED)
-                        elif row_idx >= grey_start_row:
-                            # Grey zone - fill completely with even texture (to bottom)
+                        elif row_idx >= grey_start_row and row_idx < total_rows - 2:
+                            # Grey zone - fill with blocks (but NOT the bottom 2 porch rows)
                             # Use consistent block character for uniform appearance
                             if random.random() < 0.92:
                                 # Mostly filled with consistent blocks
@@ -3373,6 +3517,7 @@ class AlleyScene:
                             else:
                                 # Occasional lighter block for subtle texture
                                 self.scene[py][px] = ('▒', Colors.GREY_BLOCK)
+                        # Bottom 2 rows (porch/stoop level) - leave empty, no blocks
 
         # Second pass: add door knobs
         # Find door positions (look for the door pattern .------.)
@@ -3420,6 +3565,9 @@ class AlleyScene:
 
         # Render steam effects from manholes/drains
         self._render_steam(screen)
+
+        # Render meteor damage overlays
+        self._render_damage_overlays(screen)
 
         # Render wind effects (debris, leaves, wisps)
         self._render_wind(screen)
@@ -3475,6 +3623,30 @@ class AlleyScene:
                             screen.attroff(attr)
                         except curses.error:
                             pass
+
+    def _render_damage_overlays(self, screen):
+        """Render meteor damage overlays on the scene."""
+        for overlay in self._damage_overlays:
+            px = overlay['x']
+            py = overlay['y']
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    # Damage fades from bright to dim as timer increases
+                    fade_progress = overlay['timer'] / overlay['fade_time']
+                    if fade_progress < 0.3:
+                        # Fresh damage - bright red/orange
+                        attr = curses.color_pair(Colors.BRICK_RED)
+                    elif fade_progress < 0.6:
+                        # Aging damage - dim
+                        attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+                    else:
+                        # Old damage - very dim
+                        attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_DIM
+                    screen.attron(attr)
+                    screen.addstr(py, px, overlay['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
 
     def _render_wind(self, screen):
         """Render wind effects - debris, leaves, and wisps."""
