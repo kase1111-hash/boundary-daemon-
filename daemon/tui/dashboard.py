@@ -51,6 +51,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Callable
 
+# Import Ollama client for CLI chat
+try:
+    from daemon.monitoring_report import OllamaClient, OllamaConfig
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    OllamaClient = None
+    OllamaConfig = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -2120,115 +2129,125 @@ class AlleyScene:
 
     def _update_wind(self):
         """Update windy city weather - debris, leaves, and wind wisps."""
-        curb_y = self.height - 4
-        street_y = self.height - 3
+        try:
+            curb_y = self.height - 4
+            street_y = self.height - 3
 
-        # Update wind direction timer - change direction every 3-15 minutes
-        self._wind_direction_timer += 1
-        if self._wind_direction_timer >= self._wind_direction_change_interval:
-            self._wind_direction_timer = 0
-            self._wind_direction *= -1  # Flip direction
-            self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 min at ~60fps
+            # Skip wind updates if terminal is too small
+            if self.height < 12 or self.width < 20:
+                return
 
-        # Update tree sway animation
-        self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
+            # Update wind direction timer - change direction every 3-15 minutes
+            self._wind_direction_timer += 1
+            if self._wind_direction_timer >= self._wind_direction_change_interval:
+                self._wind_direction_timer = 0
+                self._wind_direction *= -1  # Flip direction
+                self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 min at ~60fps
 
-        # Calm mode: faster debris spawn, more debris allowed
-        debris_spawn_min = 5 if self._calm_mode else 15
-        debris_spawn_max = 15 if self._calm_mode else 40
-        max_debris = 20 if self._calm_mode else 8
+            # Update tree sway animation
+            self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
 
-        # Spawn debris (newspapers, trash) on streets - spawn from upwind side
-        self._debris_spawn_timer += 1
-        if self._debris_spawn_timer >= random.randint(debris_spawn_min, debris_spawn_max):
-            self._debris_spawn_timer = 0
-            if len(self._debris) < max_debris:
-                debris_type = random.choice(['newspaper', 'trash'])
-                chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
-                # Spawn from upwind side
-                if self._wind_direction > 0:
-                    spawn_x = -5.0  # Wind blowing right, spawn from left
-                else:
-                    spawn_x = float(self.width + 5)  # Wind blowing left, spawn from right
-                self._debris.append({
-                    'x': spawn_x,
-                    'y': float(random.choice([curb_y, street_y, street_y - 1])),
-                    'char': random.choice(chars),
-                    'type': debris_type,
-                    'speed': random.uniform(0.8, 2.0),
-                    'wobble': random.uniform(0, 6.28),
-                })
+            # Calm mode: faster debris spawn, more debris allowed
+            debris_spawn_min = 5 if self._calm_mode else 15
+            debris_spawn_max = 15 if self._calm_mode else 40
+            max_debris = 20 if self._calm_mode else 8
 
-        # Calm mode: fewer wind wisps (less mid-screen clutter)
-        max_wisps = 2 if self._calm_mode else 5
-        wisp_spawn_min = 60 if self._calm_mode else 30
-        wisp_spawn_max = 120 if self._calm_mode else 60
-
-        # Spawn wind wisps in sky - spawn from upwind side
-        self._wind_wisp_timer += 1
-        if self._wind_wisp_timer >= random.randint(wisp_spawn_min, wisp_spawn_max):
-            self._wind_wisp_timer = 0
-            if len(self._wind_wisps) < max_wisps:
-                wisp_length = random.randint(3, 8)
-                wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
-                if self._wind_direction > 0:
-                    spawn_x = -5.0  # Wind blowing right
-                else:
-                    spawn_x = float(self.width + 5)  # Wind blowing left
-                self._wind_wisps.append({
-                    'x': spawn_x,
-                    'y': float(random.randint(3, self.height // 3)),
-                    'chars': wisp_chars,
-                    'speed': random.uniform(1.0, 2.5),
-                })
-
-        # Calm mode: more leaves
-        leaf_chance = 0.08 if self._calm_mode else 0.03
-        max_leaves = 30 if self._calm_mode else 15
-
-        # Spawn leaves from trees
-        for tree_x, tree_y in self._tree_positions:
-            if random.random() < leaf_chance:
-                if len(self._leaves) < max_leaves:
-                    self._leaves.append({
-                        'x': float(tree_x + random.randint(2, 7)),
-                        'y': float(tree_y + random.randint(0, 3)),
-                        'char': random.choice(self.DEBRIS_LEAVES),
-                        'speed': random.uniform(0.5, 1.5),
-                        'fall_speed': random.uniform(0.1, 0.3),
+            # Spawn debris (newspapers, trash) on streets - spawn from upwind side
+            self._debris_spawn_timer += 1
+            if self._debris_spawn_timer >= random.randint(debris_spawn_min, debris_spawn_max):
+                self._debris_spawn_timer = 0
+                if len(self._debris) < max_debris:
+                    debris_type = random.choice(['newspaper', 'trash'])
+                    chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
+                    # Spawn from upwind side
+                    if self._wind_direction > 0:
+                        spawn_x = -5.0  # Wind blowing right, spawn from left
+                    else:
+                        spawn_x = float(self.width + 5)  # Wind blowing left, spawn from right
+                    self._debris.append({
+                        'x': spawn_x,
+                        'y': float(random.choice([curb_y, street_y, street_y - 1])),
+                        'char': random.choice(chars),
+                        'type': debris_type,
+                        'speed': random.uniform(0.8, 2.0),
                         'wobble': random.uniform(0, 6.28),
                     })
 
-        # Update debris positions - move in wind direction
-        new_debris = []
-        for d in self._debris:
-            d['x'] += d['speed'] * self._wind_direction  # Blow in wind direction
-            d['wobble'] += 0.3
-            d['y'] += math.sin(d['wobble']) * 0.2  # Wobble up/down
-            # Keep on screen
-            if -10 < d['x'] < self.width + 10:
-                new_debris.append(d)
-        self._debris = new_debris
+            # Calm mode: fewer wind wisps (less mid-screen clutter)
+            max_wisps = 2 if self._calm_mode else 5
+            wisp_spawn_min = 60 if self._calm_mode else 30
+            wisp_spawn_max = 120 if self._calm_mode else 60
 
-        # Update wind wisps - move in wind direction
-        new_wisps = []
-        for w in self._wind_wisps:
-            w['x'] += w['speed'] * self._wind_direction
-            if -len(w['chars']) - 5 < w['x'] < self.width + 10:
-                new_wisps.append(w)
-        self._wind_wisps = new_wisps
+            # Spawn wind wisps in sky - spawn from upwind side
+            self._wind_wisp_timer += 1
+            if self._wind_wisp_timer >= random.randint(wisp_spawn_min, wisp_spawn_max):
+                self._wind_wisp_timer = 0
+                if len(self._wind_wisps) < max_wisps:
+                    wisp_length = random.randint(3, 8)
+                    wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
+                    if self._wind_direction > 0:
+                        spawn_x = -5.0  # Wind blowing right
+                    else:
+                        spawn_x = float(self.width + 5)  # Wind blowing left
+                    # Ensure valid range for wisp y position
+                    wisp_y_max = max(4, self.height // 3)
+                    self._wind_wisps.append({
+                        'x': spawn_x,
+                        'y': float(random.randint(3, wisp_y_max)),
+                        'chars': wisp_chars,
+                        'speed': random.uniform(1.0, 2.5),
+                    })
 
-        # Update leaves - blow in wind direction
-        new_leaves = []
-        for leaf in self._leaves:
-            leaf['x'] += leaf['speed'] * self._wind_direction  # Blow in wind direction
-            leaf['y'] += leaf['fall_speed']  # Fall down
-            leaf['wobble'] += 0.2
-            leaf['x'] += math.sin(leaf['wobble']) * 0.3  # Wobble
-            # Keep if on screen and above street
-            if -5 < leaf['x'] < self.width + 5 and leaf['y'] < street_y + 2:
-                new_leaves.append(leaf)
-        self._leaves = new_leaves
+            # Calm mode: more leaves
+            leaf_chance = 0.08 if self._calm_mode else 0.03
+            max_leaves = 30 if self._calm_mode else 15
+
+            # Spawn leaves from trees
+            for tree_x, tree_y in self._tree_positions:
+                if random.random() < leaf_chance:
+                    if len(self._leaves) < max_leaves:
+                        self._leaves.append({
+                            'x': float(tree_x + random.randint(2, 7)),
+                            'y': float(tree_y + random.randint(0, 3)),
+                            'char': random.choice(self.DEBRIS_LEAVES),
+                            'speed': random.uniform(0.5, 1.5),
+                            'fall_speed': random.uniform(0.1, 0.3),
+                            'wobble': random.uniform(0, 6.28),
+                        })
+
+            # Update debris positions - move in wind direction
+            new_debris = []
+            for d in self._debris:
+                d['x'] += d['speed'] * self._wind_direction  # Blow in wind direction
+                d['wobble'] += 0.3
+                d['y'] += math.sin(d['wobble']) * 0.2  # Wobble up/down
+                # Keep on screen
+                if -10 < d['x'] < self.width + 10:
+                    new_debris.append(d)
+            self._debris = new_debris
+
+            # Update wind wisps - move in wind direction
+            new_wisps = []
+            for w in self._wind_wisps:
+                w['x'] += w['speed'] * self._wind_direction
+                if -len(w['chars']) - 5 < w['x'] < self.width + 10:
+                    new_wisps.append(w)
+            self._wind_wisps = new_wisps
+
+            # Update leaves - blow in wind direction
+            new_leaves = []
+            for leaf in self._leaves:
+                leaf['x'] += leaf['speed'] * self._wind_direction  # Blow in wind direction
+                leaf['y'] += leaf['fall_speed']  # Fall down
+                leaf['wobble'] += 0.2
+                leaf['x'] += math.sin(leaf['wobble']) * 0.3  # Wobble
+                # Keep if on screen and above street
+                if -5 < leaf['x'] < self.width + 5 and leaf['y'] < street_y + 2:
+                    new_leaves.append(leaf)
+            self._leaves = new_leaves
+        except Exception:
+            # Silently handle any wind update errors to prevent freezes
+            pass
 
     def _update_qte(self):
         """Update meteor QTE event - quick time event."""
@@ -2950,7 +2969,7 @@ class AlleyScene:
 
         # Calculate cafe position first (shifted 11 chars left)
         self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 28  # 10 more left (was -18)
-        self.cafe_y = ground_y - len(self.CAFE) + 1
+        self.cafe_y = ground_y - len(self.CAFE) - 1  # Moved up 2 rows
 
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
@@ -5988,6 +6007,18 @@ class Dashboard:
         self._cli_history_index = 0
         self._cli_results: List[str] = []
         self._cli_results_scroll = 0
+        self._cli_last_activity = 0.0  # Last activity timestamp
+        self._cli_timeout = 300.0  # 5 minutes inactivity timeout
+        self._cli_chat_history: List[Dict[str, str]] = []  # Ollama chat history
+
+        # Ollama client for CLI chat
+        self._ollama_client = None
+        if OLLAMA_AVAILABLE and OllamaConfig is not None:
+            try:
+                config = OllamaConfig(model="llama3.2", timeout=60)
+                self._ollama_client = OllamaClient(config)
+            except Exception:
+                pass  # Ollama not available
 
         # Moon state (arcs across sky every 15 minutes)
         self._moon_active = False
@@ -7355,6 +7386,34 @@ class Dashboard:
             ],
             'subcommands': [],
         },
+        'checklogs': {
+            'desc': 'AI analysis of daemon logs',
+            'usage': 'checklogs [--last N]',
+            'help': [
+                "CHECKLOGS - AI-Powered Log Analysis",
+                "=" * 50,
+                "",
+                "Sends daemon logs to Ollama for intelligent analysis.",
+                "Identifies issues, security concerns, and recommendations.",
+                "",
+                "USAGE:",
+                "  checklogs           - Analyze last 50 events",
+                "  checklogs --last N  - Analyze last N events",
+                "",
+                "ANALYSIS INCLUDES:",
+                "  - Security violations and threats",
+                "  - Mode changes and ceremonies",
+                "  - Rate limiting events",
+                "  - PII detection incidents",
+                "  - System health issues",
+                "  - Recommended actions",
+                "",
+                "REQUIRES:",
+                "  - Ollama running locally (ollama serve)",
+                "  - llama3.2 or compatible model",
+            ],
+            'subcommands': [],
+        },
         'clear': {
             'desc': 'Clear CLI results',
             'usage': 'clear',
@@ -7383,44 +7442,238 @@ class Dashboard:
         },
     }
 
+    def _send_to_ollama(self, message: str) -> List[str]:
+        """Send a message to Ollama and return response lines."""
+        if not self._ollama_client:
+            return ["ERROR: Ollama not available. Start with: ollama serve"]
+
+        # Check if Ollama is running
+        if not self._ollama_client.is_available():
+            return ["ERROR: Ollama not running. Start with: ollama serve"]
+
+        # Build context from chat history (last 10 exchanges)
+        context = ""
+        for entry in self._cli_chat_history[-10:]:
+            context += f"User: {entry['user']}\nAssistant: {entry['assistant']}\n\n"
+
+        # System prompt for the daemon assistant
+        system_prompt = """You are a helpful assistant integrated into the Boundary Daemon CLI.
+You help users understand system security, daemon operations, and answer questions.
+Keep responses concise (2-4 sentences) since this is a terminal interface.
+If the user asks about daemon commands, remind them to use /command syntax (e.g., /help, /status, /alerts)."""
+
+        prompt = f"{context}User: {message}\nAssistant:"
+
+        try:
+            response = self._ollama_client.generate(prompt, system=system_prompt)
+            if response:
+                # Store in chat history
+                self._cli_chat_history.append({'user': message, 'assistant': response})
+                # Keep only last 20 exchanges
+                if len(self._cli_chat_history) > 20:
+                    self._cli_chat_history = self._cli_chat_history[-20:]
+
+                # Format response for display
+                lines = ["", f"You: {message}", ""]
+                # Word wrap response
+                words = response.split()
+                current_line = "  "
+                for word in words:
+                    if len(current_line) + len(word) + 1 > self.width - 4:
+                        lines.append(current_line)
+                        current_line = "  " + word
+                    else:
+                        current_line += (" " if len(current_line) > 2 else "") + word
+                if current_line.strip():
+                    lines.append(current_line)
+                lines.append("")
+                return lines
+            else:
+                return ["ERROR: No response from Ollama"]
+        except Exception as e:
+            return [f"ERROR: Ollama error: {e}"]
+
+    def _analyze_logs_with_ollama(self, num_events: int = 50) -> List[str]:
+        """Analyze daemon logs using Ollama and return analysis lines."""
+        if not self._ollama_client:
+            return ["ERROR: Ollama not available. Start with: ollama serve"]
+
+        if not self._ollama_client.is_available():
+            return ["ERROR: Ollama not running. Start with: ollama serve"]
+
+        lines = ["", "ANALYZING LOGS WITH OLLAMA...", "=" * 50, ""]
+
+        # Gather system information
+        try:
+            status = self.client.get_status()
+            events = self.client.get_events(limit=num_events)
+            alerts = self.client.get_alerts()
+        except Exception as e:
+            return [f"ERROR: Failed to fetch daemon data: {e}"]
+
+        # Build comprehensive log data for Ollama
+        log_data = []
+
+        # Add daemon status
+        log_data.append("=== DAEMON STATUS ===")
+        log_data.append(f"Mode: {status.get('mode', 'unknown')}")
+        log_data.append(f"State: {status.get('state', 'unknown')}")
+        log_data.append(f"Uptime: {status.get('uptime', 'unknown')}")
+        log_data.append(f"Active Sandboxes: {status.get('sandboxes', {}).get('active', 0)}")
+        log_data.append("")
+
+        # Add active alerts
+        log_data.append("=== ACTIVE ALERTS ===")
+        if alerts:
+            for alert in alerts:
+                log_data.append(f"[{alert.severity}] {alert.message}")
+                log_data.append(f"  Time: {alert.time_str}")
+        else:
+            log_data.append("No active alerts")
+        log_data.append("")
+
+        # Add recent events with full details
+        log_data.append(f"=== RECENT EVENTS (last {len(events)}) ===")
+        event_type_counts = {}
+        for event in events:
+            event_type_counts[event.event_type] = event_type_counts.get(event.event_type, 0) + 1
+            log_data.append(f"[{event.time_short}] {event.event_type}: {event.details[:100]}")
+
+        log_data.append("")
+        log_data.append("=== EVENT TYPE SUMMARY ===")
+        for etype, count in sorted(event_type_counts.items(), key=lambda x: -x[1]):
+            log_data.append(f"  {etype}: {count}")
+
+        # Comprehensive system prompt for log analysis
+        system_prompt = """You are a security analyst AI integrated into the Boundary Daemon system.
+Your job is to analyze security logs and provide actionable insights.
+
+BOUNDARY DAEMON CONTEXT:
+- Boundary Daemon is a security monitoring system for AI agents and system operations
+- It enforces operation modes: OPEN (permissive), RESTRICTED (limited), LOCKDOWN (emergency)
+- It monitors for security violations, PII leakage, rate limiting, and suspicious activity
+- Mode changes require cryptographic ceremonies for security
+
+EVENT TYPES TO WATCH FOR:
+- VIOLATION: Security policy violations - HIGH PRIORITY
+- MODE_CHANGE: Operation mode transitions - important for security posture
+- RATE_LIMIT_*: Rate limiting events - may indicate abuse or attacks
+- PII_DETECTED/BLOCKED/REDACTED: Privacy incidents
+- CLOCK_JUMP/DRIFT: Time manipulation (potential tampering)
+- ALERT: System alerts requiring attention
+- SECURITY_SCAN: Antivirus/malware scan results
+
+SEVERITY ASSESSMENT:
+- CRITICAL: Immediate action required (violations, lockdowns, tampering)
+- HIGH: Security concern requiring investigation
+- MEDIUM: Notable event to monitor
+- LOW: Informational
+
+Analyze the logs and provide:
+1. SUMMARY: Overall system health assessment (1-2 sentences)
+2. ISSUES FOUND: List specific problems with severity
+3. SECURITY CONCERNS: Any security-related findings
+4. RECOMMENDATIONS: Actionable next steps
+
+Keep response concise and terminal-friendly (max 20 lines)."""
+
+        prompt = f"""Analyze these Boundary Daemon security logs and tell me if there are any issues with my system:
+
+{chr(10).join(log_data)}
+
+Provide a clear, actionable analysis."""
+
+        try:
+            lines.append("Sending to Ollama for analysis...")
+            lines.append("")
+
+            response = self._ollama_client.generate(prompt, system=system_prompt)
+
+            if response:
+                lines.append("ANALYSIS RESULTS:")
+                lines.append("-" * 40)
+                # Word wrap response for terminal
+                for paragraph in response.split('\n'):
+                    if not paragraph.strip():
+                        lines.append("")
+                        continue
+                    words = paragraph.split()
+                    current_line = ""
+                    for word in words:
+                        if len(current_line) + len(word) + 1 > self.width - 4:
+                            lines.append(current_line)
+                            current_line = word
+                        else:
+                            current_line += (" " if current_line else "") + word
+                    if current_line:
+                        lines.append(current_line)
+                lines.append("")
+                lines.append("-" * 40)
+                lines.append(f"Analyzed {len(events)} events, {len(alerts)} alerts")
+            else:
+                lines.append("ERROR: No response from Ollama")
+        except Exception as e:
+            lines.append(f"ERROR: Analysis failed: {e}")
+
+        return lines
+
     def _start_cli(self):
-        """Start CLI mode for running commands."""
+        """Start CLI mode for running commands and chatting with Ollama."""
         curses.curs_set(1)  # Show cursor
         cmd_text = ""
         cursor_pos = 0
         show_help_popup = False
         help_popup_tool = None
 
-        # Build autocomplete list from DAEMON_TOOLS
-        all_completions = list(self.DAEMON_TOOLS.keys())
+        # Initialize activity timer
+        self._cli_last_activity = time.time()
+
+        # Build autocomplete list from DAEMON_TOOLS (with / prefix)
+        all_completions = ["/" + cmd for cmd in self.DAEMON_TOOLS.keys()]
+
+        # Check Ollama status
+        ollama_status = "connected" if (self._ollama_client and self._ollama_client.is_available()) else "offline"
 
         # Available commands help
         cli_help = [
-            "BOUNDARY DAEMON CLI - Press [F1] or type 'help <cmd>' for tool help",
+            "BOUNDARY DAEMON CLI + OLLAMA CHAT",
             "=" * 60,
             "",
-            "COMMANDS:",
+            f"  Ollama: {ollama_status}",
+            "",
+            "  Type a message to chat with Ollama",
+            "  Use /command for daemon commands (e.g., /help, /status)",
+            "",
+            "COMMANDS (prefix with /):",
         ]
         for cmd, info in self.DAEMON_TOOLS.items():
-            cli_help.append(f"  {cmd:12} - {info['desc']}")
+            cli_help.append(f"  /{cmd:11} - {info['desc']}")
         cli_help.extend([
             "",
-            "QUERY FILTERS:",
-            "  type:<TYPE>        - Filter by event type",
-            "  severity:>=HIGH    - Minimum severity",
-            "  contains:<text>    - Full text search",
-            "  --last 24h         - Time range",
+            "EXAMPLES:",
+            "  What is a security violation?     (chat with Ollama)",
+            "  /alerts                           (show daemon alerts)",
+            "  /query type:VIOLATION --last 24h  (search events)",
             "",
-            "Press [Tab] to autocomplete, [F1] for tool help",
+            "Auto-hides after 5 minutes of inactivity",
         ])
 
         while True:
+            # Check for inactivity timeout
+            if time.time() - self._cli_last_activity > self._cli_timeout:
+                # Clear results and exit
+                self._cli_results = []
+                self._cli_chat_history = []
+                break
+
             self.screen.clear()
 
-            # Draw CLI header
+            # Draw CLI header with Ollama status
             header = "─" * (self.width - 1)
             self._addstr(0, 0, " BOUNDARY CLI ", Colors.HEADER)
-            self._addstr(0, 15, header[15:], Colors.MUTED)
+            ollama_indicator = f" [Ollama: {ollama_status}] "
+            self._addstr(0, 15, ollama_indicator, Colors.STATUS_OK if ollama_status == "connected" else Colors.STATUS_WARN)
+            self._addstr(0, 15 + len(ollama_indicator), header[15 + len(ollama_indicator):], Colors.MUTED)
 
             # Draw results area (scrollable)
             results_height = self.height - 5
@@ -7434,6 +7687,8 @@ class Dashboard:
                         color = Colors.STATUS_ERROR
                     elif line.startswith("OK:") or "SUCCESS" in line:
                         color = Colors.STATUS_OK
+                    elif line.startswith("You:"):
+                        color = Colors.ACCENT
                     elif line.startswith("  ") or line.startswith("│"):
                         color = Colors.MUTED
                     elif "HIGH" in line:
@@ -7456,16 +7711,28 @@ class Dashboard:
 
             # Draw command line at bottom
             prompt_y = self.height - 2
-            self._addstr(prompt_y, 0, ":" + cmd_text + " ", Colors.HEADER)
+            prompt_char = ">" if not cmd_text.startswith("/") else ":"
+            self._addstr(prompt_y, 0, prompt_char + cmd_text + " ", Colors.HEADER)
             self._addstr(prompt_y, len(cmd_text) + 1, "_", Colors.ACCENT)
 
-            # Draw shortcuts
-            shortcuts = "[Enter] Run  [Tab] Complete  [F1] Help  [↑↓] History  [ESC] Exit"
+            # Draw shortcuts with timeout indicator
+            remaining = max(0, int(self._cli_timeout - (time.time() - self._cli_last_activity)))
+            timeout_str = f" [{remaining//60}:{remaining%60:02d}]"
+            shortcuts = f"[Enter] Send  [Tab] Complete  [F1] Help  [ESC] Exit{timeout_str}"
             self._addstr(self.height - 1, 0, shortcuts[:self.width-1], Colors.MUTED)
 
             self.screen.refresh()
 
+            # Use timeout to allow checking inactivity
+            self.screen.timeout(1000)  # 1 second timeout
             key = self.screen.getch()
+
+            if key == -1:  # Timeout, no key pressed
+                continue
+
+            # Key pressed - reset activity timer
+            self._cli_last_activity = time.time()
+
             if key == 27:  # ESC
                 break
             elif key in (curses.KEY_ENTER, 10, 13):
@@ -7475,10 +7742,17 @@ class Dashboard:
                         self._cli_history.append(cmd_text)
                     self._cli_history_index = len(self._cli_history)
 
-                    # Execute command
-                    self._execute_cli_command(cmd_text.strip())
+                    text = cmd_text.strip()
+                    if text.startswith("/"):
+                        # Execute as daemon command (strip the /)
+                        self._execute_cli_command(text[1:])
+                    else:
+                        # Send to Ollama
+                        response_lines = self._send_to_ollama(text)
+                        self._cli_results.extend(response_lines)
+
                     cmd_text = ""
-                    self._cli_results_scroll = 0
+                    self._cli_results_scroll = max(0, len(self._cli_results) - (self.height - 6))
             elif key in (curses.KEY_BACKSPACE, 127, 8):
                 cmd_text = cmd_text[:-1]
             elif key == curses.KEY_UP:
@@ -7506,8 +7780,8 @@ class Dashboard:
                     max_scroll = max(0, len(self._cli_results) - (self.height - 6))
                     self._cli_results_scroll = min(max_scroll, self._cli_results_scroll + 10)
             elif key == curses.KEY_F1 or key == 265:  # F1 - show help for current command
-                # Get the first word being typed
-                first_word = cmd_text.split()[0] if cmd_text.split() else ""
+                # Get the first word being typed (strip / for command lookup)
+                first_word = cmd_text.split()[0].lstrip("/") if cmd_text.split() else ""
                 if first_word in self.DAEMON_TOOLS:
                     help_popup_tool = first_word
                     show_help_popup = True
@@ -7515,26 +7789,27 @@ class Dashboard:
                     # Show general help
                     show_help_popup = True
                     help_popup_tool = None
-            elif key == 9:  # Tab - smart autocomplete
-                parts = cmd_text.split()
-                if len(parts) == 0 or (len(parts) == 1 and not cmd_text.endswith(' ')):
-                    # Complete command name
-                    prefix = parts[0] if parts else ""
-                    for comp in all_completions:
-                        if comp.startswith(prefix):
-                            cmd_text = comp + " "
-                            break
-                elif len(parts) >= 1:
-                    # Complete subcommand
-                    base_cmd = parts[0]
-                    if base_cmd in self.DAEMON_TOOLS:
-                        subcommands = self.DAEMON_TOOLS[base_cmd].get('subcommands', [])
-                        if subcommands:
-                            prefix = parts[1] if len(parts) > 1 else ""
-                            for sub in subcommands:
-                                if sub.startswith(prefix):
-                                    cmd_text = f"{base_cmd} {sub} "
-                                    break
+            elif key == 9:  # Tab - smart autocomplete (only for /commands)
+                if cmd_text.startswith("/"):
+                    parts = cmd_text.split()
+                    if len(parts) == 0 or (len(parts) == 1 and not cmd_text.endswith(' ')):
+                        # Complete command name
+                        prefix = parts[0] if parts else "/"
+                        for comp in all_completions:
+                            if comp.startswith(prefix):
+                                cmd_text = comp + " "
+                                break
+                    elif len(parts) >= 1:
+                        # Complete subcommand
+                        base_cmd = parts[0].lstrip("/")
+                        if base_cmd in self.DAEMON_TOOLS:
+                            subcommands = self.DAEMON_TOOLS[base_cmd].get('subcommands', [])
+                            if subcommands:
+                                prefix = parts[1] if len(parts) > 1 else ""
+                                for sub in subcommands:
+                                    if sub.startswith(prefix):
+                                        cmd_text = f"/{base_cmd} {sub} "
+                                        break
             elif 32 <= key <= 126:  # Printable characters
                 cmd_text += chr(key)
 
@@ -7646,6 +7921,20 @@ class Dashboard:
 
             elif command == 'clear':
                 self._cli_results = ["Results cleared."]
+
+            elif command == 'checklogs':
+                # Parse --last N argument
+                num_events = 50  # Default
+                if args:
+                    parts = args.split()
+                    for i, part in enumerate(parts):
+                        if part == '--last' and i + 1 < len(parts):
+                            try:
+                                num_events = int(parts[i + 1])
+                                num_events = min(max(num_events, 10), 200)  # Clamp 10-200
+                            except ValueError:
+                                pass
+                self._cli_results = self._analyze_logs_with_ollama(num_events)
 
             elif command == 'status':
                 status = self.client.get_status()
