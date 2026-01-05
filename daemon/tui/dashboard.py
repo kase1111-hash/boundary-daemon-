@@ -357,6 +357,14 @@ class MatrixRain:
         if weather_mode == WeatherMode.FOG:
             self._init_fog()
 
+        # Snow-specific state: stuck snowflakes that fade over time
+        self._stuck_snow: List[Dict] = []
+
+        # Sand-specific state: vertical gust columns
+        self._sand_gusts: List[Dict] = []
+        if weather_mode == WeatherMode.SAND:
+            self._init_sand_gusts()
+
     def set_weather_mode(self, mode: WeatherMode):
         """Change the weather mode and reinitialize particles."""
         if mode != self.weather_mode:
@@ -364,9 +372,13 @@ class MatrixRain:
             self.drops = []
             self.splats = []
             self._fog_particles = []
+            self._stuck_snow = []
+            self._sand_gusts = []
             self._init_drops()
             if mode == WeatherMode.FOG:
                 self._init_fog()
+            if mode == WeatherMode.SAND:
+                self._init_sand_gusts()
 
     def cycle_weather(self) -> WeatherMode:
         """Cycle to the next weather mode and return the new mode."""
@@ -378,18 +390,46 @@ class MatrixRain:
         return new_mode
 
     def _init_fog(self):
-        """Initialize fog particles that drift slowly."""
+        """Initialize fog particles in clustered patches."""
         self._fog_particles = []
-        # Create dense fog patches across the screen
-        num_patches = max(20, self.width * self.height // 50)
-        for _ in range(num_patches):
-            self._fog_particles.append({
-                'x': random.uniform(0, self.width),
-                'y': random.uniform(0, self.height),
-                'dx': random.uniform(-0.3, 0.3),  # Horizontal drift
-                'dy': random.uniform(-0.1, 0.1),  # Very slow vertical movement
-                'char': random.choice(['░', '▒', '·', '.', ' ']),
-                'opacity': random.uniform(0.3, 1.0),
+        # Create fog as clustered patches, not random scatter
+        num_patch_centers = max(5, self.width // 20)
+
+        for _ in range(num_patch_centers):
+            # Each patch has a center point
+            center_x = random.uniform(0, self.width)
+            center_y = random.uniform(0, self.height)
+            patch_dx = random.uniform(-0.2, 0.2)  # Whole patch drifts together
+            patch_dy = random.uniform(-0.05, 0.05)
+
+            # Create particles clustered around the center
+            patch_size = random.randint(8, 20)
+            for _ in range(patch_size):
+                # Particles spread around center with gaussian-like distribution
+                offset_x = random.gauss(0, 4)
+                offset_y = random.gauss(0, 3)
+                self._fog_particles.append({
+                    'x': center_x + offset_x,
+                    'y': center_y + offset_y,
+                    'dx': patch_dx + random.uniform(-0.05, 0.05),  # Slight individual variation
+                    'dy': patch_dy + random.uniform(-0.02, 0.02),
+                    'char': random.choice(['░', '▒', '▓', '·', '.', ':', '∴']),
+                    'opacity': random.uniform(0.4, 1.0),
+                    'size': random.choice([1, 1, 1, 2, 2, 3]),  # 1=small, 2=medium, 3=big
+                })
+
+    def _init_sand_gusts(self):
+        """Initialize vertical columns of faster-moving sand gusts."""
+        self._sand_gusts = []
+        # Create 3-6 gust columns across the screen
+        num_gusts = random.randint(3, 6)
+        for _ in range(num_gusts):
+            self._sand_gusts.append({
+                'x': random.randint(0, self.width - 1),
+                'width': random.randint(2, 5),  # Gust column width
+                'speed_mult': random.uniform(2.0, 4.0),  # How much faster than normal
+                'life': random.randint(30, 80),  # Frames until gust moves/fades
+                'opacity': random.uniform(0.7, 1.0),
             })
 
     def _get_weather_chars(self) -> List[str]:
@@ -489,16 +529,33 @@ class MatrixRain:
         if self.weather_mode == WeatherMode.FOG:
             self._update_fog()
 
+        # Update sand gusts if in sand mode
+        if self.weather_mode == WeatherMode.SAND:
+            self._update_sand_gusts()
+
+        # Update stuck snow (melting/fading)
+        if self.weather_mode == WeatherMode.SNOW:
+            self._update_stuck_snow()
+
         weather_chars = self._get_weather_chars()
 
         new_drops = []
         for drop in self.drops:
-            drop['phase'] += drop['speed']
+            # Check if sand particle is in a gust column (moves faster)
+            speed_boost = 1.0
+            if self.weather_mode == WeatherMode.SAND:
+                for gust in self._sand_gusts:
+                    if gust['x'] <= drop['x'] < gust['x'] + gust['width']:
+                        speed_boost = gust['speed_mult']
+                        break
+
+            drop['phase'] += drop['speed'] * speed_boost
             drop['y'] = int(drop['phase'])
 
             # Update horizontal position for snow/sand
             if 'dx' in drop and drop['dx'] != 0:
-                drop['fx'] = drop.get('fx', float(drop['x'])) + drop['dx']
+                dx_boost = speed_boost if self.weather_mode == WeatherMode.SAND else 1.0
+                drop['fx'] = drop.get('fx', float(drop['x'])) + drop['dx'] * dx_boost
                 new_x = int(drop['fx'])
 
                 # Sand blows off right edge and is removed
@@ -515,6 +572,25 @@ class MatrixRain:
             roll_speed = 5 - drop['depth']  # Layer 0 = 5, Layer 4 = 1
             chars = weather_chars[drop['depth']]
             drop['char_offset'] = (drop['char_offset'] + roll_speed) % len(chars)
+
+            # Snow sticking behavior
+            if self.weather_mode == WeatherMode.SNOW:
+                # Big flakes (depth 3-4) can stick anywhere
+                if drop['depth'] >= 3 and drop['y'] >= 0:
+                    # Random chance to stick based on how far down the screen
+                    stick_chance = 0.002 + (drop['y'] / self.height) * 0.01
+                    if random.random() < stick_chance:
+                        self._add_stuck_snow(drop['x'], drop['y'], drop['depth'], chars[drop['char_offset'] % len(chars)])
+                        continue  # Remove this drop, it's now stuck
+
+                # Small flakes (depth 0-2) fall to bottom 1/5th then stick
+                elif drop['depth'] <= 2:
+                    bottom_zone = self.height - (self.height // 5)
+                    if drop['y'] >= bottom_zone:
+                        # High chance to stick in bottom zone
+                        if random.random() < 0.05:
+                            self._add_stuck_snow(drop['x'], drop['y'], drop['depth'], chars[drop['char_offset'] % len(chars)])
+                            continue
 
             # Check if tiny rain (layer 0) hit the ground (mid-screen to bottom)
             # Only create splats for Matrix and Rain modes
@@ -541,6 +617,40 @@ class MatrixRain:
         # Add new drops to maintain density
         while len(self.drops) < self._target_drops:
             self._add_drop()
+
+    def _add_stuck_snow(self, x: int, y: int, depth: int, char: str):
+        """Add a snowflake that has stuck to the screen."""
+        # Limit total stuck snow to prevent memory issues
+        if len(self._stuck_snow) < 200:
+            self._stuck_snow.append({
+                'x': x,
+                'y': y,
+                'depth': depth,
+                'char': char,
+                'life': random.randint(40, 120),  # Frames until fully melted
+                'max_life': 120,
+            })
+
+    def _update_stuck_snow(self):
+        """Update stuck snow - slowly fade/melt away."""
+        new_stuck = []
+        for snow in self._stuck_snow:
+            snow['life'] -= 1
+            if snow['life'] > 0:
+                new_stuck.append(snow)
+        self._stuck_snow = new_stuck
+
+    def _update_sand_gusts(self):
+        """Update sand gust columns - they shift position over time."""
+        for gust in self._sand_gusts:
+            gust['life'] -= 1
+            if gust['life'] <= 0:
+                # Reset gust to new position
+                gust['x'] = random.randint(0, self.width - 1)
+                gust['width'] = random.randint(2, 5)
+                gust['speed_mult'] = random.uniform(2.0, 4.0)
+                gust['life'] = random.randint(30, 80)
+                gust['opacity'] = random.uniform(0.7, 1.0)
 
     def _update_fog(self):
         """Update fog particle positions."""
@@ -580,6 +690,9 @@ class MatrixRain:
         self.drops = [d for d in self.drops if d['x'] < width]
         self.splats = [s for s in self.splats if s['x'] < width and s['y'] < height]
 
+        # Remove stuck snow that is now out of bounds
+        self._stuck_snow = [s for s in self._stuck_snow if s['x'] < width and s['y'] < height]
+
         # Update fog particles for new dimensions
         if self.weather_mode == WeatherMode.FOG:
             # Keep particles in bounds or reinitialize if size changed significantly
@@ -591,6 +704,15 @@ class MatrixRain:
                         p['x'] = width - 1
                     if p['y'] >= height:
                         p['y'] = height - 1
+
+        # Reinitialize sand gusts for new width
+        if self.weather_mode == WeatherMode.SAND:
+            if abs(width - old_width) > 10:
+                self._init_sand_gusts()
+            else:
+                for gust in self._sand_gusts:
+                    if gust['x'] >= width:
+                        gust['x'] = random.randint(0, width - 1)
 
         # Add more drops if window got bigger
         if width > old_width:
@@ -660,22 +782,52 @@ class MatrixRain:
                 except curses.error:
                     pass
 
+        # Render stuck snow (melting snowflakes)
+        if self.weather_mode == WeatherMode.SNOW:
+            for snow in self._stuck_snow:
+                try:
+                    if 0 <= snow['x'] < self.width - 1 and 0 <= snow['y'] < self.height:
+                        # Fade based on remaining life (melting effect)
+                        life_ratio = snow['life'] / snow['max_life']
+                        if life_ratio > 0.6:
+                            attr = curses.color_pair(Colors.SNOW_BRIGHT) | curses.A_BOLD
+                        elif life_ratio > 0.3:
+                            attr = curses.color_pair(Colors.SNOW_DIM)
+                        else:
+                            attr = curses.color_pair(Colors.SNOW_FADE) | curses.A_DIM
+
+                        screen.attron(attr)
+                        screen.addstr(snow['y'], snow['x'], snow['char'])
+                        screen.attroff(attr)
+                except curses.error:
+                    pass
+
     def _render_fog(self, screen):
-        """Render fog particles."""
+        """Render fog particles with size-based rendering."""
         for particle in self._fog_particles:
             try:
                 x = int(particle['x'])
                 y = int(particle['y'])
+                size = particle.get('size', 1)
+
                 if 0 <= x < self.width - 1 and 0 <= y < self.height - 1:
-                    if particle['opacity'] > 0.7:
+                    # Bigger particles are more prominent
+                    if size >= 3 or particle['opacity'] > 0.7:
                         attr = curses.color_pair(Colors.FOG_BRIGHT) | curses.A_BOLD
-                    elif particle['opacity'] > 0.4:
+                    elif size >= 2 or particle['opacity'] > 0.4:
                         attr = curses.color_pair(Colors.FOG_DIM)
                     else:
                         attr = curses.color_pair(Colors.FOG_DIM) | curses.A_DIM
 
                     screen.attron(attr)
-                    screen.addstr(y, x, particle['char'])
+                    # Big particles render as larger characters
+                    if size >= 3:
+                        char = random.choice(['▓', '█', '▒'])
+                    elif size >= 2:
+                        char = random.choice(['▒', '░', '▓'])
+                    else:
+                        char = particle['char']
+                    screen.addstr(y, x, char)
                     screen.attroff(attr)
             except curses.error:
                 pass
