@@ -146,6 +146,7 @@ class Colors:
     MATRIX_DARK = 32     # Dark green for rain tails
     BRICK_RED = 33       # Red brick color for upper building
     GREY_BLOCK = 34      # Grey block color for lower building
+    DOOR_KNOB_GOLD = 35  # Gold door knob color
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -221,6 +222,8 @@ class Colors:
         # Building colors
         curses.init_pair(Colors.BRICK_RED, curses.COLOR_RED, curses.COLOR_BLACK)
         curses.init_pair(Colors.GREY_BLOCK, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        # Door knob - gold/yellow
+        curses.init_pair(Colors.DOOR_KNOB_GOLD, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -466,10 +469,10 @@ class MatrixRain:
         return new_mode
 
     def _init_fog(self):
-        """Initialize fog particles in clustered patches - blocks only, 5x count."""
+        """Initialize fog particles in tightly clustered patches - blocks only."""
         self._fog_particles = []
-        # Create fog as clustered patches - 5x more patches for denser fog
-        num_patch_centers = max(25, self.width // 4)
+        # Create fog as tightly clustered patches
+        num_patch_centers = max(20, self.width // 5)
 
         # Only block characters - no small particles
         block_chars = ['░', '▒', '▓', '█']
@@ -478,15 +481,15 @@ class MatrixRain:
             # Each patch has a center point
             center_x = random.uniform(0, self.width)
             center_y = random.uniform(0, self.height)
-            patch_dx = random.uniform(-0.15, 0.15)  # Whole patch drifts together
-            patch_dy = random.uniform(-0.04, 0.04)
+            patch_dx = random.uniform(-0.08, 0.08)  # Whole patch drifts together (slower)
+            patch_dy = random.uniform(-0.02, 0.02)
 
-            # Create particles clustered around the center - larger patches
-            patch_size = random.randint(12, 30)
+            # Create particles tightly clustered around the center
+            patch_size = random.randint(15, 35)
             for _ in range(patch_size):
-                # Particles spread around center with gaussian-like distribution
-                offset_x = random.gauss(0, 5)
-                offset_y = random.gauss(0, 4)
+                # Particles tightly spread around center (reduced gaussian spread)
+                offset_x = random.gauss(0, 2.5)  # Reduced from 5 to 2.5
+                offset_y = random.gauss(0, 2)    # Reduced from 4 to 2
 
                 # Only blocks - size 2 or 3
                 size = random.choice([2, 2, 3, 3, 3])
@@ -831,8 +834,8 @@ class MatrixRain:
     def _update_fog(self):
         """Update fog particle positions with magnetic clumping."""
         # First pass: calculate neighbor counts and attraction forces
-        attraction_radius = 8.0  # How far particles attract each other
-        attraction_strength = 0.02  # How strong the attraction is
+        attraction_radius = 12.0  # How far particles attract each other (increased from 8)
+        attraction_strength = 0.04  # How strong the attraction is (increased from 0.02)
 
         for i, particle in enumerate(self._fog_particles):
             neighbor_count = 0
@@ -865,12 +868,13 @@ class MatrixRain:
             particle['neighbor_count'] = neighbor_count
 
             # Apply attraction force (clamped to prevent wild movement)
-            attract_x = max(-0.1, min(0.1, attract_x))
-            attract_y = max(-0.05, min(0.05, attract_y))
+            # Increased clamp values to allow stronger grouping
+            attract_x = max(-0.15, min(0.15, attract_x))
+            attract_y = max(-0.08, min(0.08, attract_y))
 
-            # Drift slowly with attraction
-            particle['x'] += particle['dx'] + attract_x
-            particle['y'] += particle['dy'] + attract_y
+            # Drift slowly with attraction (attraction is stronger than drift)
+            particle['x'] += particle['dx'] * 0.5 + attract_x
+            particle['y'] += particle['dy'] * 0.5 + attract_y
 
             # Wrap around screen edges
             if particle['x'] < 0:
@@ -891,10 +895,10 @@ class MatrixRain:
             particle['opacity'] += (target_opacity - particle['opacity']) * 0.1
             particle['opacity'] = max(0.2, min(1.0, particle['opacity']))
 
-            # Very occasionally change drift direction (rare)
-            if random.random() < 0.003:
-                particle['dx'] = random.uniform(-0.2, 0.2)
-                particle['dy'] = random.uniform(-0.08, 0.08)
+            # Very rarely change drift direction (keeps fog coherent)
+            if random.random() < 0.001:
+                particle['dx'] = random.uniform(-0.1, 0.1)
+                particle['dy'] = random.uniform(-0.04, 0.04)
 
     def resize(self, width: int, height: int):
         """Handle terminal resize."""
@@ -1529,7 +1533,7 @@ class AlleyScene:
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
         # Position lights in the gap between buildings (spread out more)
-        light_x_positions = [gap_center - 15, gap_center + 15]
+        light_x_positions = [gap_center - 25, gap_center + 25]
         for light_x in light_x_positions:
             if 0 < light_x < self.width - len(self.STREET_LIGHT[0]) - 1:
                 self._draw_sprite(self.STREET_LIGHT, light_x, max(1, light_y), Colors.ALLEY_LIGHT)
@@ -1923,14 +1927,42 @@ class AlleyScene:
 
         The bottom ~8 rows (near door/porch) get grey blocks, upper rows get red bricks.
         Windows remain in blue/cyan color. Satellite dishes are grey.
-        Random brick texture in red area, grey block fill in grey area.
+        Brick outline around windows. Grey blocks fully filled with transparent texture.
+        Door knobs rendered in gold.
         """
         total_rows = len(sprite)
         # Grey block section: bottom 10 rows (half story with door)
         grey_start_row = total_rows - 10
         # Brick characters for texture
         brick_chars = ['#', '▓', '░']
-        grey_block_chars = ['▒', '░', '▓']
+        # Grey block chars - mix of solid and transparent for texture
+        grey_block_chars = ['▒', '░', '▓', '█']
+        # Transparent block chars for subtle texture variety
+        transparent_chars = ['░', ' ']
+
+        # First pass: find window boundaries for each row
+        def is_inside_window(row_str: str, col: int) -> bool:
+            """Check if a column is inside a window (between [ and ])."""
+            # Find all [ and ] positions in the row
+            bracket_open = -1
+            for i, c in enumerate(row_str):
+                if c == '[':
+                    bracket_open = i
+                elif c == ']':
+                    if bracket_open != -1 and bracket_open < col < i:
+                        return True
+                    bracket_open = -1
+            return False
+
+        def is_window_outline(row_str: str, col: int) -> bool:
+            """Check if position is adjacent to a window (for brick outline)."""
+            # Check if there's a [ or ] within 1 character
+            for offset in [-1, 0, 1]:
+                check_col = col + offset
+                if 0 <= check_col < len(row_str):
+                    if row_str[check_col] in '[]':
+                        return True
+            return False
 
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
@@ -1942,13 +1974,24 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.GREY_BLOCK)
                         continue
 
+                    # Check if inside a window
+                    inside_window = is_inside_window(row, col_idx)
+
                     if char != ' ':
                         # Determine color based on character and position
                         if char in '[]=' or (char == '-' and row_idx == 1):
                             # Window frames and roof line - keep blue
                             color = Colors.ALLEY_BLUE
-                        elif char in '|_.#':
-                            # Structural elements, door
+                        elif char in '|_.':
+                            # Structural elements
+                            if row_idx >= grey_start_row:
+                                color = Colors.GREY_BLOCK
+                            else:
+                                color = Colors.BRICK_RED
+                        elif char == '#':
+                            # Door panels - check for door knob position
+                            # Door knob goes on the right side of the door (col offset ~8 from door start)
+                            # The door panels are at specific positions, add knob to rightmost column of panels
                             if row_idx >= grey_start_row:
                                 color = Colors.GREY_BLOCK
                             else:
@@ -1963,17 +2006,48 @@ class AlleyScene:
                         self.scene[py][px] = (char, color)
                     else:
                         # Empty space - add texture based on zone
-                        # Skip if inside window area (between [ and ])
+                        # Skip if inside window area (don't put bricks inside windows)
+                        if inside_window:
+                            continue  # Leave window interior empty
+
                         if row_idx >= 2 and row_idx < grey_start_row:
-                            # Red brick zone - scatter random brick chars
-                            if random.random() < 0.08:  # 8% chance
-                                brick_char = random.choice(brick_chars)
-                                self.scene[py][px] = (brick_char, Colors.BRICK_RED)
+                            # Red brick zone
+                            # Higher chance of bricks near window outlines
+                            if is_window_outline(row, col_idx):
+                                # Brick outline around windows - higher density
+                                if random.random() < 0.35:
+                                    brick_char = random.choice(brick_chars)
+                                    self.scene[py][px] = (brick_char, Colors.BRICK_RED)
+                            else:
+                                # Regular scattered bricks elsewhere
+                                if random.random() < 0.08:
+                                    brick_char = random.choice(brick_chars)
+                                    self.scene[py][px] = (brick_char, Colors.BRICK_RED)
                         elif row_idx >= grey_start_row and row_idx < total_rows - 2:
-                            # Grey zone - fill with grey blocks
-                            if random.random() < 0.15:  # 15% chance
+                            # Grey zone - fill completely with texture
+                            # Mix of solid blocks and transparent for variety
+                            if random.random() < 0.85:
+                                # Mostly filled
                                 block_char = random.choice(grey_block_chars)
                                 self.scene[py][px] = (block_char, Colors.GREY_BLOCK)
+                            else:
+                                # Some transparent gaps for texture
+                                if random.random() < 0.5:
+                                    self.scene[py][px] = ('░', Colors.GREY_BLOCK)
+
+        # Second pass: add door knobs
+        # Find door positions (look for the door pattern .------.)
+        for row_idx, row in enumerate(sprite):
+            if '.------.' in row:
+                door_col = row.index('.------.')
+                # Door knob should be 2 rows below the top of door frame, on the right side
+                knob_row = row_idx + 4  # Middle of door
+                knob_col = door_col + 7  # Right side of door
+                if knob_row < total_rows:
+                    knob_px = x + knob_col
+                    knob_py = y + knob_row
+                    if 0 <= knob_px < self.width - 1 and 0 <= knob_py < self.height:
+                        self.scene[knob_py][knob_px] = ('o', Colors.DOOR_KNOB_GOLD)
 
     def render(self, screen):
         """Render the alley scene to the screen."""
@@ -2076,7 +2150,7 @@ class AlleyScene:
             return
 
         car = self._closeup_car
-        x = int(car['x'])
+        x = int(car['x']) - 4  # Shifted left 4 characters
         scale = car['scale']
         direction = car['direction']
 
@@ -2146,8 +2220,8 @@ class AlleyScene:
                     " () ",
                 ]
 
-        # Position car at street level
-        street_y = self.height - 1
+        # Position car at street level (shifted up 2 rows)
+        street_y = self.height - 3
         sprite_height = len(sprite)
 
         for row_idx, row in enumerate(sprite):
@@ -3903,7 +3977,11 @@ class Dashboard:
         """Draw the dashboard."""
         self.screen.clear()
 
-        # Render alley scene first (furthest back)
+        # Render moon first (furthest back - behind everything)
+        if self.matrix_mode and self.matrix_rain:
+            self._render_moon(self.screen)
+
+        # Render alley scene (behind rain but in front of moon)
         if self.matrix_mode and self.alley_scene:
             self.alley_scene.render(self.screen)
 
@@ -3916,9 +3994,6 @@ class Dashboard:
                 self.alley_rat.render(self.screen)
             if self.lurking_shadow:
                 self.lurking_shadow.render(self.screen)
-
-            # Render moon (behind other effects)
-            self._render_moon(self.screen)
 
             # Render lightning bolt if active
             if self._lightning_active and self._lightning_bolt:
