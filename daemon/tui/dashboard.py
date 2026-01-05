@@ -1553,6 +1553,12 @@ class AlleyScene:
         # Ground level is just above curb (moved up from previous position)
         ground_y = curb_y - 1
 
+        # Draw solid cloud cover at top (double line)
+        self._draw_cloud_cover()
+
+        # Draw mid-range buildings first (behind big buildings)
+        self._draw_midrange_buildings(ground_y)
+
         # Draw first building wireframe in background (left side)
         # Position building so its bottom edge is at ground level
         # Shifted 6 chars toward center (right)
@@ -1642,63 +1648,111 @@ class AlleyScene:
                 # Store position for flicker effect (center of light head)
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
 
+    def _draw_cloud_cover(self):
+        """Draw solid double-line cloud cover at top of screen."""
+        # Draw two solid lines of clouds right below the status area (rows 1-2)
+        cloud_chars = ['▓', '░', '▒', '█']
+        for row in range(1, 3):  # Rows 1 and 2
+            for x in range(self.width - 1):
+                char = cloud_chars[(x + row) % len(cloud_chars)]
+                self.scene[row][x] = (char, Colors.GREY_BLOCK)
+
     def _draw_distant_buildings(self, center_x: int, cafe_y: int):
-        """Draw small, dark grey distant buildings above the cafe area."""
-        # Distant building sprites - small and simple
+        """Draw distant building skyline across the entire background."""
+        # Distant building sprites - OUTLINE ONLY (no fill)
         distant_buildings = [
-            # Tall narrow building
+            # Tall narrow
+            [" _ ", "| |", "| |", "| |", "|_|"],
+            # Wide short
+            [" ___ ", "|   |", "|___|"],
+            # Medium
+            ["  _  ", " | | ", "|   |", "|___|"],
+            # Small
+            [" __ ", "|  |", "|__|"],
+            # Tall wide
+            [" ____ ", "|    |", "|    |", "|    |", "|____|"],
+            # Tiny
+            [" _ ", "|_|"],
+        ]
+
+        # Back row (further away, higher up) - spread across entire width
+        back_row_y = cafe_y - 8
+        back_positions = list(range(5, self.width - 5, 12))  # Every 12 chars
+        for i, pos_x in enumerate(back_positions):
+            building = distant_buildings[(i + 2) % len(distant_buildings)]
+            self._draw_outline_building(building, pos_x, back_row_y, Colors.ALLEY_DARK)
+
+        # Front row (closer, lower) - staggered to show back row in gaps
+        front_row_y = cafe_y - 4
+        front_positions = list(range(11, self.width - 5, 12))  # Offset by 6 from back
+        for i, pos_x in enumerate(front_positions):
+            building = distant_buildings[i % len(distant_buildings)]
+            self._draw_outline_building(building, pos_x, front_row_y, Colors.GREY_BLOCK)
+
+    def _draw_outline_building(self, building: List[str], x: int, base_y: int, color: int):
+        """Draw a building outline at the given position."""
+        building_height = len(building)
+        by = base_y - building_height + 1
+        for row_idx, row in enumerate(building):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = by + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    self.scene[py][px] = (char, color)
+
+    def _draw_midrange_buildings(self, ground_y: int):
+        """Draw mid-range buildings above 1/5 of screen, behind big buildings."""
+        # Mid-range building sprites - larger than distant, outline style
+        midrange_buildings = [
             [
-                " _ ",
-                "|█|",
-                "|█|",
-                "|█|",
-                "|_|",
+                "  ____  ",
+                " |    | ",
+                " | [] | ",
+                " |    | ",
+                " | [] | ",
+                " |____| ",
             ],
-            # Wide short building
             [
-                " ___ ",
-                "|███|",
-                "|___|",
+                " _______ ",
+                "|       |",
+                "| [] [] |",
+                "|       |",
+                "| [] [] |",
+                "|_______|",
             ],
-            # Medium building with detail
             [
-                "  _  ",
-                " |█| ",
-                "|███|",
-                "|___|",
+                "  ___  ",
+                " |   | ",
+                " | o | ",
+                " |   | ",
+                " |___| ",
             ],
-            # Small building
             [
-                " __ ",
-                "|██|",
-                "|__|",
+                " _________ ",
+                "|         |",
+                "| []   [] |",
+                "|         |",
+                "| []   [] |",
+                "|         |",
+                "|_________|",
             ],
         ]
 
-        # Position distant buildings above cafe, spread across the gap
-        # They should appear behind (above) the cafe
-        distant_y = cafe_y - 3  # Above cafe (closer to cafe for visibility)
+        # Position at 1/5 from bottom of screen
+        midrange_y = self.height - (self.height // 5)
 
-        # Draw several distant buildings spread out
-        positions = [center_x - 20, center_x - 10, center_x, center_x + 10, center_x + 18]
-
+        # Draw across the screen
+        positions = list(range(0, self.width, 20))
         for i, pos_x in enumerate(positions):
-            building = distant_buildings[i % len(distant_buildings)]
+            building = midrange_buildings[i % len(midrange_buildings)]
             building_height = len(building)
-            building_width = len(building[0])
-
-            # Position building
-            bx = pos_x - building_width // 2
-            by = distant_y - building_height + 1
-
-            # Draw building in grey (visible but dim)
+            by = midrange_y - building_height
             for row_idx, row in enumerate(building):
                 for col_idx, char in enumerate(row):
-                    px = bx + col_idx
+                    px = pos_x + col_idx
                     py = by + row_idx
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
-                        # Use grey block color for distant buildings (more visible)
-                        self.scene[py][px] = (char, Colors.GREY_BLOCK)
+                        self.scene[py][px] = (char, Colors.ALLEY_MID)
 
     def _draw_cafe(self, x: int, y: int):
         """Draw a well-lit cafe storefront."""
@@ -1894,9 +1948,13 @@ class AlleyScene:
         self._closeup_car_timer += 1
         if self._closeup_car is None and self._closeup_car_timer >= random.randint(200, 400):
             self._closeup_car_timer = 0
-            # Spawn a car that stays in place and grows/shrinks
+            # Calculate position between cafe and right building
+            cafe_right = self.cafe_x + len(self.CAFE[0]) if hasattr(self, 'cafe_x') else self.width // 2
+            building2_x = self._building2_x if hasattr(self, '_building2_x') else self.width - 50
+            # Position car in the gap between cafe and right building
+            car_x = (cafe_right + building2_x) // 2
             self._closeup_car = {
-                'x': float(random.randint(self.width // 3, 2 * self.width // 3)),  # Random position in middle third
+                'x': float(car_x),
                 'direction': random.choice([-1, 1]),  # Face left or right
                 'scale': 0.5,  # Start small
                 'phase': 0,    # 0=growing, 1=shrinking
@@ -2086,8 +2144,8 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw a crosswalk with white stripes."""
-        crosswalk_width = 8
+        """Draw a crosswalk with white stripes (4x wider)."""
+        crosswalk_width = 32  # 4x wider
         for cx in range(crosswalk_width):
             px = x + cx
             if 0 <= px < self.width - 1:
@@ -2183,16 +2241,8 @@ class AlleyScene:
                             continue  # Leave window interior empty
 
                         if row_idx >= 4 and row_idx < grey_start_row:
-                            # Red brick zone - fill densely
-                            # Higher chance of bricks near window outlines
-                            if is_window_outline(row, col_idx):
-                                # Brick outline around windows - very high density
-                                if random.random() < 0.70:
-                                    self.scene[py][px] = (brick_char, Colors.BRICK_RED)
-                            else:
-                                # Fill bricks elsewhere densely
-                                if random.random() < 0.45:
-                                    self.scene[py][px] = (brick_char, Colors.BRICK_RED)
+                            # Red brick zone - fill completely
+                            self.scene[py][px] = (brick_char, Colors.BRICK_RED)
                         elif row_idx >= grey_start_row:
                             # Grey zone - fill completely with even texture (to bottom)
                             # Use consistent block character for uniform appearance
@@ -2321,7 +2371,7 @@ class AlleyScene:
             return
 
         car = self._closeup_car
-        x = int(car['x']) + 15  # Shifted right to be between cafe and street light
+        x = int(car['x'])  # Position calculated in _update_closeup_car
         scale = car['scale']
         direction = car['direction']
         # Calculate vertical offset based on scale (moves up as car shrinks)
