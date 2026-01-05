@@ -1678,18 +1678,12 @@ class AlleyScene:
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
         self._steam_effects: List[Dict] = []  # {x, y, frame, timer, duration}
         self._steam_spawn_timer = 0
-        # Windy city weather - debris, leaves, wind wisps
-        self._debris: List[Dict] = []  # {x, y, char, type, speed}
-        self._leaves: List[Dict] = []  # {x, y, char, speed, wobble}
-        self._wind_wisps: List[Dict] = []  # {x, y, chars, speed}
+        # Wind-blown debris (leaves, newspaper, trash)
+        self._debris: List[Dict] = []  # {x, y, char, color, speed, state, timer, stop_x}
         self._debris_spawn_timer = 0
-        self._wind_wisp_timer = 0
+        # Tree positions for rendering
         self._tree_positions: List[Tuple[int, int]] = []  # (x, y) for trees
         self._tree_sway_frame = 0
-        # Wind direction: 1 = blowing right (from left), -1 = blowing left (from right)
-        self._wind_direction = 1
-        self._wind_direction_timer = 0
-        self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 minutes at ~60fps
         # Meteor damage overlays - {x, y, char, timer, fade_time}
         self._damage_overlays: List[Dict] = []
         self._damage_fade_time = 18000  # ~5 minutes at 60fps (300 seconds * 60)
@@ -1912,32 +1906,22 @@ class AlleyScene:
             })
 
     def _update_clouds(self):
-        """Update cloud positions - drift in wind direction."""
+        """Update cloud positions - drift right across sky."""
         for cloud in self._clouds:
-            # Clouds move in wind direction (closer/lower clouds can vary slightly)
-            # Cumulus clouds (closer) may have slight delay in direction change for dynamic look
-            cloud['x'] += cloud['speed'] * self._wind_direction
+            # Clouds move right (wind always blows left to right)
+            cloud['x'] += cloud['speed']
 
-            # Wrap around based on wind direction
+            # Wrap around when off right edge
             if cloud['type'] in ['main', 'cumulus', 'foreground', 'distant']:
                 cloud_width = len(cloud['chars'][0]) if cloud['chars'] else 5
-                if self._wind_direction > 0:
-                    # Wind blowing right - wrap from left
-                    if cloud['x'] > self.width + cloud_width:
-                        cloud['x'] = -cloud_width
-                else:
-                    # Wind blowing left - wrap from right
-                    if cloud['x'] < -cloud_width:
-                        cloud['x'] = self.width + cloud_width
+                # Wind blowing right - wrap from left
+                if cloud['x'] > self.width + cloud_width:
+                    cloud['x'] = -cloud_width
             else:
                 # Wisps
                 wisp_len = cloud.get('length', 5)
-                if self._wind_direction > 0:
-                    if cloud['x'] > self.width + wisp_len:
-                        cloud['x'] = -wisp_len
-                else:
-                    if cloud['x'] < -wisp_len:
-                        cloud['x'] = self.width + wisp_len
+                if cloud['x'] > self.width + wisp_len:
+                    cloud['x'] = -wisp_len
 
     def _update_steam(self):
         """Update steam effects from manholes and drains - rare occurrence."""
@@ -2128,126 +2112,75 @@ class AlleyScene:
                 self._ufo_cooldown = 36000  # ~10 minute cooldown
 
     def _update_wind(self):
-        """Update windy city weather - debris, leaves, and wind wisps."""
-        try:
-            curb_y = self.height - 4
-            street_y = self.height - 3
+        """Update wind effects - debris blowing horizontally across screen."""
+        # Simple debris system: spawn from left, blow right, slow/stop, then exit right
+        street_y = self.height - 3
+        curb_y = self.height - 4
 
-            # Skip wind updates if terminal is too small
-            if self.height < 12 or self.width < 20:
-                return
+        # Spawn new debris occasionally
+        self._debris_spawn_timer += 1
+        if self._debris_spawn_timer > 30:  # Every ~30 frames
+            self._debris_spawn_timer = 0
+            max_items = 12 if self._calm_mode else 6
+            if len(self._debris) < max_items:
+                # Pick debris type and character
+                debris_type = random.choice(['leaf', 'leaf', 'newspaper', 'trash'])
+                if debris_type == 'leaf':
+                    char = random.choice(['*', '✦', '✧', '⁕', '@'])
+                    color_type = 'leaf'
+                elif debris_type == 'newspaper':
+                    char = random.choice(['▪', '▫', '□', '▢'])
+                    color_type = 'paper'
+                else:
+                    char = random.choice(['~', '°', '·'])
+                    color_type = 'trash'
 
-            # Update wind direction timer - change direction every 3-15 minutes
-            self._wind_direction_timer += 1
-            if self._wind_direction_timer >= self._wind_direction_change_interval:
-                self._wind_direction_timer = 0
-                self._wind_direction *= -1  # Flip direction
-                self._wind_direction_change_interval = random.randint(10800, 54000)  # 3-15 min at ~60fps
+                # Spawn from left side at street level
+                self._debris.append({
+                    'x': -2.0,
+                    'y': float(random.choice([curb_y, street_y, street_y - 1])),
+                    'char': char,
+                    'color': color_type,
+                    'speed': random.uniform(0.3, 0.8),
+                    'state': 'blowing',  # blowing, slowing, stopped, resuming
+                    'timer': 0,
+                    'stop_x': random.uniform(0.2, 0.7) * self.width,  # Where to pause
+                })
 
-            # Update tree sway animation
-            self._tree_sway_frame = (self._tree_sway_frame + 1) % 20
+        # Update each debris item
+        new_debris = []
+        for d in self._debris:
+            if d['state'] == 'blowing':
+                d['x'] += d['speed']
+                # Check if reached stop point
+                if d['x'] >= d['stop_x']:
+                    d['state'] = 'slowing'
+                    d['timer'] = 0
 
-            # Calm mode: faster debris spawn, more debris allowed
-            debris_spawn_min = 5 if self._calm_mode else 15
-            debris_spawn_max = 15 if self._calm_mode else 40
-            max_debris = 20 if self._calm_mode else 8
+            elif d['state'] == 'slowing':
+                d['speed'] *= 0.85  # Decelerate
+                d['x'] += d['speed']
+                if d['speed'] < 0.05:
+                    d['state'] = 'stopped'
+                    d['timer'] = 0
 
-            # Spawn debris (newspapers, trash) on streets - spawn from upwind side
-            self._debris_spawn_timer += 1
-            if self._debris_spawn_timer >= random.randint(debris_spawn_min, debris_spawn_max):
-                self._debris_spawn_timer = 0
-                if len(self._debris) < max_debris:
-                    debris_type = random.choice(['newspaper', 'trash'])
-                    chars = self.DEBRIS_NEWSPAPER if debris_type == 'newspaper' else self.DEBRIS_TRASH
-                    # Spawn from upwind side
-                    if self._wind_direction > 0:
-                        spawn_x = -5.0  # Wind blowing right, spawn from left
-                    else:
-                        spawn_x = float(self.width + 5)  # Wind blowing left, spawn from right
-                    self._debris.append({
-                        'x': spawn_x,
-                        'y': float(random.choice([curb_y, street_y, street_y - 1])),
-                        'char': random.choice(chars),
-                        'type': debris_type,
-                        'speed': random.uniform(0.8, 2.0),
-                        'wobble': random.uniform(0, 6.28),
-                    })
+            elif d['state'] == 'stopped':
+                d['timer'] += 1
+                # Stay stopped for 30-90 frames
+                if d['timer'] > random.randint(30, 90):
+                    d['state'] = 'resuming'
+                    d['timer'] = 0
 
-            # Calm mode: fewer wind wisps (less mid-screen clutter)
-            max_wisps = 2 if self._calm_mode else 5
-            wisp_spawn_min = 60 if self._calm_mode else 30
-            wisp_spawn_max = 120 if self._calm_mode else 60
+            elif d['state'] == 'resuming':
+                d['timer'] += 1
+                d['speed'] = min(d['speed'] + 0.02, 0.6)  # Accelerate
+                d['x'] += d['speed']
 
-            # Spawn wind wisps in sky - spawn from upwind side
-            self._wind_wisp_timer += 1
-            if self._wind_wisp_timer >= random.randint(wisp_spawn_min, wisp_spawn_max):
-                self._wind_wisp_timer = 0
-                if len(self._wind_wisps) < max_wisps:
-                    wisp_length = random.randint(3, 8)
-                    wisp_chars = ''.join([random.choice(self.WIND_WISPS) for _ in range(wisp_length)])
-                    if self._wind_direction > 0:
-                        spawn_x = -5.0  # Wind blowing right
-                    else:
-                        spawn_x = float(self.width + 5)  # Wind blowing left
-                    # Ensure valid range for wisp y position
-                    wisp_y_max = max(4, self.height // 3)
-                    self._wind_wisps.append({
-                        'x': spawn_x,
-                        'y': float(random.randint(3, wisp_y_max)),
-                        'chars': wisp_chars,
-                        'speed': random.uniform(1.0, 2.5),
-                    })
+            # Keep if still on screen
+            if d['x'] < self.width + 5:
+                new_debris.append(d)
 
-            # Calm mode: more leaves
-            leaf_chance = 0.08 if self._calm_mode else 0.03
-            max_leaves = 30 if self._calm_mode else 15
-
-            # Spawn leaves from trees
-            for tree_x, tree_y in self._tree_positions:
-                if random.random() < leaf_chance:
-                    if len(self._leaves) < max_leaves:
-                        self._leaves.append({
-                            'x': float(tree_x + random.randint(2, 7)),
-                            'y': float(tree_y + random.randint(0, 3)),
-                            'char': random.choice(self.DEBRIS_LEAVES),
-                            'speed': random.uniform(0.5, 1.5),
-                            'fall_speed': random.uniform(0.1, 0.3),
-                            'wobble': random.uniform(0, 6.28),
-                        })
-
-            # Update debris positions - move in wind direction
-            new_debris = []
-            for d in self._debris:
-                d['x'] += d['speed'] * self._wind_direction  # Blow in wind direction
-                d['wobble'] += 0.3
-                d['y'] += math.sin(d['wobble']) * 0.2  # Wobble up/down
-                # Keep on screen
-                if -10 < d['x'] < self.width + 10:
-                    new_debris.append(d)
-            self._debris = new_debris
-
-            # Update wind wisps - move in wind direction
-            new_wisps = []
-            for w in self._wind_wisps:
-                w['x'] += w['speed'] * self._wind_direction
-                if -len(w['chars']) - 5 < w['x'] < self.width + 10:
-                    new_wisps.append(w)
-            self._wind_wisps = new_wisps
-
-            # Update leaves - blow in wind direction
-            new_leaves = []
-            for leaf in self._leaves:
-                leaf['x'] += leaf['speed'] * self._wind_direction  # Blow in wind direction
-                leaf['y'] += leaf['fall_speed']  # Fall down
-                leaf['wobble'] += 0.2
-                leaf['x'] += math.sin(leaf['wobble']) * 0.3  # Wobble
-                # Keep if on screen and above street
-                if -5 < leaf['x'] < self.width + 5 and leaf['y'] < street_y + 2:
-                    new_leaves.append(leaf)
-            self._leaves = new_leaves
-        except Exception:
-            # Silently handle any wind update errors to prevent freezes
-            pass
+        self._debris = new_debris
 
     def _update_qte(self):
         """Update meteor QTE event - quick time event."""
@@ -2655,11 +2588,8 @@ class AlleyScene:
     def _render_trees(self, screen):
         """Render trees on top of buildings (foreground layer)."""
         for tree_x, tree_y in self._tree_positions:
-            # Use windy tree sprite based on wind direction
-            if self._wind_direction > 0:
-                tree_sprite = self.TREE_WINDY_RIGHT
-            else:
-                tree_sprite = self.TREE_WINDY_LEFT
+            # Always use wind blowing right sprite (wind goes left to right)
+            tree_sprite = self.TREE_WINDY_RIGHT
 
             for row_idx, row in enumerate(tree_sprite):
                 for col_idx, char in enumerate(row):
@@ -3246,11 +3176,8 @@ class AlleyScene:
 
     def _draw_tree(self, x: int, y: int):
         """Draw a tree at the given position, blowing in wind direction."""
-        # Use windy tree sprite based on wind direction
-        if self._wind_direction > 0:
-            tree_sprite = self.TREE_WINDY_RIGHT  # Wind blowing right
-        else:
-            tree_sprite = self.TREE_WINDY_LEFT  # Wind blowing left
+        # Always use wind blowing right sprite (wind goes left to right)
+        tree_sprite = self.TREE_WINDY_RIGHT
         for row_idx, row in enumerate(tree_sprite):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
@@ -4169,47 +4096,21 @@ class AlleyScene:
                     pass
 
     def _render_wind(self, screen):
-        """Render wind effects - debris, leaves, and wisps."""
-        # Render debris (newspapers, trash) on streets
+        """Render wind-blown debris on screen."""
         for d in self._debris:
             px = int(d['x'])
             py = int(d['y'])
             if 0 <= px < self.width - 1 and 0 <= py < self.height:
                 try:
-                    if d['type'] == 'newspaper':
+                    # Color based on debris type
+                    if d.get('color') == 'leaf':
+                        attr = curses.color_pair(Colors.MATRIX_DIM)
+                    elif d.get('color') == 'paper':
                         attr = curses.color_pair(Colors.ALLEY_LIGHT)
                     else:
                         attr = curses.color_pair(Colors.ALLEY_MID)
                     screen.attron(attr)
                     screen.addstr(py, px, d['char'])
-                    screen.attroff(attr)
-                except curses.error:
-                    pass
-
-        # Render wind wisps in sky
-        for w in self._wind_wisps:
-            px = int(w['x'])
-            py = int(w['y'])
-            for i, char in enumerate(w['chars']):
-                cx = px + i
-                if 0 <= cx < self.width - 1 and 0 <= py < self.height:
-                    try:
-                        attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
-                        screen.attron(attr)
-                        screen.addstr(py, cx, char)
-                        screen.attroff(attr)
-                    except curses.error:
-                        pass
-
-        # Render leaves blowing from trees
-        for leaf in self._leaves:
-            px = int(leaf['x'])
-            py = int(leaf['y'])
-            if 0 <= px < self.width - 1 and 0 <= py < self.height:
-                try:
-                    attr = curses.color_pair(Colors.MATRIX_DIM)
-                    screen.attron(attr)
-                    screen.addstr(py, px, leaf['char'])
                     screen.attroff(attr)
                 except curses.error:
                     pass
