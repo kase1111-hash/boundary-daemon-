@@ -199,7 +199,7 @@ class MatrixRain:
         self.width = width
         self.height = height
         self.drops: List[Dict] = []
-        self._target_drops = max(5, width // 10)  # More drops overall
+        self._target_drops = max(8, width * 3 // 20)  # 50% more rain!
         self._init_drops()
 
         # Flicker state
@@ -273,14 +273,14 @@ class MatrixRain:
         old_width = self.width
         self.width = width
         self.height = height
-        self._target_drops = max(5, width // 10)
+        self._target_drops = max(8, width * 3 // 20)  # 50% more rain!
 
         # Remove drops that are now out of bounds
         self.drops = [d for d in self.drops if d['x'] < width]
 
         # Add more drops if window got bigger
         if width > old_width:
-            for _ in range(max(1, (width - old_width) // 10)):
+            for _ in range(max(1, (width - old_width) * 3 // 20)):
                 self._add_drop()
 
     def render(self, screen):
