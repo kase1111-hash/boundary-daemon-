@@ -127,6 +127,9 @@ class Colors:
     ALLEY_MID = 15       # Mid-tone buildings
     ALLEY_LIGHT = 16     # Lighter details
     ALLEY_BLUE = 17      # Muted blue accents
+    # Creature colors
+    RAT_YELLOW = 18      # Yellow rat for warnings
+    SHADOW_RED = 19      # Red glowing eyes for threats
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -168,6 +171,9 @@ class Colors:
         curses.init_pair(Colors.ALLEY_MID, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_LIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        # Creature colors
+        curses.init_pair(Colors.RAT_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(Colors.SHADOW_RED, curses.COLOR_RED, curses.COLOR_BLACK)
 
 
 class MatrixRain:
@@ -737,6 +743,294 @@ class LightningBolt:
             pass
 
 
+class AlleyRat:
+    """
+    Yellow ASCII rat that scurries around the alley when security warnings appear.
+
+    The rat appears near the dumpster or edges of the scene and moves
+    in quick, erratic patterns when there are active warnings.
+    """
+
+    # Rat animation frames - facing different directions
+    RAT_FRAMES = {
+        'right': [
+            [" .", ".~"],  # Tiny rat moving right
+            ["<>", "``"],
+        ],
+        'left': [
+            [". ", "~."],  # Tiny rat moving left
+            ["><", "``"],
+        ],
+        'idle': [
+            ["<>", "ww"],  # Idle sitting rat
+        ],
+    }
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.active = False
+        self.visible = False
+
+        # Position and movement
+        self.x = 0.0
+        self.y = 0.0
+        self.target_x = 0.0
+        self.target_y = 0.0
+        self.direction = 'idle'
+        self.speed = 0.0
+
+        # Animation state
+        self.frame = 0
+        self.frame_counter = 0
+        self.pause_counter = 0
+
+        # Behavior state
+        self._hiding = True
+        self._flee_timer = 0
+
+    def resize(self, width: int, height: int):
+        """Handle terminal resize."""
+        self.width = width
+        self.height = height
+        # Keep rat in bounds
+        self.x = min(self.x, width - 3)
+        self.y = min(self.y, height - 3)
+
+    def activate(self):
+        """Activate the rat when warnings appear."""
+        if not self.active:
+            self.active = True
+            self.visible = True
+            self._hiding = False
+            # Spawn near the dumpster (lower left area)
+            self.x = float(random.randint(2, max(3, self.width // 4)))
+            self.y = float(self.height - random.randint(3, 6))
+            self._pick_new_target()
+
+    def deactivate(self):
+        """Deactivate the rat when warnings clear."""
+        # Rat runs off screen to hide
+        if self.active and not self._hiding:
+            self._hiding = True
+            self.target_x = -5.0  # Run off left edge
+            self.target_y = self.y
+            self.speed = 1.5  # Fast escape
+
+    def _pick_new_target(self):
+        """Pick a new target position for the rat to scurry to."""
+        # Stay in the lower third of the screen, edges
+        floor_y = self.height * 2 // 3
+
+        if random.random() < 0.3:
+            # Sometimes pause (idle)
+            self.target_x = self.x
+            self.target_y = self.y
+            self.pause_counter = random.randint(10, 30)
+            self.speed = 0
+            self.direction = 'idle'
+        else:
+            # Scurry to a new spot
+            self.target_x = float(random.randint(1, max(2, self.width // 3)))
+            self.target_y = float(random.randint(floor_y, self.height - 2))
+            self.speed = random.uniform(0.5, 1.2)
+
+            # Set direction based on movement
+            if self.target_x > self.x:
+                self.direction = 'right'
+            else:
+                self.direction = 'left'
+
+    def update(self):
+        """Update rat position and animation."""
+        if not self.active:
+            return
+
+        self.frame_counter += 1
+
+        # Animate every few frames
+        if self.frame_counter % 4 == 0:
+            frames = self.RAT_FRAMES.get(self.direction, self.RAT_FRAMES['idle'])
+            self.frame = (self.frame + 1) % len(frames)
+
+        # Handle pause
+        if self.pause_counter > 0:
+            self.pause_counter -= 1
+            if self.pause_counter == 0:
+                self._pick_new_target()
+            return
+
+        # Move towards target
+        if self.speed > 0:
+            dx = self.target_x - self.x
+            dy = self.target_y - self.y
+            dist = math.sqrt(dx * dx + dy * dy)
+
+            if dist < 0.5:
+                # Reached target
+                if self._hiding and self.x < 0:
+                    # Fully hidden, deactivate
+                    self.active = False
+                    self.visible = False
+                else:
+                    self._pick_new_target()
+            else:
+                # Move towards target
+                self.x += (dx / dist) * self.speed
+                self.y += (dy / dist) * self.speed
+
+    def render(self, screen):
+        """Render the rat."""
+        if not self.visible or not self.active:
+            return
+
+        frames = self.RAT_FRAMES.get(self.direction, self.RAT_FRAMES['idle'])
+        frame = frames[self.frame % len(frames)]
+
+        ix = int(self.x)
+        iy = int(self.y)
+
+        attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+
+        try:
+            for row_idx, row in enumerate(frame):
+                for col_idx, char in enumerate(row):
+                    px = ix + col_idx
+                    py = iy + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height - 1 and char != ' ':
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+        except curses.error:
+            pass
+
+
+class LurkingShadow:
+    """
+    Lurking shadow with glowing red eyes that appears when threats are detected.
+
+    The shadow lurks in dark corners of the alley, with only its red eyes
+    visible. Occasionally blinks and shifts position.
+    """
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.active = False
+
+        # Position (eyes position)
+        self.x = 0
+        self.y = 0
+
+        # Blinking state
+        self.eyes_open = True
+        self.blink_counter = 0
+        self.blink_interval = random.randint(30, 80)
+
+        # Movement state
+        self.move_counter = 0
+        self.move_interval = random.randint(100, 300)
+
+        # Intensity (for flickering eyes)
+        self.intensity = 1.0
+        self.flicker_counter = 0
+
+    def resize(self, width: int, height: int):
+        """Handle terminal resize."""
+        self.width = width
+        self.height = height
+        # Keep in bounds
+        self.x = min(self.x, width - 3)
+        self.y = min(self.y, height - 2)
+
+    def activate(self):
+        """Activate the shadow when threats appear."""
+        if not self.active:
+            self.active = True
+            self._choose_lurk_position()
+
+    def deactivate(self):
+        """Deactivate the shadow."""
+        self.active = False
+
+    def _choose_lurk_position(self):
+        """Choose a dark corner to lurk in."""
+        # Lurk in the corners/edges of the alley
+        positions = []
+
+        # Top corners (in the distance)
+        horizon_y = self.height // 3
+        positions.append((random.randint(2, 8), horizon_y + random.randint(1, 3)))
+        positions.append((self.width - random.randint(4, 10), horizon_y + random.randint(1, 3)))
+
+        # Side edges (behind buildings)
+        mid_y = self.height // 2
+        positions.append((random.randint(0, 4), mid_y + random.randint(-2, 4)))
+        positions.append((self.width - random.randint(2, 6), mid_y + random.randint(-2, 4)))
+
+        # Pick one
+        pos = random.choice(positions)
+        self.x = max(0, min(pos[0], self.width - 3))
+        self.y = max(0, min(pos[1], self.height - 2))
+
+        # Reset blink/move timers
+        self.blink_interval = random.randint(30, 80)
+        self.move_interval = random.randint(100, 300)
+
+    def update(self):
+        """Update shadow state."""
+        if not self.active:
+            return
+
+        self.blink_counter += 1
+        self.move_counter += 1
+        self.flicker_counter += 1
+
+        # Subtle intensity flicker
+        self.intensity = 0.8 + 0.2 * math.sin(self.flicker_counter * 0.1)
+
+        # Blink occasionally
+        if self.blink_counter >= self.blink_interval:
+            self.blink_counter = 0
+            self.eyes_open = not self.eyes_open
+            if self.eyes_open:
+                # Eyes were closed, now open - new blink interval
+                self.blink_interval = random.randint(30, 80)
+            else:
+                # Closing eyes briefly
+                self.blink_interval = random.randint(2, 5)
+
+        # Move to new position occasionally
+        if self.move_counter >= self.move_interval:
+            self.move_counter = 0
+            self._choose_lurk_position()
+
+    def render(self, screen):
+        """Render the lurking shadow with glowing red eyes."""
+        if not self.active or not self.eyes_open:
+            return
+
+        # The shadow itself is invisible (dark)
+        # Only render the glowing red eyes
+
+        # Eyes: two dots with a space between
+        eyes = "o o"
+
+        # Determine intensity (for flickering effect)
+        if self.intensity > 0.9:
+            attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+        else:
+            attr = curses.color_pair(Colors.SHADOW_RED)
+
+        try:
+            if 0 <= self.y < self.height - 1 and 0 <= self.x < self.width - 3:
+                screen.attron(attr)
+                screen.addstr(self.y, self.x, eyes)
+                screen.attroff(attr)
+        except curses.error:
+            pass
+
+
 class DashboardClient:
     """Client for communicating with daemon via socket API."""
 
@@ -820,6 +1114,8 @@ class DashboardClient:
         """Find working directory of running daemon process."""
         try:
             import psutil
+
+            # First try: Find by process name/cmdline matching
             for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'cwd', 'exe']):
                 try:
                     # Check process name (works for .exe files)
@@ -843,6 +1139,9 @@ class DashboardClient:
                     # Method 4: Running boundary_daemon module
                     elif 'boundary_daemon' in cmdline_str:
                         is_daemon = True
+                    # Method 5: Command line contains boundary-daemon- (directory name)
+                    elif 'boundary-daemon-' in cmdline_str:
+                        is_daemon = True
 
                     if is_daemon:
                         cwd = proc.info.get('cwd')
@@ -857,6 +1156,24 @@ class DashboardClient:
                                 return exe_dir
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
+
+            # Second try: Find process listening on port 19847 (TCP mode)
+            for conn in psutil.net_connections(kind='tcp'):
+                if conn.laddr.port == self.WINDOWS_PORT and conn.status == 'LISTEN':
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        cwd = proc.cwd()
+                        if cwd:
+                            logger.debug(f"Found daemon on port {self.WINDOWS_PORT}, pid {conn.pid}, cwd: {cwd}")
+                            return cwd
+                        exe_path = proc.exe()
+                        if exe_path:
+                            exe_dir = os.path.dirname(exe_path)
+                            logger.debug(f"Found daemon on port {self.WINDOWS_PORT}, pid {conn.pid}, exe: {exe_dir}")
+                            return exe_dir
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+
         except ImportError:
             logger.debug("psutil not available for process detection")
         except Exception as e:
@@ -1385,6 +1702,12 @@ class Dashboard:
         self._lightning_flickers_remaining = 0
         self._lightning_flash_phase = 0
 
+        # Creature state (for matrix mode)
+        self.alley_rat: Optional[AlleyRat] = None
+        self.lurking_shadow: Optional[LurkingShadow] = None
+        self._has_warnings = False
+        self._has_threats = False
+
     def run(self):
         """Run the dashboard."""
         if not CURSES_AVAILABLE:
@@ -1511,6 +1834,9 @@ class Dashboard:
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
             self.matrix_rain = MatrixRain(self.width, self.height)
+            # Initialize creatures
+            self.alley_rat = AlleyRat(self.width, self.height)
+            self.lurking_shadow = LurkingShadow(self.width, self.height)
             # Schedule first lightning strike (5-30 minutes from now)
             self._lightning_next_time = time.time() + random.uniform(300, 1800)
         else:
@@ -1534,7 +1860,14 @@ class Dashboard:
                         if self.alley_scene:
                             self.alley_scene.resize(self.width, self.height)
                         self.matrix_rain.resize(self.width, self.height)
+                        if self.alley_rat:
+                            self.alley_rat.resize(self.width, self.height)
+                        if self.lurking_shadow:
+                            self.lurking_shadow.resize(self.width, self.height)
                     self.matrix_rain.update()
+
+                    # Update creatures based on alert state
+                    self._update_creatures()
 
                     # Check for lightning strike
                     self._update_lightning()
@@ -1563,6 +1896,10 @@ class Dashboard:
                 self.alley_scene.resize(self.width, self.height)
             if self.matrix_rain:
                 self.matrix_rain.resize(self.width, self.height)
+            if self.alley_rat:
+                self.alley_rat.resize(self.width, self.height)
+            if self.lurking_shadow:
+                self.lurking_shadow.resize(self.width, self.height)
         self.screen.clear()
 
     def _update_dimensions(self):
@@ -1597,6 +1934,48 @@ class Dashboard:
                 self._lightning_bolt = None
                 # Schedule next lightning (5-30 minutes from now)
                 self._lightning_next_time = current_time + random.uniform(300, 1800)
+
+    def _update_creatures(self):
+        """Update creature state based on alerts."""
+        # Check for warnings (MEDIUM severity or WARN events)
+        has_warnings = False
+        has_threats = False
+
+        for alert in self.alerts:
+            if alert.severity in ('MEDIUM', 'LOW'):
+                has_warnings = True
+            if alert.severity in ('HIGH', 'CRITICAL'):
+                has_threats = True
+
+        # Also check recent events for warnings
+        for event in self.events[:5]:  # Check last 5 events
+            if event.severity == 'WARN':
+                has_warnings = True
+            if event.severity == 'ERROR':
+                has_threats = True
+
+        # Update rat state (for warnings)
+        if self.alley_rat:
+            if has_warnings and not self._has_warnings:
+                # New warning appeared - activate rat
+                self.alley_rat.activate()
+            elif not has_warnings and self._has_warnings:
+                # Warnings cleared - deactivate rat
+                self.alley_rat.deactivate()
+            self.alley_rat.update()
+
+        # Update shadow state (for threats)
+        if self.lurking_shadow:
+            if has_threats and not self._has_threats:
+                # New threat detected - activate shadow
+                self.lurking_shadow.activate()
+            elif not has_threats and self._has_threats:
+                # Threats cleared - deactivate shadow
+                self.lurking_shadow.deactivate()
+            self.lurking_shadow.update()
+
+        self._has_warnings = has_warnings
+        self._has_threats = has_threats
 
     def _render_lightning(self):
         """Render the lightning bolt with flicker effect."""
@@ -1672,6 +2051,12 @@ class Dashboard:
         # Render matrix rain on top of alley
         if self.matrix_mode and self.matrix_rain:
             self.matrix_rain.render(self.screen)
+
+            # Render creatures (between rain and UI)
+            if self.alley_rat:
+                self.alley_rat.render(self.screen)
+            if self.lurking_shadow:
+                self.lurking_shadow.render(self.screen)
 
             # Render lightning bolt if active
             if self._lightning_active and self._lightning_bolt:
@@ -1914,7 +2299,16 @@ class Dashboard:
     def _draw_footer(self):
         """Draw the footer bar."""
         shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
-        footer = f" {shortcuts} ".ljust(self.width - 1)
+
+        # In demo mode, show connection hint
+        if self.client.is_demo_mode():
+            if sys.platform == 'win32':
+                hint = " | Demo: Start daemon or check port 19847"
+            else:
+                hint = " | Demo: Start daemon (./api/boundary.sock)"
+            footer = f" {shortcuts}{hint} ".ljust(self.width - 1)
+        else:
+            footer = f" {shortcuts} ".ljust(self.width - 1)
 
         row = self.height - 1
         self.screen.attron(curses.color_pair(Colors.MUTED))
