@@ -7386,6 +7386,34 @@ class Dashboard:
             ],
             'subcommands': [],
         },
+        'checklogs': {
+            'desc': 'AI analysis of daemon logs',
+            'usage': 'checklogs [--last N]',
+            'help': [
+                "CHECKLOGS - AI-Powered Log Analysis",
+                "=" * 50,
+                "",
+                "Sends daemon logs to Ollama for intelligent analysis.",
+                "Identifies issues, security concerns, and recommendations.",
+                "",
+                "USAGE:",
+                "  checklogs           - Analyze last 50 events",
+                "  checklogs --last N  - Analyze last N events",
+                "",
+                "ANALYSIS INCLUDES:",
+                "  - Security violations and threats",
+                "  - Mode changes and ceremonies",
+                "  - Rate limiting events",
+                "  - PII detection incidents",
+                "  - System health issues",
+                "  - Recommended actions",
+                "",
+                "REQUIRES:",
+                "  - Ollama running locally (ollama serve)",
+                "  - llama3.2 or compatible model",
+            ],
+            'subcommands': [],
+        },
         'clear': {
             'desc': 'Clear CLI results',
             'usage': 'clear',
@@ -7464,6 +7492,130 @@ If the user asks about daemon commands, remind them to use /command syntax (e.g.
                 return ["ERROR: No response from Ollama"]
         except Exception as e:
             return [f"ERROR: Ollama error: {e}"]
+
+    def _analyze_logs_with_ollama(self, num_events: int = 50) -> List[str]:
+        """Analyze daemon logs using Ollama and return analysis lines."""
+        if not self._ollama_client:
+            return ["ERROR: Ollama not available. Start with: ollama serve"]
+
+        if not self._ollama_client.is_available():
+            return ["ERROR: Ollama not running. Start with: ollama serve"]
+
+        lines = ["", "ANALYZING LOGS WITH OLLAMA...", "=" * 50, ""]
+
+        # Gather system information
+        try:
+            status = self.client.get_status()
+            events = self.client.get_events(limit=num_events)
+            alerts = self.client.get_alerts()
+        except Exception as e:
+            return [f"ERROR: Failed to fetch daemon data: {e}"]
+
+        # Build comprehensive log data for Ollama
+        log_data = []
+
+        # Add daemon status
+        log_data.append("=== DAEMON STATUS ===")
+        log_data.append(f"Mode: {status.get('mode', 'unknown')}")
+        log_data.append(f"State: {status.get('state', 'unknown')}")
+        log_data.append(f"Uptime: {status.get('uptime', 'unknown')}")
+        log_data.append(f"Active Sandboxes: {status.get('sandboxes', {}).get('active', 0)}")
+        log_data.append("")
+
+        # Add active alerts
+        log_data.append("=== ACTIVE ALERTS ===")
+        if alerts:
+            for alert in alerts:
+                log_data.append(f"[{alert.severity}] {alert.message}")
+                log_data.append(f"  Time: {alert.time_str}")
+        else:
+            log_data.append("No active alerts")
+        log_data.append("")
+
+        # Add recent events with full details
+        log_data.append(f"=== RECENT EVENTS (last {len(events)}) ===")
+        event_type_counts = {}
+        for event in events:
+            event_type_counts[event.event_type] = event_type_counts.get(event.event_type, 0) + 1
+            log_data.append(f"[{event.time_short}] {event.event_type}: {event.details[:100]}")
+
+        log_data.append("")
+        log_data.append("=== EVENT TYPE SUMMARY ===")
+        for etype, count in sorted(event_type_counts.items(), key=lambda x: -x[1]):
+            log_data.append(f"  {etype}: {count}")
+
+        # Comprehensive system prompt for log analysis
+        system_prompt = """You are a security analyst AI integrated into the Boundary Daemon system.
+Your job is to analyze security logs and provide actionable insights.
+
+BOUNDARY DAEMON CONTEXT:
+- Boundary Daemon is a security monitoring system for AI agents and system operations
+- It enforces operation modes: OPEN (permissive), RESTRICTED (limited), LOCKDOWN (emergency)
+- It monitors for security violations, PII leakage, rate limiting, and suspicious activity
+- Mode changes require cryptographic ceremonies for security
+
+EVENT TYPES TO WATCH FOR:
+- VIOLATION: Security policy violations - HIGH PRIORITY
+- MODE_CHANGE: Operation mode transitions - important for security posture
+- RATE_LIMIT_*: Rate limiting events - may indicate abuse or attacks
+- PII_DETECTED/BLOCKED/REDACTED: Privacy incidents
+- CLOCK_JUMP/DRIFT: Time manipulation (potential tampering)
+- ALERT: System alerts requiring attention
+- SECURITY_SCAN: Antivirus/malware scan results
+
+SEVERITY ASSESSMENT:
+- CRITICAL: Immediate action required (violations, lockdowns, tampering)
+- HIGH: Security concern requiring investigation
+- MEDIUM: Notable event to monitor
+- LOW: Informational
+
+Analyze the logs and provide:
+1. SUMMARY: Overall system health assessment (1-2 sentences)
+2. ISSUES FOUND: List specific problems with severity
+3. SECURITY CONCERNS: Any security-related findings
+4. RECOMMENDATIONS: Actionable next steps
+
+Keep response concise and terminal-friendly (max 20 lines)."""
+
+        prompt = f"""Analyze these Boundary Daemon security logs and tell me if there are any issues with my system:
+
+{chr(10).join(log_data)}
+
+Provide a clear, actionable analysis."""
+
+        try:
+            lines.append("Sending to Ollama for analysis...")
+            lines.append("")
+
+            response = self._ollama_client.generate(prompt, system=system_prompt)
+
+            if response:
+                lines.append("ANALYSIS RESULTS:")
+                lines.append("-" * 40)
+                # Word wrap response for terminal
+                for paragraph in response.split('\n'):
+                    if not paragraph.strip():
+                        lines.append("")
+                        continue
+                    words = paragraph.split()
+                    current_line = ""
+                    for word in words:
+                        if len(current_line) + len(word) + 1 > self.width - 4:
+                            lines.append(current_line)
+                            current_line = word
+                        else:
+                            current_line += (" " if current_line else "") + word
+                    if current_line:
+                        lines.append(current_line)
+                lines.append("")
+                lines.append("-" * 40)
+                lines.append(f"Analyzed {len(events)} events, {len(alerts)} alerts")
+            else:
+                lines.append("ERROR: No response from Ollama")
+        except Exception as e:
+            lines.append(f"ERROR: Analysis failed: {e}")
+
+        return lines
 
     def _start_cli(self):
         """Start CLI mode for running commands and chatting with Ollama."""
@@ -7769,6 +7921,20 @@ If the user asks about daemon commands, remind them to use /command syntax (e.g.
 
             elif command == 'clear':
                 self._cli_results = ["Results cleared."]
+
+            elif command == 'checklogs':
+                # Parse --last N argument
+                num_events = 50  # Default
+                if args:
+                    parts = args.split()
+                    for i, part in enumerate(parts):
+                        if part == '--last' and i + 1 < len(parts):
+                            try:
+                                num_events = int(parts[i + 1])
+                                num_events = min(max(num_events, 10), 200)  # Clamp 10-200
+                            except ValueError:
+                                pass
+                self._cli_results = self._analyze_logs_with_ollama(num_events)
 
             elif command == 'status':
                 status = self.client.get_status()
