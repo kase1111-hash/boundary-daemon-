@@ -1098,28 +1098,39 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
-    # Big shell logo for Shell Cafe roof
+    # Vanishing point roof + flatter shell logo for Shell Cafe
     BIG_SHELL_LOGO = [
-        "      .------.",
-        "    /          \\",
-        "   /    .--.    \\",
-        "  |    /    \\    |",
-        "  |   | (()) |   |",
-        "  |    \\    /    |",
-        "   \\    '--'    /",
-        "    \\          /",
-        "      '------'",
+        "             /\\             ",
+        "            /  \\            ",
+        "           /    \\           ",
+        "          /      \\          ",
+        "         /________\\         ",
+        "    ___.'----------'.___    ",
+        "   /   /            \\   \\   ",
+        "  |   (    (@@)      )   |  ",
+        "  |    \\            /    |  ",
+        "   \\____'----------'____/   ",
+    ]
+
+    # Turtle head animation frames (peeks out from shell)
+    TURTLE_HEAD_FRAMES = [
+        "  @__@  ",   # Normal eyes
+        "  @~_@  ",   # Left wink
+        "  @_~@  ",   # Right wink
+        "  ^__^  ",   # Happy
     ]
 
     CAFE = [
-        "      .------.      ",
-        "    /          \\    ",
-        "   /    .--.    \\   ",
-        "  |    /    \\    |  ",
-        "  |   | (()) |   |  ",
-        "  |    \\    /    |  ",
-        "   \\    '--'    /   ",
-        "    \\__________/    ",
+        "             /\\             ",
+        "            /  \\            ",
+        "           /    \\           ",
+        "          /      \\          ",
+        "         /________\\         ",
+        "    ___.'----------'.___    ",
+        "   /   /            \\   \\   ",
+        "  |   (    (@@)      )   |  ",
+        "  |    \\            /    |  ",
+        "   \\____'----------'____/   ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -1706,6 +1717,14 @@ class AlleyScene:
             {'x_offset': 12.0, 'direction': 1, 'arm_frame': 0, 'move_timer': 60, 'arm_timer': 45},
         ]
         self._cafe_people_timer = 0
+        # Turtle head animation (peeks out of shell and winks)
+        self._turtle_active = False
+        self._turtle_frame = 0  # 0=normal, 1=left wink, 2=right wink, 3=happy
+        self._turtle_timer = 0
+        self._turtle_cooldown = random.randint(300, 600)  # 5-10 seconds at 60fps
+        self._turtle_visible_duration = 0
+        self._turtle_side = 1  # 1=right side, -1=left side
+        self._turtle_state = 'hidden'  # hidden, peeking, winking, retreating
         # Manholes and drains with occasional steam
         self._manhole_positions: List[Tuple[int, int]] = []  # (x, y)
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
@@ -2636,13 +2655,13 @@ class AlleyScene:
                             except curses.error:
                                 pass
 
-        # Find the SHELL CAFE text in the sprite (row 9 after shell roof)
-        if len(self.CAFE) > 9:
-            sign_row = self.CAFE[9]  # "  |     S H E L L  C A F E   |  "
+        # Find the SHELL CAFE text in the sprite (row 11 after vanishing roof + shell)
+        if len(self.CAFE) > 11:
+            sign_row = self.CAFE[11]  # "  |     S H E L L  C A F E   |  "
             for col_idx, char in enumerate(sign_row):
                 if char in 'SHELLCAFE':
                     px = cafe_x + col_idx
-                    py = cafe_y + 9
+                    py = cafe_y + 11
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             # Green bold for SHELL CAFE
@@ -2653,9 +2672,9 @@ class AlleyScene:
                         except curses.error:
                             pass
 
-        # Find and animate the OPEN sign (row 22 in CAFE sprite, after shell roof added 8 rows)
-        if len(self.CAFE) > 22:
-            open_row = self.CAFE[22]  # "  |[                  OPEN ]|  "
+        # Find and animate the OPEN sign (row 24 in CAFE sprite, after vanishing roof + shell)
+        if len(self.CAFE) > 24:
+            open_row = self.CAFE[24]  # "  |[                  OPEN ]|  "
             open_start = open_row.find('OPEN')
             if open_start != -1:
                 # Determine which letters are lit based on phase
@@ -2663,7 +2682,7 @@ class AlleyScene:
                 letters = ['O', 'P', 'E', 'N']
                 for i, letter in enumerate(letters):
                     px = cafe_x + open_start + i
-                    py = cafe_y + 22
+                    py = cafe_y + 24
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             if self._open_sign_phase == 0:
@@ -3006,7 +3025,7 @@ class AlleyScene:
 
         # Calculate cafe position first (shifted 11 chars left)
         self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 28  # 10 more left (was -18)
-        self.cafe_y = ground_y - len(self.CAFE) - 1  # Moved up 2 rows
+        self.cafe_y = ground_y - len(self.CAFE) - 3  # Moved up 4 rows total (2 more)
 
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
@@ -3526,6 +3545,9 @@ class AlleyScene:
         # Update cafe people in Shell Cafe
         self._update_cafe_people()
 
+        # Update turtle head animation
+        self._update_turtle()
+
         # Update clouds
         self._update_clouds()
 
@@ -3839,6 +3861,49 @@ class AlleyScene:
                 person['arm_timer'] = 0
                 person['arm_frame'] = (person['arm_frame'] + 1) % 4
 
+    def _update_turtle(self):
+        """Update turtle head animation - peeks out of shell and winks."""
+        self._turtle_timer += 1
+
+        if self._turtle_state == 'hidden':
+            # Wait for cooldown then peek out
+            if self._turtle_timer >= self._turtle_cooldown:
+                self._turtle_state = 'peeking'
+                self._turtle_timer = 0
+                self._turtle_frame = 0  # Normal eyes
+                self._turtle_side = random.choice([1, -1])  # Random side
+                self._turtle_visible_duration = random.randint(180, 360)  # 3-6 seconds
+
+        elif self._turtle_state == 'peeking':
+            # Stay visible, occasionally wink
+            if self._turtle_timer >= 30:  # Every 0.5 seconds
+                self._turtle_timer = 0
+                # 30% chance to wink
+                if random.random() < 0.3:
+                    self._turtle_state = 'winking'
+                    self._turtle_frame = random.choice([1, 2])  # Left or right wink
+                else:
+                    self._turtle_frame = random.choice([0, 0, 0, 3])  # Mostly normal, sometimes happy
+            # Check if should retreat
+            self._turtle_visible_duration -= 1
+            if self._turtle_visible_duration <= 0:
+                self._turtle_state = 'retreating'
+                self._turtle_timer = 0
+
+        elif self._turtle_state == 'winking':
+            # Brief wink then back to peeking
+            if self._turtle_timer >= 15:  # 0.25 second wink
+                self._turtle_state = 'peeking'
+                self._turtle_timer = 0
+                self._turtle_frame = 0
+
+        elif self._turtle_state == 'retreating':
+            # Go back to hidden
+            if self._turtle_timer >= 20:
+                self._turtle_state = 'hidden'
+                self._turtle_timer = 0
+                self._turtle_cooldown = random.randint(300, 900)  # 5-15 seconds
+
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
         """Get the current light colors for both directions.
@@ -4096,6 +4161,9 @@ class AlleyScene:
 
         # Render cafe sign (green SHELL CAFE and animated OPEN sign)
         self._render_cafe_sign(screen)
+
+        # Render turtle head peeking from shell
+        self._render_turtle(screen)
 
         # Render window frames on top of window people (so people appear inside)
         self._render_window_frames(screen)
@@ -4802,11 +4870,11 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # First floor door area is at rows 22-23 of CAFE sprite (0-indexed)
-        # Row 22: "[                  OPEN ]" - visible through door glass
-        # Row 23: "[__________________     ]" - lower door area
-        window_row = 22  # Row with people heads (door glass area)
-        body_row = 23    # Row with bodies/arms
+        # First floor door area is at rows 24-25 of CAFE sprite (0-indexed)
+        # Row 24: "[                  OPEN ]" - visible through door glass
+        # Row 25: "[__________________     ]" - lower door area
+        window_row = 24  # Row with people heads (door glass area)
+        body_row = 25    # Row with bodies/arms
         window_start_col = 4  # Start of door glass content area
 
         # Arm animation frames (both arms shown)
@@ -4844,6 +4912,40 @@ class AlleyScene:
                 screen.attroff(attr)
             except curses.error:
                 pass
+
+    def _render_turtle(self, screen):
+        """Render turtle head peeking out of shell and winking."""
+        if self._turtle_state == 'hidden':
+            return
+
+        if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
+            return
+
+        # Turtle peeks out at row 7 of CAFE (middle of shell)
+        # Shell spans roughly columns 2-26 of CAFE sprite
+        shell_row = 7
+        turtle_y = self.cafe_y + shell_row
+
+        # Position based on which side turtle peeks from
+        if self._turtle_side == 1:  # Right side
+            turtle_x = self.cafe_x + 25  # Right edge of shell
+        else:  # Left side
+            turtle_x = self.cafe_x - 1  # Left edge of shell
+
+        # Get the current turtle head frame
+        head = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
+
+        if not (0 <= turtle_x < self.width - len(head) and 0 <= turtle_y < self.height):
+            return
+
+        try:
+            # Draw turtle head in green (like shell logo)
+            attr = curses.color_pair(Colors.STATUS_OK) | curses.A_BOLD
+            screen.attron(attr)
+            screen.addstr(turtle_y, turtle_x, head)
+            screen.attroff(attr)
+        except curses.error:
+            pass
 
     def _render_traffic_light(self, screen):
         """Render the traffic light with current light states."""
