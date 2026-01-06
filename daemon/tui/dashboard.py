@@ -1098,18 +1098,15 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
-    # Vanishing point roof + flatter shell logo for Shell Cafe
+    # Turtle shell logo for Shell Cafe (hexagonal pattern)
     BIG_SHELL_LOGO = [
-        "             /\\             ",
-        "            /  \\            ",
-        "           /    \\           ",
-        "          /      \\          ",
-        "         /________\\         ",
-        "    ___.'----------'.___    ",
-        "   /   /            \\   \\   ",
-        "  |   (    (@@)      )   |  ",
-        "  |    \\            /    |  ",
-        "   \\____'----------'____/   ",
+        "      ___________      ",
+        "    /`    |    `\\    ",
+        "   / \\ __|__ / \\ \\   ",
+        "  |   \\/   \\/   \\ |  ",
+        "  |   /\\___/\\   / |  ",
+        "   \\ /  | |  \\ /  /   ",
+        "    \\___|_|___/      ",
     ]
 
     # Turtle head animation frames (peeks out from shell)
@@ -1121,16 +1118,13 @@ class AlleyScene:
     ]
 
     CAFE = [
-        "             /\\             ",
-        "            /  \\            ",
-        "           /    \\           ",
-        "          /      \\          ",
-        "         /________\\         ",
-        "    ___.'----------'.___    ",
-        "   /   /            \\   \\   ",
-        "  |   (    (@@)      )   |  ",
-        "  |    \\            /    |  ",
-        "   \\____'----------'____/   ",
+        "      ___________      ",
+        "    /`    |    `\\    ",
+        "   / \\ __|__ / \\ \\   ",
+        "  |   \\/   \\/   \\ |  ",
+        "  |   /\\___/\\   / |  ",
+        "   \\ /  | |  \\ /  /   ",
+        "    \\___|_|___/      ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -1529,6 +1523,47 @@ class AlleyScene:
         PERSON_SKIRT_LEFT_FRAMES,
     ]
 
+    # Skin tone colors for diversity
+    SKIN_TONES = [
+        Colors.ALLEY_LIGHT,     # Light skin
+        Colors.RAT_YELLOW,      # Tan/olive
+        Colors.BOX_BROWN,       # Brown
+        Colors.ALLEY_MID,       # Medium brown
+        Colors.GREY_BLOCK,      # Dark
+    ]
+
+    # Clothing colors for variety
+    CLOTHING_COLORS = [
+        Colors.SHADOW_RED,      # Red
+        Colors.ALLEY_BLUE,      # Blue
+        Colors.MATRIX_DIM,      # Green
+        Colors.RAT_YELLOW,      # Yellow
+        Colors.GREY_BLOCK,      # Grey
+        Colors.ALLEY_MID,       # Brown
+        Colors.STATUS_OK,       # Bright green
+        Colors.ALLEY_LIGHT,     # White
+    ]
+
+    # Knocked out person sprite (lying on ground)
+    KNOCKED_OUT_SPRITE = ["___o___"]
+
+    # Ambulance sprite (4 rows, wider)
+    AMBULANCE_RIGHT = [
+        "  ___+___________  ",
+        " |  ░░░ AMBULANCE| ",
+        " |_░░░___________|_",
+        " (O)-----------(O) ",
+    ]
+    AMBULANCE_LEFT = [
+        "  ___________+___  ",
+        " |AMBULANCE ░░░  | ",
+        "_|___________░░░_| ",
+        " (O)-----------(O) ",
+    ]
+
+    # Paramedic sprite (small, kneeling)
+    PARAMEDIC_SPRITE = [" o ", "/|>", " A "]
+
     # ==========================================
     # WOMAN IN RED EVENT - Matrix iconic scene
     # ==========================================
@@ -1817,6 +1852,13 @@ class AlleyScene:
         # Pedestrians on the street
         self._pedestrians: List[Dict] = []
         self._pedestrian_spawn_timer = 0
+        # Knocked out pedestrians from lightning
+        self._knocked_out_peds: List[Dict] = []  # {x, y, timer, skin_color, clothing_color}
+        # Ambulance for revival
+        self._ambulance: Dict = None  # {x, direction, state, target_ped, paramedic_x}
+        self._ambulance_cooldown = 0
+        # Lightning strike position for knockout detection
+        self._last_lightning_x = -1
         # Street light flicker effect
         self._street_light_positions: List[Tuple[int, int]] = []
         self._street_light_flicker = [1.0, 1.0]  # Brightness per light (0-1)
@@ -1895,7 +1937,9 @@ class AlleyScene:
         self._transform_frame = 0
         self._frame_timer = 0
         # Meteor QTE event - quick time event
-        self._qte_enabled = True  # Toggle for QTE events
+        self._qte_enabled = False  # Toggle for QTE events (off by default)
+        self._qte_pending_activation = False  # Waiting for delayed activation
+        self._qte_activation_time = 0.0  # When to activate QTE
         self._qte_active = False
         self._qte_state = 'idle'  # idle, warning, active, success, failure, cooldown
         self._qte_timer = 0
@@ -2789,13 +2833,13 @@ class AlleyScene:
                             except curses.error:
                                 pass
 
-        # Find the SHELL CAFE text in the sprite (row 11 after vanishing roof + shell)
-        if len(self.CAFE) > 11:
-            sign_row = self.CAFE[11]  # "  |     S H E L L  C A F E   |  "
+        # Find the SHELL CAFE text in the sprite (row 8 after turtle shell)
+        if len(self.CAFE) > 8:
+            sign_row = self.CAFE[8]  # "  |     S H E L L  C A F E   |  "
             for col_idx, char in enumerate(sign_row):
                 if char in 'SHELLCAFE':
                     px = cafe_x + col_idx
-                    py = cafe_y + 11
+                    py = cafe_y + 8
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             # Green bold for SHELL CAFE
@@ -2806,9 +2850,9 @@ class AlleyScene:
                         except curses.error:
                             pass
 
-        # Find and animate the OPEN sign (row 24 in CAFE sprite, after vanishing roof + shell)
-        if len(self.CAFE) > 24:
-            open_row = self.CAFE[24]  # "  |[                  OPEN ]|  "
+        # Find and animate the OPEN sign (row 21 in CAFE sprite, after turtle shell)
+        if len(self.CAFE) > 21:
+            open_row = self.CAFE[21]  # "  |[                  OPEN ]|  "
             open_start = open_row.find('OPEN')
             if open_start != -1:
                 # Determine which letters are lit based on phase
@@ -2816,7 +2860,7 @@ class AlleyScene:
                 letters = ['O', 'P', 'E', 'N']
                 for i, letter in enumerate(letters):
                     px = cafe_x + open_start + i
-                    py = cafe_y + 24
+                    py = cafe_y + 21
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             if self._open_sign_phase == 0:
@@ -3164,9 +3208,9 @@ class AlleyScene:
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
-        # Draw crosswalk between cafe and right building
+        # Draw crosswalk between cafe and right building (shifted right 10 chars)
         cafe_right = self.cafe_x + len(self.CAFE[0])
-        self._crosswalk_x = cafe_right + 1
+        self._crosswalk_x = cafe_right + 11  # +10 to move vanishing street right
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
@@ -3615,10 +3659,11 @@ class AlleyScene:
             line1, line2 = self.SEMI_LAYOUTS[layout_idx](company)
 
         # Build sprite from base template
-        if direction == 1:  # Going right
-            base = self.SEMI_RIGHT_BASE
-        else:  # Going left
+        # Note: Sprite shows which way truck FACES - cab must lead when moving
+        if direction == 1:  # Going right - cab on right leads
             base = self.SEMI_LEFT_BASE
+        else:  # Going left - cab on left leads
+            base = self.SEMI_RIGHT_BASE
 
         sprite = []
         for row in base:
@@ -3877,6 +3922,9 @@ class AlleyScene:
         # Update pedestrians
         self._update_pedestrians()
 
+        # Update knocked out pedestrians and ambulance
+        self._update_knocked_out_and_ambulance()
+
         # Update street light flicker
         self._update_street_light_flicker()
 
@@ -3989,30 +4037,53 @@ class AlleyScene:
                     self._closeup_car = None  # Done, remove car
 
     def _spawn_pedestrian(self):
-        """Spawn a new pedestrian on the sidewalk with random accessories."""
+        """Spawn a new pedestrian on the sidewalk with random accessories, colors, and spacing."""
+        # Check spacing - don't spawn if too close to existing pedestrians
+        min_spacing = 8  # Minimum 8 chars between pedestrians
+        direction = 1 if random.random() < 0.5 else -1
+
+        if direction == 1:
+            spawn_x = -5.0
+            # Check for pedestrians near spawn point
+            for ped in self._pedestrians:
+                if ped['direction'] == 1 and abs(ped['x'] - spawn_x) < min_spacing:
+                    return  # Too close, skip spawn
+        else:
+            spawn_x = float(self.width + 2)
+            for ped in self._pedestrians:
+                if ped['direction'] == -1 and abs(ped['x'] - spawn_x) < min_spacing:
+                    return  # Too close, skip spawn
+
         # Randomly choose person type (basic, hat, briefcase, skirt)
         person_type_idx = random.randint(0, len(self.PERSON_TYPES_RIGHT) - 1)
 
-        # Randomly choose direction
-        if random.random() < 0.5:
+        # Randomly choose skin tone and clothing color for diversity
+        skin_color = random.choice(self.SKIN_TONES)
+        clothing_color = random.choice(self.CLOTHING_COLORS)
+
+        if direction == 1:
             # Pedestrian going right (spawn on left)
             self._pedestrians.append({
-                'x': -5.0,
+                'x': spawn_x,
                 'direction': 1,
                 'speed': random.uniform(0.3, 0.6),  # Slower than cars
                 'frames': self.PERSON_TYPES_RIGHT[person_type_idx],
                 'frame_idx': 0,
                 'frame_timer': 0,
+                'skin_color': skin_color,
+                'clothing_color': clothing_color,
             })
         else:
             # Pedestrian going left (spawn on right)
             self._pedestrians.append({
-                'x': float(self.width + 2),
+                'x': spawn_x,
                 'direction': -1,
                 'speed': random.uniform(0.3, 0.6),
                 'frames': self.PERSON_TYPES_LEFT[person_type_idx],
                 'frame_idx': 0,
                 'frame_timer': 0,
+                'skin_color': skin_color,
+                'clothing_color': clothing_color,
             })
 
     def _update_pedestrians(self):
@@ -4020,11 +4091,19 @@ class AlleyScene:
         # Check if meteor event is active - pedestrians should panic
         meteor_active = self._qte_active and self._qte_state == 'active'
 
-        # Spawn new pedestrians frequently
+        # Check if woman in red scene is active - don't spawn during it
+        woman_red_active = self._woman_red_active and self._woman_red_state not in ['idle', 'cooldown']
+
+        # Spawn new pedestrians frequently (more pedestrians now)
         self._pedestrian_spawn_timer += 1
-        spawn_interval = random.randint(8, 25)  # Spawn faster for more people
+        spawn_interval = random.randint(5, 15)  # Spawn faster for more people
         if self._pedestrian_spawn_timer >= spawn_interval:
-            max_peds = 6 if meteor_active else 18  # Fewer during meteor (they're running away)
+            if woman_red_active:
+                max_peds = 3  # Very few during Matrix scene
+            elif meteor_active:
+                max_peds = 6  # Fewer during meteor (they're running away)
+            else:
+                max_peds = 25  # Increased from 18 to 25 pedestrians
             if len(self._pedestrians) < max_peds:
                 self._spawn_pedestrian()
             self._pedestrian_spawn_timer = 0
@@ -4081,6 +4160,136 @@ class AlleyScene:
                 new_pedestrians.append(ped)
 
         self._pedestrians = new_pedestrians
+
+    def check_lightning_knockout(self, lightning_x: int):
+        """Check if lightning struck near any pedestrians and knock them out."""
+        self._last_lightning_x = lightning_x
+        curb_y = self.height - 4  # Where pedestrians walk
+
+        # Check each pedestrian for proximity to lightning
+        knocked_out = []
+        remaining = []
+        for ped in self._pedestrians:
+            ped_x = int(ped['x'])
+            # If lightning is within 5 chars of pedestrian, knock them out
+            if abs(ped_x - lightning_x) < 6:
+                # Knock out this pedestrian
+                knocked_out.append({
+                    'x': ped_x,
+                    'y': curb_y,
+                    'timer': 0,
+                    'skin_color': ped.get('skin_color', Colors.ALLEY_LIGHT),
+                    'clothing_color': ped.get('clothing_color', Colors.ALLEY_MID),
+                    'reviving': False,
+                })
+            else:
+                remaining.append(ped)
+
+        self._pedestrians = remaining
+        self._knocked_out_peds.extend(knocked_out)
+
+    def _update_knocked_out_and_ambulance(self):
+        """Update knocked out pedestrians and ambulance revival system."""
+        # Handle knocked out pedestrians
+        for ko_ped in self._knocked_out_peds:
+            ko_ped['timer'] += 1
+
+        # Spawn ambulance if there are knocked out peds and no active ambulance
+        if self._knocked_out_peds and self._ambulance is None and self._ambulance_cooldown <= 0:
+            # Find the first knocked out ped to help
+            target = self._knocked_out_peds[0]
+            # Ambulance comes from whichever side is closer
+            if target['x'] < self.width // 2:
+                spawn_x = self.width + 25
+                direction = -1
+            else:
+                spawn_x = -25
+                direction = 1
+
+            self._ambulance = {
+                'x': float(spawn_x),
+                'direction': direction,
+                'state': 'arriving',  # arriving, stopped, paramedic_out, reviving, paramedic_return, leaving
+                'target_ped': target,
+                'paramedic_x': 0.0,
+                'timer': 0,
+            }
+
+        # Update ambulance cooldown
+        if self._ambulance_cooldown > 0:
+            self._ambulance_cooldown -= 1
+
+        # Update ambulance state machine
+        if self._ambulance:
+            amb = self._ambulance
+            amb['timer'] += 1
+
+            if amb['state'] == 'arriving':
+                # Drive towards the knocked out pedestrian
+                amb['x'] += amb['direction'] * 0.8
+                target_x = amb['target_ped']['x']
+                # Stop when close to the target
+                if abs(amb['x'] - target_x) < 12:
+                    amb['state'] = 'stopped'
+                    amb['timer'] = 0
+
+            elif amb['state'] == 'stopped':
+                # Wait briefly then send out paramedic
+                if amb['timer'] > 30:
+                    amb['state'] = 'paramedic_out'
+                    amb['timer'] = 0
+                    # Paramedic starts at ambulance position
+                    if amb['direction'] == 1:
+                        amb['paramedic_x'] = amb['x'] + 10  # Right side of ambulance
+                    else:
+                        amb['paramedic_x'] = amb['x'] - 2  # Left side of ambulance
+
+            elif amb['state'] == 'paramedic_out':
+                # Paramedic walks to victim
+                target_x = amb['target_ped']['x']
+                if abs(amb['paramedic_x'] - target_x) > 2:
+                    # Walk towards victim
+                    if amb['paramedic_x'] < target_x:
+                        amb['paramedic_x'] += 0.5
+                    else:
+                        amb['paramedic_x'] -= 0.5
+                else:
+                    amb['state'] = 'reviving'
+                    amb['timer'] = 0
+                    amb['target_ped']['reviving'] = True
+
+            elif amb['state'] == 'reviving':
+                # Reviving takes time
+                if amb['timer'] > 90:  # 1.5 seconds
+                    # Remove the knocked out ped from list
+                    if amb['target_ped'] in self._knocked_out_peds:
+                        self._knocked_out_peds.remove(amb['target_ped'])
+                    amb['state'] = 'paramedic_return'
+                    amb['timer'] = 0
+
+            elif amb['state'] == 'paramedic_return':
+                # Paramedic walks back to ambulance
+                if amb['direction'] == 1:
+                    target_x = amb['x'] + 10
+                else:
+                    target_x = amb['x'] - 2
+
+                if abs(amb['paramedic_x'] - target_x) > 1:
+                    if amb['paramedic_x'] < target_x:
+                        amb['paramedic_x'] += 0.5
+                    else:
+                        amb['paramedic_x'] -= 0.5
+                else:
+                    amb['state'] = 'leaving'
+                    amb['timer'] = 0
+
+            elif amb['state'] == 'leaving':
+                # Ambulance drives away
+                amb['x'] += amb['direction'] * 1.0
+                # Remove when off screen
+                if amb['x'] < -30 or amb['x'] > self.width + 30:
+                    self._ambulance = None
+                    self._ambulance_cooldown = 120  # 2 second cooldown before next ambulance
 
     def _update_street_light_flicker(self):
         """Update street light flicker effect."""
@@ -4584,6 +4793,10 @@ class AlleyScene:
         # Render pedestrians on the sidewalk
         self._render_pedestrians(screen)
 
+        # Render knocked out pedestrians and ambulance
+        self._render_knocked_out_peds(screen)
+        self._render_ambulance(screen)
+
         # Render Woman in Red event (on top of regular pedestrians)
         self._render_woman_red(screen)
 
@@ -5042,6 +5255,9 @@ class AlleyScene:
                 continue
 
             sprite_height = len(sprite)
+            # Get colors for this pedestrian
+            skin_color = ped.get('skin_color', Colors.ALLEY_LIGHT)
+            clothing_color = ped.get('clothing_color', Colors.ALLEY_MID)
 
             for row_idx, row in enumerate(sprite):
                 for col_idx, char in enumerate(row):
@@ -5051,8 +5267,97 @@ class AlleyScene:
 
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
-                            # Pedestrians in muted color
-                            attr = curses.color_pair(Colors.ALLEY_MID)
+                            # Row 0 = head (skin tone), row 1-2 = body (clothing), row 3 = legs
+                            if row_idx == 0:  # Head row - use skin tone
+                                color = skin_color
+                            elif row_idx in [1, 2]:  # Body rows - use clothing color
+                                color = clothing_color
+                            else:  # Legs - darker
+                                color = Colors.GREY_BLOCK
+                            attr = curses.color_pair(color)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_knocked_out_peds(self, screen):
+        """Render knocked out pedestrians lying on the ground."""
+        curb_y = self.height - 4
+
+        for ko_ped in self._knocked_out_peds:
+            x = int(ko_ped['x'])
+            y = curb_y
+
+            sprite = self.KNOCKED_OUT_SPRITE[0]
+            skin_color = ko_ped.get('skin_color', Colors.ALLEY_LIGHT)
+
+            for col_idx, char in enumerate(sprite):
+                px = x + col_idx - 3  # Center the sprite
+                if 0 <= px < self.width - 1 and 0 <= y < self.height and char != ' ':
+                    try:
+                        # Use flashing color if being revived
+                        if ko_ped.get('reviving', False) and ko_ped['timer'] % 10 < 5:
+                            color = Colors.STATUS_OK
+                        else:
+                            color = skin_color
+                        attr = curses.color_pair(color)
+                        screen.attron(attr)
+                        screen.addstr(y, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+    def _render_ambulance(self, screen):
+        """Render ambulance and paramedic."""
+        if not self._ambulance:
+            return
+
+        amb = self._ambulance
+        x = int(amb['x'])
+        curb_y = self.height - 4
+        y = curb_y - 3  # Ambulance is 4 rows tall
+
+        # Choose sprite based on direction
+        if amb['direction'] == 1:
+            sprite = self.AMBULANCE_RIGHT
+        else:
+            sprite = self.AMBULANCE_LEFT
+
+        # Render ambulance
+        for row_idx, row in enumerate(sprite):
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                py = y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        # Red cross, white body
+                        if char == '+':
+                            color = Colors.SHADOW_RED
+                        elif char in ['░', 'O']:
+                            color = Colors.ALLEY_LIGHT
+                        else:
+                            color = Colors.GREY_BLOCK
+                        attr = curses.color_pair(color)
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Render paramedic if out of ambulance
+        if amb['state'] in ['paramedic_out', 'reviving', 'paramedic_return']:
+            para_x = int(amb['paramedic_x'])
+            para_y = curb_y - 2  # Paramedic is 3 rows
+            for row_idx, row in enumerate(self.PARAMEDIC_SPRITE):
+                for col_idx, char in enumerate(row):
+                    px = para_x + col_idx
+                    py = para_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            # Green uniform
+                            color = Colors.STATUS_OK
+                            attr = curses.color_pair(color)
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
@@ -5265,11 +5570,11 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # First floor door area is at rows 24-25 of CAFE sprite (0-indexed)
-        # Row 24: "[                  OPEN ]" - visible through door glass
-        # Row 25: "[__________________     ]" - lower door area
-        window_row = 24  # Row with people heads (door glass area)
-        body_row = 25    # Row with bodies/arms
+        # First floor door area is at rows 21-22 of CAFE sprite (0-indexed, after turtle shell)
+        # Row 21: "[                  OPEN ]" - visible through door glass
+        # Row 22: "[__________________     ]" - lower door area
+        window_row = 21  # Row with people heads (door glass area)
+        body_row = 22    # Row with bodies/arms
         window_start_col = 4  # Start of door glass content area
 
         # Arm animation frames (both arms shown)
@@ -5316,9 +5621,9 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # Turtle peeks out at row 7 of CAFE (middle of shell)
-        # Shell spans roughly columns 2-26 of CAFE sprite
-        shell_row = 7
+        # Turtle peeks out at row 3-4 of CAFE (middle of turtle shell logo)
+        # Shell spans roughly columns 2-22 of CAFE sprite
+        shell_row = 4
         turtle_y = self.cafe_y + shell_row
 
         # Position based on which side turtle peeks from
@@ -5354,12 +5659,13 @@ class AlleyScene:
         message = plane['message']
 
         # Select plane sprite based on direction
+        # Banner must trail BEHIND the plane (opposite side of nose)
         if direction == 1:
             plane_sprite = self.PROP_PLANE_RIGHT
-            banner_offset = len(plane_sprite[1])  # Banner trails behind
+            banner_offset = -len(message) - 8  # Banner trails behind (left of plane)
         else:
             plane_sprite = self.PROP_PLANE_LEFT
-            banner_offset = -len(message) - 5  # Banner in front for left-going plane
+            banner_offset = len(plane_sprite[1]) + 2  # Banner trails behind (right of plane)
 
         # Draw plane
         for row_idx, row in enumerate(plane_sprite):
@@ -5398,13 +5704,15 @@ class AlleyScene:
         banner_y = y + 1  # Middle row of plane
         banner_x = x + banner_offset
 
-        # Draw connection rope
+        # Draw connection rope (trails behind banner)
         if direction == 1:
-            rope = "~~o["
-            rope_x = banner_x
-        else:
+            # Moving right - rope connects on right side of banner, extends to plane on right
             rope = "]o~~"
             rope_x = banner_x + len(message)
+        else:
+            # Moving left - rope connects on left side of banner, extends to plane on left
+            rope = "~~o["
+            rope_x = banner_x - 4
 
         for i, char in enumerate(rope):
             px = rope_x + i
@@ -6682,7 +6990,9 @@ class Dashboard:
         # Framerate options (for matrix mode)
         self._framerate_options = [100, 50, 25, 15]  # ms
         self._framerate_index = 1  # Start at 50ms
-        self._qte_enabled = True  # QTE (meteor game) toggle state
+        self._qte_enabled = False  # QTE (meteor game) toggle state - off by default
+        self._qte_pending_activation = False  # Waiting for delayed QTE activation
+        self._qte_activation_time = 0.0  # When to activate QTE
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -6852,9 +7162,9 @@ class Dashboard:
             traffic_light_bounds = (traffic_light_x, traffic_light_y,
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
-            # Cafe bounds (snow melts on building but not on shell roof)
+            # Cafe bounds (snow melts on building but not on turtle shell roof)
             cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
-                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)  # 8 rows for shell roof
+                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 7)  # 7 rows for turtle shell
             self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
@@ -6913,6 +7223,11 @@ class Dashboard:
                         self.alley_scene.update()
                         # Check for new daemon events to spawn warning trucks
                         self._check_daemon_events_for_trucks()
+                        # Check for pending QTE activation
+                        if self._qte_pending_activation and time.time() >= self._qte_activation_time:
+                            self._qte_pending_activation = False
+                            self._qte_enabled = True
+                            self.alley_scene._qte_enabled = True
 
                     # Update creatures based on alert state
                     self._update_creatures()
@@ -7042,6 +7357,10 @@ class Dashboard:
             self._lightning_bolt = LightningBolt(self.width, self.height)
             self._lightning_flickers_remaining = random.randint(3, 5)
             self._lightning_flash_phase = 0
+            # Check if lightning knocked out any pedestrians
+            if self._lightning_bolt.path and self.alley_scene:
+                lightning_x = self._lightning_bolt.path[0][1]  # Get x from first point
+                self.alley_scene.check_lightning_knockout(lightning_x)
 
         # Update active lightning
         if self._lightning_active:
@@ -7267,7 +7586,13 @@ class Dashboard:
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
-                self.alley_scene.handle_qte_key(chr(key))
+                if self._qte_enabled:
+                    # QTE is on - pass key to game
+                    self.alley_scene.handle_qte_key(chr(key))
+                elif not self._qte_pending_activation:
+                    # QTE is off - start delayed activation (30-90 seconds)
+                    self._qte_pending_activation = True
+                    self._qte_activation_time = time.time() + random.uniform(30, 90)
         # CLI mode (: or ;)
         elif key == ord(':') or key == ord(';'):
             self._start_cli()
