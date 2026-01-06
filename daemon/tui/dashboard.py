@@ -1158,20 +1158,52 @@ class AlleyScene:
         "   ||  ",
     ]
 
-    # Car sprites - larger side views (4 rows tall, wider) with filled body panels
+    # Car sprites - classic ASCII art style (4 rows tall) with filled body panels
     # Body panels use █ (solid block) to be colored, structure uses regular chars
+    # Design inspired by classic ASCII art archives
     CAR_RIGHT = [
-        "     ___[########]____     ",
-        "    |███|  ====  |████|    ",
-        "    |███|________|████|    ",
-        "   (@)================(@)  ",
+        "      ______          ",
+        "   __/█_||_█\\`._      ",
+        "  (  ███  ███  \\     ",
+        "  =`-(_)--(_)-'      ",
     ]
     CAR_LEFT = [
-        "     ____[########]___     ",
-        "    |████|  ====  |███|    ",
-        "    |████|________|███|    ",
-        "  (@)================(@)   ",
+        "       ______         ",
+        "     _.'█_||_█\\__    ",
+        "    /  ███  ███   )   ",
+        "     `-'(_)--(_)-=   ",
     ]
+
+    # Truck sprites - delivery truck/van style (4 rows)
+    TRUCK_RIGHT = [
+        "    .----------.__    ",
+        "    |██████████|[_|__ ",
+        "    |██_.--.__██.-~;| ",
+        "    `(_)------(_)-'   ",
+    ]
+    TRUCK_LEFT = [
+        "    __.----------.    ",
+        " __|_]|██████████|    ",
+        " |;~-.██__.--._██|    ",
+        "   `-(_)------(_)'    ",
+    ]
+
+    # Semi-truck sprites - big 18-wheeler (5 rows tall, much wider)
+    SEMI_RIGHT = [
+        "                 _____________________________  ",
+        "        ___     |███████████████████████████ | ",
+        "   ____/█ █\\____|███████████████████████████ | ",
+        "  | °  |__|__|  |_____________________________|",
+        "  (O)-----(O)--------------(O)-----------(O)  ",
+    ]
+    SEMI_LEFT = [
+        "  _____________________________                 ",
+        " | ███████████████████████████|     ___        ",
+        " | ███████████████████████████|____/█ █\\____   ",
+        " |_____________________________|  |__|__|  ° | ",
+        "  (O)-----------(O)--------------(O)-----(O)  ",
+    ]
+
     # Car body colors for variety
     CAR_COLORS = [
         Colors.SHADOW_RED,      # Red
@@ -3397,27 +3429,51 @@ class AlleyScene:
         return False
 
     def _spawn_car(self):
-        """Spawn a new car on the street."""
-        # Pick a random body color for this car
+        """Spawn a new car, truck, or semi-truck on the street."""
+        # Pick a random body color
         body_color = random.choice(self.CAR_COLORS)
+
+        # Choose vehicle type (weighted): 60% car, 30% truck, 10% semi
+        vehicle_roll = random.random()
+        if vehicle_roll < 0.6:
+            vehicle_type = 'car'
+            sprite_right = self.CAR_RIGHT
+            sprite_left = self.CAR_LEFT
+            speed_range = (0.8, 1.5)
+            spawn_offset = 25
+        elif vehicle_roll < 0.9:
+            vehicle_type = 'truck'
+            sprite_right = self.TRUCK_RIGHT
+            sprite_left = self.TRUCK_LEFT
+            speed_range = (0.6, 1.2)
+            spawn_offset = 30
+        else:
+            vehicle_type = 'semi'
+            sprite_right = self.SEMI_RIGHT
+            sprite_left = self.SEMI_LEFT
+            speed_range = (0.4, 0.8)
+            spawn_offset = 55  # Semi is much wider
+
         # Randomly choose direction
         if random.random() < 0.5:
-            # Car going right (spawn on left)
+            # Vehicle going right (spawn on left)
             self._cars.append({
-                'x': -10.0,
+                'x': float(-spawn_offset),
                 'direction': 1,
-                'speed': random.uniform(0.8, 1.5),
-                'sprite': self.CAR_RIGHT,
+                'speed': random.uniform(*speed_range),
+                'sprite': sprite_right,
                 'color': body_color,
+                'type': vehicle_type,
             })
         else:
-            # Car going left (spawn on right)
+            # Vehicle going left (spawn on right)
             self._cars.append({
-                'x': float(self.width + 2),
+                'x': float(self.width + spawn_offset),
                 'direction': -1,
-                'speed': random.uniform(0.8, 1.5),
-                'sprite': self.CAR_LEFT,
+                'speed': random.uniform(*speed_range),
+                'sprite': sprite_left,
                 'color': body_color,
+                'type': vehicle_type,
             })
 
     def update(self):
@@ -3498,21 +3554,30 @@ class AlleyScene:
         self._update_damage_overlays()
 
     def _update_cars(self):
-        """Update car positions and spawn new cars."""
-        # Spawn new cars occasionally
+        """Update car/truck/semi positions and spawn new vehicles."""
+        # Spawn new vehicles occasionally
         self._car_spawn_timer += 1
         if self._car_spawn_timer >= random.randint(40, 100):
-            if len(self._cars) < 3:  # Max 3 cars at once
+            if len(self._cars) < 3:  # Max 3 vehicles at once
                 self._spawn_car()
             self._car_spawn_timer = 0
 
-        # Update car positions
+        # Update vehicle positions
         new_cars = []
         for car in self._cars:
             car['x'] += car['direction'] * car['speed']
 
-            # Keep car if it's still on screen (with margin)
-            if -10 < car['x'] < self.width + 10:
+            # Calculate margin based on vehicle type (semis are much wider)
+            vehicle_type = car.get('type', 'car')
+            if vehicle_type == 'semi':
+                margin = 60
+            elif vehicle_type == 'truck':
+                margin = 35
+            else:
+                margin = 30
+
+            # Keep vehicle if it's still on screen (with margin)
+            if -margin < car['x'] < self.width + margin:
                 new_cars.append(car)
 
         self._cars = new_cars
@@ -4466,10 +4531,10 @@ class AlleyScene:
             draw_character(self._agent_x, agent_sprite, Colors.ALLEY_MID)
 
     def _render_cars(self, screen):
-        """Render cars on the street with colored body panels."""
-        # Cars are 4 rows tall, bottom row at street level
+        """Render vehicles (cars, trucks, semis) on the street with colored body panels."""
+        # Vehicles are 4-5 rows tall, bottom row at street level
         street_y = self.height - 1
-        # Cars can't render above the 1/5th line
+        # Vehicles can't render above the 1/5th line
         min_car_y = self.height // 5
 
         for car in self._cars:
