@@ -62,6 +62,15 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Import audio engine for TTS car sounds
+try:
+    from daemon.audio import get_audio_engine, AudioEngine
+    AUDIO_ENGINE_AVAILABLE = True
+except ImportError:
+    AUDIO_ENGINE_AVAILABLE = False
+    get_audio_engine = None
+    AudioEngine = None
+
 
 class PanelType(Enum):
     """Types of dashboard panels."""
@@ -228,8 +237,7 @@ class Colors:
         # Lightning flash - inverted bright white on green
         curses.init_pair(Colors.LIGHTNING, curses.COLOR_BLACK, curses.COLOR_WHITE)
         # Alley scene colors - muted blue and grey
-        # ALLEY_DARK uses blue for visible dark shadows (black on black is invisible)
-        curses.init_pair(Colors.ALLEY_DARK, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ALLEY_DARK, curses.COLOR_BLACK, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_MID, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_LIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
@@ -2054,6 +2062,9 @@ class AlleyScene:
         # Horizontal cars on the street
         self._cars: List[Dict] = []
         self._car_spawn_timer = 0
+        # Audio state for car sounds
+        self._audio_muted = False
+        self._car_sound_cooldown = 0
         # Close-up car (perspective effect - shrinks as it passes)
         self._closeup_car: Dict = None
         self._closeup_car_timer = 0
@@ -2743,6 +2754,36 @@ class AlleyScene:
             self._qte_missiles = []
             self._qte_explosions = []
         return self._qte_enabled
+
+    def toggle_mute(self) -> bool:
+        """Toggle audio mute on/off. Returns new mute state."""
+        self._audio_muted = not self._audio_muted
+        return self._audio_muted
+
+    def is_muted(self) -> bool:
+        """Check if audio is muted."""
+        return self._audio_muted
+
+    def _play_car_sound(self, vehicle_type: str):
+        """Play TTS car sound effect based on vehicle type."""
+        if self._audio_muted or not AUDIO_ENGINE_AVAILABLE:
+            return
+
+        # Cooldown to prevent sound spam
+        if self._car_sound_cooldown > 0:
+            self._car_sound_cooldown -= 1
+            return
+
+        try:
+            audio_engine = get_audio_engine()
+            # Generate scene event audio for car
+            audio_intent = audio_engine.generate_scene_event_audio('car')
+            # Log the intent (actual TTS synthesis would happen elsewhere)
+            logger.debug(f"Car sound: {audio_intent.onomatopoeia}")
+            # Set cooldown (60 frames = ~1 second at 60fps)
+            self._car_sound_cooldown = 60
+        except Exception as e:
+            logger.debug(f"Car sound error: {e}")
 
     def _update_ufo(self):
         """Update UFO cow abduction event - super rare."""
@@ -3770,9 +3811,11 @@ class AlleyScene:
         # Position seasonal constellation in the sky (between buildings, below clouds)
         # Use seeded random for consistent daily positioning
         random.seed(self._scene_seed)
-        # Position for 5x larger constellations - start more left and lower to fit
-        self._constellation_x = random.randint(10, self.width // 3)
-        self._constellation_y = random.randint(12, 18)  # Lower in sky to fit larger patterns
+        # Center constellations on screen (5x scaled, largest ~75 chars wide)
+        # Center horizontally with some variance
+        center_x = self.width // 2 - 20  # Offset for constellation width
+        self._constellation_x = center_x + random.randint(-10, 10)
+        self._constellation_y = random.randint(15, 22)  # Mid-sky position
         # Reset random to time-based for dynamic elements
         random.seed()
 
@@ -3820,28 +3863,44 @@ class AlleyScene:
             self._draw_building_side_walls(self._building2_x, max(1, self._building2_y),
                                            len(self.BUILDING2[0]), len(self.BUILDING2), 'right')
 
-        # Setup building window lights (a few lit windows in each building)
-        # Position at center of specific windows, use street light flicker pattern
-        # Lights positioned 1 row higher than before
+        # Setup building window lights - only in BIG windows, randomly placed
+        # Big windows are [========] (8 chars), small are [====] (4 chars)
         self._building_window_lights = []
-        # Building 1 - windows at specific positions (row 6, 12 have windows)
-        b1_window_rows = [6, 12, 18]  # Rows with windows (0-indexed from building top)
-        b1_window_cols = [6, 18, 34, 46]  # Column offsets for window centers
-        for row in b1_window_rows[:2]:  # Only light top 2 rows of windows
-            for col in b1_window_cols[:2]:  # Only light leftmost windows
-                wx = self._building_x + col
-                wy = max(1, self._building_y) + row + 1  # +1 instead of +2 (moved up 1 row)
+
+        # Building 1 big window columns (centers of [========] windows)
+        b1_big_window_cols = [7, 41]  # The two big window columns
+        b1_window_rows = [8, 14, 20, 26, 32]  # Rows with windows (middle of each window block)
+
+        # Randomly select 2-3 big windows to light in building 1
+        b1_lit_windows = []
+        for _ in range(random.randint(2, 3)):
+            row = random.choice(b1_window_rows)
+            col = random.choice(b1_big_window_cols)
+            if (row, col) not in b1_lit_windows:
+                b1_lit_windows.append((row, col))
+
+        for row, col in b1_lit_windows:
+            wx = self._building_x + col
+            wy = max(1, self._building_y) + row
+            if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
+                self._building_window_lights.append((wx, wy))
+
+        # Building 2 big window columns
+        if self.width > 60:
+            b2_big_window_cols = [9, 37]  # Big window columns in building 2
+            b2_lit_windows = []
+            for _ in range(random.randint(2, 3)):
+                row = random.choice(b1_window_rows)
+                col = random.choice(b2_big_window_cols)
+                if (row, col) not in b2_lit_windows:
+                    b2_lit_windows.append((row, col))
+
+            for row, col in b2_lit_windows:
+                wx = self._building2_x + col
+                wy = max(1, self._building2_y) + row
                 if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                     self._building_window_lights.append((wx, wy))
-        # Building 2 - similar setup
-        if self.width > 60:
-            b2_window_cols = [8, 22, 36]
-            for row in b1_window_rows[:2]:
-                for col in b2_window_cols[:2]:
-                    wx = self._building2_x + col
-                    wy = max(1, self._building2_y) + row + 1  # +1 instead of +2 (moved up 1 row)
-                    if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
-                        self._building_window_lights.append((wx, wy))
+
         # Initialize flicker brightness for each window light
         self._building_window_flicker = [1.0] * len(self._building_window_lights)
 
@@ -4521,6 +4580,9 @@ class AlleyScene:
             vehicle_roll = 1.0  # Force semi
         else:
             vehicle_roll = random.random()
+
+        # Play car sound effect via TTS audio engine
+        self._play_car_sound('vehicle')
 
         # Determine direction first
         direction = 1 if random.random() < 0.5 else -1
@@ -5449,13 +5511,13 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw vanishing street with hashtag crosswalk at the bottom."""
+        """Draw vanishing street with hashtag crosswalk at sidewalk level."""
         crosswalk_width = 32
 
-        # Draw hashtag (#) crosswalk pattern at street level
-        # Pattern: horizontal bars with vertical stripes
-        hashtag_height = 4  # Height of crosswalk pattern
-        hashtag_start_y = curb_y - hashtag_height  # Start above curb
+        # Draw hashtag (#) crosswalk pattern at sidewalk/street level
+        # Pattern: horizontal bars with vertical stripes forming a grid
+        hashtag_height = 3  # Height of crosswalk pattern
+        hashtag_start_y = street_y - hashtag_height + 1  # At street level
 
         for cy in range(hashtag_height):
             py = hashtag_start_y + cy
@@ -5471,12 +5533,12 @@ class AlleyScene:
                             self.scene[py][px] = ('║', Colors.ALLEY_LIGHT)
                         else:
                             # Street surface between stripes
-                            self.scene[py][px] = ('▒', Colors.ALLEY_DARK)
+                            self.scene[py][px] = ('▒', Colors.ALLEY_MID)
 
-        # Draw vanishing street effect above the crosswalk
-        # Starts above crosswalk and ends at lower 1/5th of screen
+        # Draw vanishing street effect above the curb
+        # Starts at curb and ends at lower 1/5th of screen
         vanish_end_y = self.height - (self.height // 5)  # Lower 1/5th of screen
-        vanish_start_y = hashtag_start_y - 1  # Just above crosswalk
+        vanish_start_y = curb_y - 1  # Just above curb
 
         # Calculate crosswalk center for vanishing point
         crosswalk_center = x + crosswalk_width // 2
@@ -5640,8 +5702,8 @@ class AlleyScene:
         wall_width = 3
         wall_chars = ['▓', '▒', '░']  # Gradient from building edge outward
 
-        # Skip top rows (rooftop items)
-        start_row = 4
+        # Skip top rows (rooftop items) - start lower to avoid being too tall
+        start_row = 5
 
         for row in range(start_row, building_height - 2):  # Skip bottom porch rows
             py = building_y + row
@@ -7321,8 +7383,6 @@ class DashboardClient:
     def __init__(self, socket_path: Optional[str] = None):
         self.socket_path = socket_path
         self._connected = False
-        self._demo_mode = False
-        self._demo_event_offset = 0
         self._use_tcp = False  # Flag for Windows TCP mode
         self._log_file_path = None  # Path to daemon log file for offline mode
 
@@ -7359,11 +7419,9 @@ class DashboardClient:
 
         if not self._connected:
             if self._log_file_path and os.path.exists(self._log_file_path):
-                self._demo_mode = False  # Not demo mode - reading real logs
                 logger.info(f"Daemon not connected, reading events from {self._log_file_path}")
             else:
-                self._demo_mode = True
-                logger.info("Daemon not available and no log file found, running in demo mode")
+                logger.info("Daemon not available, no log file found")
 
     def _find_log_file(self) -> Optional[str]:
         """Find the daemon log file for reading real events offline."""
@@ -7792,7 +7850,6 @@ class DashboardClient:
     def connect(self) -> bool:
         """Test connection to daemon."""
         self._connected = self._test_connection()
-        self._demo_mode = not self._connected
         return self._connected
 
     def reconnect(self) -> bool:
@@ -7812,7 +7869,6 @@ class DashboardClient:
                     self._use_tcp = False
                     if self._test_connection():
                         self._connected = True
-                        self._demo_mode = False
                         logger.info(f"Connected to daemon at {path}")
                         return True
                     self.socket_path = old_path
@@ -7820,7 +7876,6 @@ class DashboardClient:
         # Try TCP connection (Windows primary, Unix fallback)
         if self._try_tcp_connection():
             self._connected = True
-            self._demo_mode = False
             self._use_tcp = True
             logger.info(f"Connected to daemon via TCP {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
             return True
@@ -7828,14 +7883,11 @@ class DashboardClient:
         return False
 
     def is_demo_mode(self) -> bool:
-        """Check if running in demo mode."""
-        return self._demo_mode
+        """Check if running in demo mode (always False - demo mode removed)."""
+        return False
 
     def get_status(self) -> Dict:
-        """Get daemon status."""
-        if self._demo_mode:
-            return self._demo_status()
-
+        """Get daemon status from connection or log file."""
         # Try live connection first
         if self._connected:
             response = self._send_request('status')
@@ -7858,13 +7910,21 @@ class DashboardClient:
         if self._log_file_path:
             return self._read_status_from_log()
 
-        return self._demo_status()
+        # No connection and no log file - return empty status
+        return {
+            'mode': 'OFFLINE',
+            'mode_since': datetime.utcnow().isoformat(),
+            'uptime': 0,
+            'events_today': 0,
+            'violations': 0,
+            'tripwire_enabled': False,
+            'clock_monitor_enabled': False,
+            'network_attestation_enabled': False,
+            'is_frozen': False,
+        }
 
     def get_events(self, limit: int = 20) -> List[DashboardEvent]:
-        """Get recent events."""
-        if self._demo_mode:
-            return self._demo_events(limit)
-
+        """Get recent events from connection or log file."""
         # Try live connection first
         if self._connected:
             response = self._send_request('get_events', {'count': limit})
@@ -7884,13 +7944,11 @@ class DashboardClient:
         if self._log_file_path:
             return self._read_events_from_log(limit)
 
-        return self._demo_events(limit)
+        # No connection and no log file - return empty list
+        return []
 
     def get_alerts(self) -> List[DashboardAlert]:
-        """Get active alerts."""
-        if self._demo_mode:
-            return self._demo_alerts()
-
+        """Get active alerts from daemon."""
         # Try to get alerts from daemon
         response = self._send_request('get_alerts')
         if response.get('success'):
@@ -7905,13 +7963,10 @@ class DashboardClient:
                     source=a.get('source', ''),
                 ))
             return alerts
-        return self._demo_alerts()
+        return []
 
     def get_sandboxes(self) -> List[SandboxStatus]:
         """Get active sandboxes."""
-        if self._demo_mode:
-            return self._demo_sandboxes()
-
         response = self._send_request('get_sandboxes')
         if response.get('success'):
             sandboxes = []
@@ -7926,22 +7981,19 @@ class DashboardClient:
                     uptime=s.get('uptime', 0),
                 ))
             return sandboxes
-        return self._demo_sandboxes()
+        return []
 
     def get_siem_status(self) -> Dict:
         """Get SIEM shipping status."""
-        if self._demo_mode:
-            return self._demo_siem()
-
         response = self._send_request('get_siem_status')
         if response.get('success'):
-            return response.get('siem_status', self._demo_siem())
-        return self._demo_siem()
+            return response.get('siem_status', {})
+        return {'events_shipped_today': 0, 'last_ship_time': None, 'queue_size': 0}
 
     def set_mode(self, mode: str, reason: str = '') -> Tuple[bool, str]:
         """Request mode change."""
-        if self._demo_mode:
-            return False, "Demo mode - daemon not connected"
+        if not self._connected:
+            return False, "Daemon not connected"
 
         response = self._send_request('set_mode', {
             'mode': mode.lower(),
@@ -7954,8 +8006,8 @@ class DashboardClient:
 
     def acknowledge_alert(self, alert_id: str) -> Tuple[bool, str]:
         """Acknowledge an alert."""
-        if self._demo_mode:
-            return True, "Demo mode - alert acknowledged locally"
+        if not self._connected:
+            return False, "Daemon not connected"
 
         response = self._send_request('acknowledge_alert', {'alert_id': alert_id})
         if response.get('success'):
@@ -7965,8 +8017,9 @@ class DashboardClient:
     def export_events(self, start_time: Optional[str] = None,
                       end_time: Optional[str] = None) -> List[Dict]:
         """Export events for a time range."""
-        if self._demo_mode:
-            return [e.__dict__ for e in self._demo_events(100)]
+        if self._log_file_path:
+            events = self._read_events_from_log(100)
+            return [e.__dict__ for e in events]
 
         params = {}
         if start_time:
@@ -7979,126 +8032,6 @@ class DashboardClient:
         if response.get('success'):
             return response.get('events', [])
         return []
-
-    # Demo mode data generators
-    def _demo_status(self) -> Dict:
-        """Generate demo status."""
-        modes = ['TRUSTED', 'RESTRICTED', 'AIRGAP']
-        return {
-            'mode': modes[int(time.time() / 30) % len(modes)],
-            'mode_since': datetime.utcnow().isoformat(),
-            'uptime': int(time.time()) % 86400,
-            'events_today': 1247 + int(time.time()) % 100,
-            'violations': random.randint(0, 2),
-            'tripwire_enabled': True,
-            'clock_monitor_enabled': True,
-            'network_attestation_enabled': True,
-            'is_frozen': False,
-        }
-
-    def _demo_events(self, limit: int) -> List[DashboardEvent]:
-        """Generate demo events with variety."""
-        events = []
-        base_time = datetime.utcnow()
-        self._demo_event_offset = (self._demo_event_offset + 1) % 100
-
-        event_types = [
-            ("MODE_CHANGE", "INFO", "Mode transitioned to TRUSTED"),
-            ("POLICY_DECISION", "INFO", "Tool request approved: file_read"),
-            ("SANDBOX_START", "INFO", "Sandbox sandbox-{:03d} started"),
-            ("TOOL_REQUEST", "INFO", "Agent requested network access"),
-            ("HEALTH_CHECK", "INFO", "Health check passed"),
-            ("API_REQUEST", "INFO", "API request from integration"),
-            ("TRIPWIRE", "WARN", "File modification detected: /etc/passwd"),
-            ("CLOCK_DRIFT", "WARN", "Clock drift detected: 45s"),
-            ("VIOLATION", "ERROR", "Unauthorized tool access attempt"),
-            ("PII_DETECTED", "WARN", "PII detected in agent output"),
-        ]
-
-        for i in range(min(limit, 15)):
-            idx = (i + self._demo_event_offset) % len(event_types)
-            etype, sev, details = event_types[idx]
-            details = details.format(i) if '{' in details else details
-            events.append(DashboardEvent(
-                timestamp=(base_time - timedelta(seconds=i*30 + random.randint(0, 10))).isoformat(),
-                event_type=etype,
-                details=details,
-                severity=sev,
-            ))
-
-        return events
-
-    def _demo_alerts(self) -> List[DashboardAlert]:
-        """Generate demo alerts."""
-        alerts = [
-            DashboardAlert(
-                alert_id="alert-001",
-                timestamp=datetime.utcnow().isoformat(),
-                severity="HIGH",
-                message="Prompt injection attempt detected in agent input",
-                status="NEW",
-                source="prompt_injection",
-            ),
-            DashboardAlert(
-                alert_id="alert-002",
-                timestamp=(datetime.utcnow() - timedelta(hours=1)).isoformat(),
-                severity="MEDIUM",
-                message="Clock drift warning (150s) - NTP sync recommended",
-                status="ACKNOWLEDGED",
-                source="clock_monitor",
-            ),
-        ]
-        # Randomly add more alerts
-        if random.random() < 0.3:
-            alerts.append(DashboardAlert(
-                alert_id=f"alert-{random.randint(100, 999)}",
-                timestamp=(datetime.utcnow() - timedelta(minutes=random.randint(5, 60))).isoformat(),
-                severity=random.choice(["LOW", "MEDIUM", "HIGH"]),
-                message=random.choice([
-                    "Unusual network activity detected",
-                    "Memory usage threshold exceeded",
-                    "Configuration file modified",
-                    "Authentication failure detected",
-                ]),
-                status="NEW",
-                source="monitor",
-            ))
-        return alerts
-
-    def _demo_sandboxes(self) -> List[SandboxStatus]:
-        """Generate demo sandbox status."""
-        sandboxes = [
-            SandboxStatus(
-                sandbox_id="sandbox-001",
-                profile="standard",
-                status="running",
-                memory_used=256*1024*1024 + random.randint(0, 100*1024*1024),
-                memory_limit=1024*1024*1024,
-                cpu_percent=25.5 + random.random() * 20,
-                uptime=1800 + int(time.time()) % 3600,
-            ),
-        ]
-        if random.random() < 0.5:
-            sandboxes.append(SandboxStatus(
-                sandbox_id="sandbox-002",
-                profile="restricted",
-                status="running",
-                memory_used=128*1024*1024 + random.randint(0, 50*1024*1024),
-                memory_limit=512*1024*1024,
-                cpu_percent=10.0 + random.random() * 15,
-                uptime=600 + random.randint(0, 600),
-            ))
-        return sandboxes
-
-    def _demo_siem(self) -> Dict:
-        """Generate demo SIEM status."""
-        return {
-            'connected': True,
-            'backend': 'kafka',
-            'last_shipped': datetime.utcnow().isoformat(),
-            'queue_depth': random.randint(5, 50),
-            'events_shipped_today': 5432 + int(time.time()) % 1000,
-        }
 
 
 class Dashboard:
@@ -8161,6 +8094,7 @@ class Dashboard:
         self._qte_enabled = False  # QTE (meteor game) toggle state - off by default
         self._qte_pending_activation = False  # Waiting for delayed QTE activation
         self._qte_activation_time = 0.0  # When to activate QTE
+        self._audio_muted = False  # Audio mute toggle state
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -8751,6 +8685,11 @@ class Dashboard:
             if self.matrix_mode and self.alley_scene:
                 enabled = self.alley_scene.toggle_qte()
                 self._qte_enabled = enabled  # Store for header display
+        elif key == ord('u') or key == ord('U'):
+            # Toggle audio mute on/off
+            if self.matrix_mode and self.alley_scene:
+                muted = self.alley_scene.toggle_mute()
+                self._audio_muted = muted  # Store for header display
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -8810,6 +8749,8 @@ class Dashboard:
             header += f" [{self._framerate_options[self._framerate_index]}ms]"
             if not self._qte_enabled:
                 header += " [QTE OFF]"
+            if self._audio_muted:
+                header += " [MUTED]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
