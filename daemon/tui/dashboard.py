@@ -1149,12 +1149,12 @@ class AlleyScene:
 
     CAFE = [
         "      ___________      ",
-        "    /`    |    `\\    ",
-        "   / \\ __|__ / \\ \\   ",
-        "  |   \\/   \\/   \\ |  ",
-        "  |   /\\___/\\   / |  ",
-        "   \\ /  | |  \\ /  /   ",
-        "    \\___|_|___/      ",
+        "    /`    |    `\\     ",
+        "   / \\ __|__ / \\ \\    ",
+        "  |   \\/   \\/   \\|    ",
+        "  |   /\\___/\\   /|    ",
+        "   \\ /  | |  \\ / /    ",
+        "    \\___|_|___\\/      ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -2064,6 +2064,9 @@ class AlleyScene:
         self._street_light_positions: List[Tuple[int, int]] = []
         self._street_light_flicker = [1.0, 1.0]  # Brightness per light (0-1)
         self._flicker_timer = 0
+        # Building window lights (same flicker pattern as street lights, no pole)
+        self._building_window_lights: List[Tuple[int, int]] = []  # (x, y) positions
+        self._building_window_flicker = []  # Brightness per window light (0-1)
         # Window people - list of active silhouettes {window_idx, building, direction, progress}
         # Pre-spawn some people so windows aren't empty at start
         self._window_people: List[Dict] = [
@@ -3547,6 +3550,26 @@ class AlleyScene:
                 except curses.error:
                     pass
 
+    def _render_dotted_fog(self, screen):
+        """Render dotted fog layer (behind clouds).
+        Draws sparse fog dots in rows 3-8 with decreasing density as we go down.
+        """
+        fog_chars = ['░', '·', '.', '∙']
+        # Rows 3-8: decreasing density as we go down
+        for row in range(3, 9):
+            # Density decreases with row: 15%, 12%, 10%, 8%, 5%, 3%
+            density = max(0.03, 0.18 - (row - 3) * 0.03)
+            for x in range(self.width - 1):
+                if random.random() < density:
+                    char = random.choice(fog_chars)
+                    try:
+                        attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                        screen.attron(attr)
+                        screen.addstr(row, x, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
     def _render_clouds(self, screen):
         """Render cloud layer."""
         # Security canary: no clouds if resource monitor is down
@@ -3746,6 +3769,11 @@ class AlleyScene:
         self._building_y = ground_y - len(self.BUILDING) + 1
         self._draw_building(self.BUILDING, self._building_x, max(1, self._building_y))
         self._building_bottom_y = ground_y  # Store for rat constraint
+        # Add side walls to building 1 (left side lighter, right side darker/shadow)
+        self._draw_building_side_walls(self._building_x, max(1, self._building_y),
+                                       len(self.BUILDING[0]), len(self.BUILDING), 'left')
+        self._draw_building_side_walls(self._building_x, max(1, self._building_y),
+                                       len(self.BUILDING[0]), len(self.BUILDING), 'right')
 
         # Draw second building on the right side
         # Shifted 6 chars toward center (left)
@@ -3754,6 +3782,35 @@ class AlleyScene:
             self._building2_x = self.width - len(self.BUILDING2[0]) - 11
             self._building2_y = ground_y - len(self.BUILDING2) + 1
             self._draw_building(self.BUILDING2, self._building2_x, max(1, self._building2_y))
+            # Add side walls to building 2
+            self._draw_building_side_walls(self._building2_x, max(1, self._building2_y),
+                                           len(self.BUILDING2[0]), len(self.BUILDING2), 'left')
+            self._draw_building_side_walls(self._building2_x, max(1, self._building2_y),
+                                           len(self.BUILDING2[0]), len(self.BUILDING2), 'right')
+
+        # Setup building window lights (a few lit windows in each building)
+        # Position at center of specific windows, use street light flicker pattern
+        self._building_window_lights = []
+        # Building 1 - windows at specific positions (row 6, 12 have windows)
+        b1_window_rows = [6, 12, 18]  # Rows with windows (0-indexed from building top)
+        b1_window_cols = [6, 18, 34, 46]  # Column offsets for window centers
+        for row in b1_window_rows[:2]:  # Only light top 2 rows of windows
+            for col in b1_window_cols[:2]:  # Only light leftmost windows
+                wx = self._building_x + col
+                wy = max(1, self._building_y) + row + 2  # +2 for center of window
+                if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
+                    self._building_window_lights.append((wx, wy))
+        # Building 2 - similar setup
+        if self.width > 60:
+            b2_window_cols = [8, 22, 36]
+            for row in b1_window_rows[:2]:
+                for col in b2_window_cols[:2]:
+                    wx = self._building2_x + col
+                    wy = max(1, self._building2_y) + row + 2
+                    if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
+                        self._building_window_lights.append((wx, wy))
+        # Initialize flicker brightness for each window light
+        self._building_window_flicker = [1.0] * len(self._building_window_lights)
 
         # Draw street lights between buildings (in the gap)
         self._draw_street_lights(ground_y)
@@ -3977,7 +4034,9 @@ class AlleyScene:
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
 
     def _draw_cloud_cover(self):
-        """Draw solid double-line cloud cover at top of screen plus dotted fog layers."""
+        """Draw solid double-line cloud cover at top of screen.
+        Note: Dotted fog is now rendered separately in _render_dotted_fog (behind clouds).
+        """
         # Draw two solid lines of clouds right below the status area (rows 1-2)
         # Mostly solid blocks with occasional texture variation
         for row in range(1, 3):  # Rows 1 and 2
@@ -3993,17 +4052,6 @@ class AlleyScene:
                 else:
                     char = '░'  # Light shade (rare)
                 self.scene[row][x] = (char, Colors.GREY_BLOCK)
-
-        # Add long dotted fog lines in the sky (rows 3-8)
-        fog_chars = ['·', '∙', '·', ' ', '·', '∙', ' ', '·', ' ', ' ']
-        for row in range(3, 9):
-            # Different density for each row - denser near top
-            density = 0.6 - (row - 3) * 0.08  # 0.6 down to 0.12
-            for x in range(self.width - 1):
-                if random.random() < density:
-                    char = random.choice(fog_chars)
-                    if char != ' ':
-                        self.scene[row][x] = (char, Colors.GREY_BLOCK)
 
     def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int):
         """Draw static cityscape backdrop in the gap between main buildings."""
@@ -4917,11 +4965,25 @@ class AlleyScene:
             ped['x'] += ped['direction'] * ped['speed']
 
             # Y wandering - pedestrians drift up/down on sidewalk to pass each other
+            # Allow walking 4 rows closer (more negative offset) when under a building
             if not meteor_active:
                 ped['y_wander_timer'] = ped.get('y_wander_timer', 50) - 1
                 if ped['y_wander_timer'] <= 0:
-                    # Pick new target y position
-                    ped['target_y_offset'] = random.choice([-1, 0, 1])
+                    # Check if under a building - allows walking closer to cafe
+                    under_building = False
+                    ped_x = ped['x']
+                    if hasattr(self, '_building_x') and hasattr(self, '_building2_x'):
+                        b1_left = self._building_x
+                        b1_right = self._building_x + len(self.BUILDING[0])
+                        b2_left = self._building2_x
+                        b2_right = self._building2_x + len(self.BUILDING2[0])
+                        if b1_left < ped_x < b1_right or b2_left < ped_x < b2_right:
+                            under_building = True
+                    # Pick new target y position - allow up to -5 when under building
+                    if under_building:
+                        ped['target_y_offset'] = random.choice([-5, -4, -3, -2, -1, 0, 1])
+                    else:
+                        ped['target_y_offset'] = random.choice([-1, 0, 1])
                     ped['y_wander_timer'] = random.randint(40, 100)
 
                 # Gradually move toward target y
@@ -5081,6 +5143,13 @@ class AlleyScene:
             elif self._street_light_flicker[i] < 1.0:
                 # Gradually return to full brightness
                 self._street_light_flicker[i] = min(1.0, self._street_light_flicker[i] + 0.1)
+
+        # Also update building window lights with same pattern
+        for i in range(len(self._building_window_flicker)):
+            if random.random() < 0.05:  # 5% chance - windows flicker less than street lights
+                self._building_window_flicker[i] = random.uniform(0.4, 0.8)
+            elif self._building_window_flicker[i] < 1.0:
+                self._building_window_flicker[i] = min(1.0, self._building_window_flicker[i] + 0.05)
 
     def _update_window_people(self):
         """Update people walking by windows with walk/stare/wave animations."""
@@ -5504,6 +5573,44 @@ class AlleyScene:
                     if 0 <= knob_px < self.width - 1 and 0 <= knob_py < self.height:
                         self.scene[knob_py][knob_px] = ('o', Colors.DOOR_KNOB_GOLD)
 
+    def _draw_building_side_walls(self, building_x: int, building_y: int, building_width: int, building_height: int, side: str):
+        """Draw 3-character wide vanishing point side walls on buildings.
+
+        Args:
+            building_x: Left edge of building
+            building_y: Top of building
+            building_width: Width of building sprite
+            building_height: Height of building sprite
+            side: 'left' for lighter wall, 'right' for darker shadow wall
+        """
+        wall_width = 3
+        wall_chars = ['▓', '▒', '░']  # Gradient from building edge outward
+
+        # Skip top rows (rooftop items)
+        start_row = 4
+
+        for row in range(start_row, building_height - 2):  # Skip bottom porch rows
+            py = building_y + row
+            if py < 0 or py >= self.height:
+                continue
+
+            for w in range(wall_width):
+                if side == 'left':
+                    # Left side wall - lighter color (sun-lit), extends left
+                    px = building_x - w - 1
+                    # Lighter color
+                    color = Colors.ALLEY_MID if w == 0 else Colors.ALLEY_LIGHT
+                    char = wall_chars[w] if w < len(wall_chars) else '░'
+                else:
+                    # Right side wall - darker color (shadow), extends right
+                    px = building_x + building_width + w
+                    # Darker color for shadow
+                    color = Colors.ALLEY_DARK
+                    char = wall_chars[wall_width - w - 1] if w < len(wall_chars) else '░'
+
+                if 0 <= px < self.width - 1:
+                    self.scene[py][px] = (char, color)
+
     def render(self, screen):
         """Render the alley scene to the screen with proper layering."""
         # Render constellation first (furthest back, behind clouds and buildings)
@@ -5512,7 +5619,10 @@ class AlleyScene:
         # Render distant clouds first (furthest back, behind everything)
         self._render_distant_clouds(screen)
 
-        # Render main clouds (behind buildings)
+        # Render dotted fog layer (behind main clouds)
+        self._render_dotted_fog(screen)
+
+        # Render main clouds (behind buildings, on top of fog)
         self._render_clouds(screen)
 
         # Render UFO event (in sky, behind buildings)
@@ -5566,6 +5676,9 @@ class AlleyScene:
 
         # Render street light flicker effects
         self._render_street_light_flicker(screen)
+
+        # Render building window lights (glow without pole)
+        self._render_building_window_lights(screen)
 
         # Render steam effects from manholes/drains
         self._render_steam(screen)
@@ -6300,6 +6413,42 @@ class AlleyScene:
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                                 elif row == 1:
                                     attr = curses.color_pair(Colors.RAT_YELLOW)
+                                else:
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
+                                screen.attron(attr)
+                                screen.addstr(py, px, glow_char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+
+    def _render_building_window_lights(self, screen):
+        """Render flickering light glow from building windows (no pole, just glow)."""
+        glow_chars = ['█', '▓', '▒', '░']
+
+        for i, (light_x, light_y) in enumerate(self._building_window_lights):
+            if i >= len(self._building_window_flicker):
+                continue
+
+            brightness = self._building_window_flicker[i]
+
+            # Smaller glow than street lights (just 2 rows, narrower spread)
+            for row in range(2):
+                spread = row + 1
+                row_brightness = brightness * (1.0 - row * 0.3)
+
+                for dx in range(-spread, spread + 1):
+                    px = light_x + dx
+                    py = light_y + row
+
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                        dist_factor = abs(dx) / (spread + 1)
+                        char_idx = min(3, row + int(dist_factor * 2))
+                        glow_char = glow_chars[char_idx] if row_brightness > 0.3 else ' '
+
+                        if glow_char != ' ':
+                            try:
+                                if row == 0:
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
                                 else:
                                     attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
                                 screen.attron(attr)
