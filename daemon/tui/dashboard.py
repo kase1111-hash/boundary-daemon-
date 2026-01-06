@@ -169,6 +169,16 @@ class Colors:
     XMAS_GREEN = 43      # Green Christmas light
     XMAS_BLUE = 44       # Blue Christmas light
     XMAS_YELLOW = 45     # Yellow Christmas light
+    # Halloween colors (secret event Oct 24-31)
+    HALLOWEEN_ORANGE = 46  # Orange pumpkin glow
+    HALLOWEEN_PURPLE = 47  # Spooky purple
+    # Firework colors (4th of July Jul 1-7)
+    FIREWORK_WHITE = 48   # White burst
+    FIREWORK_MAGENTA = 49 # Magenta burst
+    # Easter colors
+    EASTER_PINK = 50      # Pink easter egg
+    EASTER_CYAN = 51      # Cyan easter egg
+    EASTER_LAVENDER = 52  # Lavender easter egg
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -259,6 +269,16 @@ class Colors:
         curses.init_pair(Colors.XMAS_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(Colors.XMAS_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(Colors.XMAS_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Halloween colors
+        curses.init_pair(Colors.HALLOWEEN_ORANGE, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Orange via yellow
+        curses.init_pair(Colors.HALLOWEEN_PURPLE, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        # Firework colors
+        curses.init_pair(Colors.FIREWORK_WHITE, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.FIREWORK_MAGENTA, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        # Easter colors
+        curses.init_pair(Colors.EASTER_PINK, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        curses.init_pair(Colors.EASTER_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.EASTER_LAVENDER, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -1452,6 +1472,53 @@ class AlleyScene:
     WIND_WISPS = ['~', '≈', '≋', '～', '-', '=']
 
     # ==========================================
+    # HOLIDAY EVENT SPRITES
+    # ==========================================
+
+    # Pumpkin sprite (Halloween Oct 24-31)
+    PUMPKIN = [
+        " ,---, ",
+        "(o ^ o)",
+        " \\___/ ",
+    ]
+
+    # Spooky bare tree (Halloween - replaces regular trees)
+    SPOOKY_TREE = [
+        "    \\|/    ",
+        "   --+--   ",
+        "  / | \\  ",
+        " /  |  \\ ",
+        "    |     ",
+        "   _|_    ",
+    ]
+
+    # Easter egg patterns (simple colored eggs)
+    EASTER_EGG = [
+        " /\\ ",
+        "(  )",
+        " \\/ ",
+    ]
+
+    # Firework burst patterns
+    FIREWORK_BURST = [
+        "  \\ | /  ",
+        " -- * -- ",
+        "  / | \\  ",
+    ]
+
+    FIREWORK_STAR = [
+        "   *   ",
+        " * + * ",
+        "   *   ",
+    ]
+
+    FIREWORK_SHOWER = [
+        " ' ' ' ",
+        "  ' '  ",
+        " ' ' ' ",
+    ]
+
+    # ==========================================
     # METEOR QTE EVENT - Quick Time Event
     # ==========================================
 
@@ -1970,6 +2037,18 @@ class AlleyScene:
         self._christmas_mode = self._check_christmas_week()
         self._christmas_light_frame = 0
         self._christmas_light_timer = 0
+        # Halloween (secret event Oct 24-31)
+        self._halloween_mode = self._check_halloween_week()
+        self._pumpkin_positions: List[Tuple[int, int]] = []  # (x, y) for pumpkins
+        self._pumpkin_glow_frame = 0
+        self._pumpkin_glow_timer = 0
+        # 4th of July (secret event Jul 1-7)
+        self._july4th_mode = self._check_july4th_week()
+        self._fireworks: List[Dict] = []  # {x, y, frame, color, type}
+        self._firework_timer = 0
+        # Easter (secret event - Sunday in spring)
+        self._easter_mode = self._check_easter_week()
+        self._easter_egg_positions: List[Tuple[int, int, int]] = []  # (x, y, color_idx)
         self._tree_sway_frame = 0
         # Wind direction: 1 = blowing right (from left), -1 = blowing left (from right)
         self._wind_direction = 1
@@ -2061,6 +2140,40 @@ class AlleyScene:
         today = datetime.now()
         return today.month == 12 and today.day >= 20
 
+    def _check_halloween_week(self) -> bool:
+        """Check if it's Halloween week (Oct 24-31) for spooky event."""
+        today = datetime.now()
+        return today.month == 10 and today.day >= 24
+
+    def _check_july4th_week(self) -> bool:
+        """Check if it's 4th of July week (Jul 1-7) for fireworks event."""
+        today = datetime.now()
+        return today.month == 7 and today.day <= 7
+
+    def _check_easter_week(self) -> bool:
+        """Check if it's Easter week (Easter Sunday +/- 3 days)."""
+        today = datetime.now()
+        # Calculate Easter Sunday using Anonymous Gregorian algorithm
+        year = today.year
+        a = year % 19
+        b = year // 100
+        c = year % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day = ((h + l - 7 * m + 114) % 31) + 1
+        easter = datetime(year, month, day)
+        # Check if within 3 days of Easter
+        diff = abs((today - easter).days)
+        return diff <= 3
+
     def _update_christmas_lights(self):
         """Update Christmas light animation frame."""
         if not self._christmas_mode:
@@ -2070,6 +2183,40 @@ class AlleyScene:
         if self._christmas_light_timer >= 15:
             self._christmas_light_timer = 0
             self._christmas_light_frame = (self._christmas_light_frame + 1) % 4
+
+    def _update_halloween(self):
+        """Update Halloween pumpkin glow animation."""
+        if not self._halloween_mode:
+            return
+        self._pumpkin_glow_timer += 1
+        # Flicker glow every 10-20 frames
+        if self._pumpkin_glow_timer >= random.randint(10, 20):
+            self._pumpkin_glow_timer = 0
+            self._pumpkin_glow_frame = (self._pumpkin_glow_frame + 1) % 3
+
+    def _update_fireworks(self):
+        """Update 4th of July firework animations."""
+        if not self._july4th_mode:
+            return
+        self._firework_timer += 1
+        # Spawn new firework every 30-90 frames
+        if self._firework_timer >= random.randint(30, 90):
+            self._firework_timer = 0
+            # Launch firework at random x position in sky
+            self._fireworks.append({
+                'x': random.randint(10, self.width - 10),
+                'y': random.randint(3, 12),
+                'frame': 0,
+                'color': random.choice([Colors.XMAS_RED, Colors.FIREWORK_WHITE,
+                                       Colors.XMAS_BLUE, Colors.FIREWORK_MAGENTA,
+                                       Colors.XMAS_YELLOW]),
+                'type': random.choice(['burst', 'star', 'shower']),
+            })
+        # Update existing fireworks
+        for fw in self._fireworks[:]:
+            fw['frame'] += 1
+            if fw['frame'] > 20:  # Firework fades after 20 frames
+                self._fireworks.remove(fw)
 
     def _init_clouds(self):
         """Initialize cloud layer with cumulus clouds and wisps."""
@@ -2961,31 +3108,51 @@ class AlleyScene:
     def _render_trees(self, screen):
         """Render trees on top of buildings (foreground layer)."""
         for tree_x, tree_y in self._tree_positions:
-            # Use windy tree sprite based on wind direction
-            if self._wind_direction > 0:
-                tree_sprite = self.TREE_WINDY_RIGHT
+            # During Halloween, use spooky bare trees
+            if self._halloween_mode:
+                tree_sprite = self.SPOOKY_TREE
+                for row_idx, row in enumerate(tree_sprite):
+                    for col_idx, char in enumerate(row):
+                        px = tree_x + col_idx
+                        py = tree_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                # Spooky purple/dark colors
+                                if char in '\\|/-+':
+                                    attr = curses.color_pair(Colors.HALLOWEEN_PURPLE) | curses.A_DIM
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
             else:
-                tree_sprite = self.TREE_WINDY_LEFT
+                # Normal tree rendering
+                if self._wind_direction > 0:
+                    tree_sprite = self.TREE_WINDY_RIGHT
+                else:
+                    tree_sprite = self.TREE_WINDY_LEFT
 
-            for row_idx, row in enumerate(tree_sprite):
-                for col_idx, char in enumerate(row):
-                    px = tree_x + col_idx
-                    py = tree_y + row_idx
-                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
-                        try:
-                            if char == '@':
-                                # Leaves - green
-                                attr = curses.color_pair(Colors.MATRIX_DIM)
-                            elif char in '()|':
-                                # Trunk - brown/dark
-                                attr = curses.color_pair(Colors.SAND_DIM)
-                            else:
-                                attr = curses.color_pair(Colors.ALLEY_MID)
-                            screen.attron(attr)
-                            screen.addstr(py, px, char)
-                            screen.attroff(attr)
-                        except curses.error:
-                            pass
+                for row_idx, row in enumerate(tree_sprite):
+                    for col_idx, char in enumerate(row):
+                        px = tree_x + col_idx
+                        py = tree_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                if char == '@':
+                                    # Leaves - green
+                                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                                elif char in '()|':
+                                    # Trunk - brown/dark
+                                    attr = curses.color_pair(Colors.SAND_DIM)
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
 
     def _render_pine_trees(self, screen):
         """Render pine trees on top of buildings (foreground layer)."""
@@ -3039,6 +3206,82 @@ class AlleyScene:
                                 screen.attron(attr)
                                 screen.addstr(py, px, char)
                                 screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_fireworks(self, screen):
+        """Render 4th of July fireworks in the sky."""
+        if not self._july4th_mode:
+            return
+        for fw in self._fireworks:
+            # Get sprite based on type
+            if fw['type'] == 'burst':
+                sprite = self.FIREWORK_BURST
+            elif fw['type'] == 'star':
+                sprite = self.FIREWORK_STAR
+            else:
+                sprite = self.FIREWORK_SHOWER
+            # Calculate fade based on frame
+            if fw['frame'] < 5:
+                attr = curses.color_pair(fw['color']) | curses.A_BOLD
+            elif fw['frame'] < 12:
+                attr = curses.color_pair(fw['color'])
+            else:
+                attr = curses.color_pair(fw['color']) | curses.A_DIM
+            # Render sprite centered on position
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    px = fw['x'] - len(row) // 2 + col_idx
+                    py = fw['y'] + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_pumpkins(self, screen):
+        """Render Halloween pumpkins with flickering glow."""
+        if not self._halloween_mode:
+            return
+        for pumpkin_x, pumpkin_y in self._pumpkin_positions:
+            # Flicker effect based on glow frame
+            if self._pumpkin_glow_frame == 0:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE) | curses.A_BOLD
+            elif self._pumpkin_glow_frame == 1:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE)
+            else:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE) | curses.A_DIM
+            for row_idx, row in enumerate(self.PUMPKIN):
+                for col_idx, char in enumerate(row):
+                    px = pumpkin_x + col_idx
+                    py = pumpkin_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_easter_eggs(self, screen):
+        """Render Easter eggs hidden around the scene."""
+        if not self._easter_mode:
+            return
+        egg_colors = [Colors.EASTER_PINK, Colors.EASTER_CYAN, Colors.EASTER_LAVENDER,
+                      Colors.XMAS_YELLOW, Colors.XMAS_GREEN]
+        for egg_x, egg_y, color_idx in self._easter_egg_positions:
+            attr = curses.color_pair(egg_colors[color_idx % len(egg_colors)]) | curses.A_BOLD
+            for row_idx, row in enumerate(self.EASTER_EGG):
+                for col_idx, char in enumerate(row):
+                    px = egg_x + col_idx
+                    py = egg_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
                         except curses.error:
                             pass
 
@@ -3347,6 +3590,33 @@ class AlleyScene:
         if pine_x + len(self.PINE_TREE[0]) < self.width - 2 and pine_y > 0:
             self._pine_tree_positions.append((pine_x, pine_y))
             self._draw_pine_tree(pine_x, pine_y)
+
+        # Place pumpkins during Halloween (near trees and buildings)
+        if self._halloween_mode:
+            self._pumpkin_positions = []
+            # Pumpkin near each tree
+            for tree_x, tree_y in self._tree_positions:
+                pumpkin_x = tree_x + random.randint(-3, 3)
+                pumpkin_y = ground_y - 3  # On ground level
+                if 0 < pumpkin_x < self.width - 10:
+                    self._pumpkin_positions.append((pumpkin_x, pumpkin_y))
+            # Extra pumpkin near cafe door
+            self._pumpkin_positions.append((self.cafe_x + 2, ground_y - 3))
+
+        # Place easter eggs during Easter (hidden around scene)
+        if self._easter_mode:
+            self._easter_egg_positions = []
+            # Hide eggs near trees
+            for i, (tree_x, tree_y) in enumerate(self._tree_positions):
+                egg_x = tree_x + random.randint(-2, 5)
+                egg_y = ground_y - 3
+                if 0 < egg_x < self.width - 6:
+                    self._easter_egg_positions.append((egg_x, egg_y, i))
+            # Hide eggs near cafe
+            self._easter_egg_positions.append((self.cafe_x + 5, ground_y - 3, 3))
+            # Hide eggs near buildings
+            if hasattr(self, '_building_x'):
+                self._easter_egg_positions.append((self._building_x + 8, ground_y - 3, 4))
 
         # Draw crosswalk between cafe and right building (shifted right 12 chars total)
         # cafe_right already calculated above
@@ -4147,6 +4417,12 @@ class AlleyScene:
 
         # Update Christmas lights (secret event Dec 20-31)
         self._update_christmas_lights()
+
+        # Update Halloween pumpkin glow (secret event Oct 24-31)
+        self._update_halloween()
+
+        # Update 4th of July fireworks (secret event Jul 1-7)
+        self._update_fireworks()
 
     def _update_cars(self):
         """Update car/truck/semi positions and spawn new vehicles."""
@@ -5000,6 +5276,11 @@ class AlleyScene:
         # Render trees as foreground layer (in front of buildings)
         self._render_trees(screen)
         self._render_pine_trees(screen)
+
+        # Render holiday events
+        self._render_fireworks(screen)  # 4th of July fireworks in sky
+        self._render_pumpkins(screen)   # Halloween pumpkins near trees
+        self._render_easter_eggs(screen)  # Easter eggs hidden in scene
 
         # Render sidewalk/curb on top of scene but behind all sprites
         self._render_sidewalk(screen)

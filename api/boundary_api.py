@@ -16,6 +16,7 @@ import socket
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -417,6 +418,16 @@ class BoundaryAPIServer:
 
         elif command == 'query':
             return self._handle_query(params)
+
+        # Dashboard commands
+        elif command == 'get_alerts':
+            return self._handle_get_alerts(params)
+
+        elif command == 'get_sandboxes':
+            return self._handle_get_sandboxes()
+
+        elif command == 'get_siem_status':
+            return self._handle_get_siem_status()
 
         else:
             return {'error': f'Unknown command: {command}'}
@@ -1235,6 +1246,119 @@ class BoundaryAPIServer:
 
         except (AttributeError, RuntimeError, ConnectionError, TimeoutError) as e:
             # Report generator not available or Ollama connection failed
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_alerts(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get active alerts from daemon monitors.
+
+        Params:
+            limit: int (optional) - Maximum number of alerts to return
+        """
+        try:
+            alerts = []
+            limit = params.get('limit', 50)
+
+            # Collect alerts from various monitors if available
+            if hasattr(self.daemon, 'health_monitor') and self.daemon.health_monitor:
+                try:
+                    health_alerts = self.daemon.health_monitor.get_alerts(limit=limit)
+                    for alert in health_alerts:
+                        alerts.append({
+                            'alert_id': getattr(alert, 'alert_id', str(id(alert))),
+                            'timestamp': getattr(alert, 'timestamp', datetime.now()).isoformat() if hasattr(alert, 'timestamp') else datetime.now().isoformat(),
+                            'severity': getattr(alert, 'severity', 'MEDIUM'),
+                            'message': getattr(alert, 'message', str(alert)),
+                            'status': getattr(alert, 'status', 'NEW'),
+                            'source': 'health_monitor',
+                        })
+                except Exception:
+                    pass
+
+            if hasattr(self.daemon, 'resource_monitor') and self.daemon.resource_monitor:
+                try:
+                    resource_alerts = self.daemon.resource_monitor.get_alerts(limit=limit)
+                    for alert in resource_alerts:
+                        alerts.append({
+                            'alert_id': getattr(alert, 'alert_id', str(id(alert))),
+                            'timestamp': getattr(alert, 'timestamp', datetime.now()).isoformat() if hasattr(alert, 'timestamp') else datetime.now().isoformat(),
+                            'severity': getattr(alert, 'severity', 'MEDIUM'),
+                            'message': getattr(alert, 'message', str(alert)),
+                            'status': getattr(alert, 'status', 'NEW'),
+                            'source': 'resource_monitor',
+                        })
+                except Exception:
+                    pass
+
+            # Sort by timestamp descending and limit
+            alerts.sort(key=lambda x: x['timestamp'], reverse=True)
+            alerts = alerts[:limit]
+
+            return {'success': True, 'alerts': alerts}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_sandboxes(self) -> Dict[str, Any]:
+        """Get active sandbox status."""
+        try:
+            sandboxes = []
+
+            # Check if sandbox manager is available
+            if hasattr(self.daemon, 'sandbox_manager') and self.daemon.sandbox_manager:
+                try:
+                    for sandbox_id, sandbox in self.daemon.sandbox_manager.sandboxes.items():
+                        sandboxes.append({
+                            'sandbox_id': sandbox_id,
+                            'profile': getattr(sandbox, 'profile', 'standard'),
+                            'status': getattr(sandbox, 'status', 'unknown'),
+                            'memory_used': getattr(sandbox, 'memory_used', 0),
+                            'memory_limit': getattr(sandbox, 'memory_limit', 0),
+                            'cpu_percent': getattr(sandbox, 'cpu_percent', 0.0),
+                            'uptime': getattr(sandbox, 'uptime', 0.0),
+                        })
+                except Exception:
+                    pass
+
+            return {'success': True, 'sandboxes': sandboxes}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _handle_get_siem_status(self) -> Dict[str, Any]:
+        """Get SIEM integration status."""
+        try:
+            # Try to get SIEM integration status
+            try:
+                from daemon.security.siem_integration import get_siem
+                siem = get_siem()
+                if siem and siem.connector:
+                    stats = siem.connector.get_stats()
+                    return {
+                        'success': True,
+                        'siem_status': {
+                            'connected': stats.get('connected', False),
+                            'backend': siem.config.transport.value if hasattr(siem.config, 'transport') else 'unknown',
+                            'queue_depth': stats.get('buffer_size', 0),
+                            'events_shipped_today': stats.get('events_sent', 0),
+                            'last_ship_time': stats.get('last_send_time', ''),
+                            'errors_today': stats.get('send_failures', 0),
+                        }
+                    }
+            except ImportError:
+                pass
+
+            # Return disconnected status if SIEM not available
+            return {
+                'success': True,
+                'siem_status': {
+                    'connected': False,
+                    'backend': 'none',
+                    'queue_depth': 0,
+                    'events_shipped_today': 0,
+                    'last_ship_time': '',
+                    'errors_today': 0,
+                }
+            }
+        except Exception as e:
             return {'success': False, 'error': str(e)}
 
 
