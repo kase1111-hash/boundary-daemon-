@@ -181,7 +181,7 @@ class Colors:
     XMAS_YELLOW = 45     # Yellow Christmas light
     # Halloween colors (secret event Oct 24-31)
     HALLOWEEN_ORANGE = 46  # Orange pumpkin glow
-    HALLOWEEN_PURPLE = 47  # Spooky purple
+    HALLOWEEN_PURPLE = 53  # Spooky purple (was 47, conflicted with CAFE_GREEN)
     # Firework colors (4th of July Jul 1-7)
     FIREWORK_WHITE = 48   # White burst
     FIREWORK_MAGENTA = 49 # Magenta burst
