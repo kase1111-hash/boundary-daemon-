@@ -228,8 +228,7 @@ class Colors:
         # Lightning flash - inverted bright white on green
         curses.init_pair(Colors.LIGHTNING, curses.COLOR_BLACK, curses.COLOR_WHITE)
         # Alley scene colors - muted blue and grey
-        # ALLEY_DARK uses blue for visible dark shadows (black on black is invisible)
-        curses.init_pair(Colors.ALLEY_DARK, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.ALLEY_DARK, curses.COLOR_BLACK, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_MID, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_LIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
         curses.init_pair(Colors.ALLEY_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
@@ -5449,13 +5448,13 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw vanishing street with hashtag crosswalk at the bottom."""
+        """Draw vanishing street with hashtag crosswalk at sidewalk level."""
         crosswalk_width = 32
 
-        # Draw hashtag (#) crosswalk pattern at street level
-        # Pattern: horizontal bars with vertical stripes
-        hashtag_height = 4  # Height of crosswalk pattern
-        hashtag_start_y = curb_y - hashtag_height  # Start above curb
+        # Draw hashtag (#) crosswalk pattern at sidewalk/street level
+        # Pattern: horizontal bars with vertical stripes forming a grid
+        hashtag_height = 3  # Height of crosswalk pattern
+        hashtag_start_y = street_y - hashtag_height + 1  # At street level
 
         for cy in range(hashtag_height):
             py = hashtag_start_y + cy
@@ -5471,12 +5470,12 @@ class AlleyScene:
                             self.scene[py][px] = ('║', Colors.ALLEY_LIGHT)
                         else:
                             # Street surface between stripes
-                            self.scene[py][px] = ('▒', Colors.ALLEY_DARK)
+                            self.scene[py][px] = ('▒', Colors.ALLEY_MID)
 
-        # Draw vanishing street effect above the crosswalk
-        # Starts above crosswalk and ends at lower 1/5th of screen
+        # Draw vanishing street effect above the curb
+        # Starts at curb and ends at lower 1/5th of screen
         vanish_end_y = self.height - (self.height // 5)  # Lower 1/5th of screen
-        vanish_start_y = hashtag_start_y - 1  # Just above crosswalk
+        vanish_start_y = curb_y - 1  # Just above curb
 
         # Calculate crosswalk center for vanishing point
         crosswalk_center = x + crosswalk_width // 2
@@ -7321,8 +7320,6 @@ class DashboardClient:
     def __init__(self, socket_path: Optional[str] = None):
         self.socket_path = socket_path
         self._connected = False
-        self._demo_mode = False
-        self._demo_event_offset = 0
         self._use_tcp = False  # Flag for Windows TCP mode
         self._log_file_path = None  # Path to daemon log file for offline mode
 
@@ -7359,11 +7356,9 @@ class DashboardClient:
 
         if not self._connected:
             if self._log_file_path and os.path.exists(self._log_file_path):
-                self._demo_mode = False  # Not demo mode - reading real logs
                 logger.info(f"Daemon not connected, reading events from {self._log_file_path}")
             else:
-                self._demo_mode = True
-                logger.info("Daemon not available and no log file found, running in demo mode")
+                logger.info("Daemon not available, no log file found")
 
     def _find_log_file(self) -> Optional[str]:
         """Find the daemon log file for reading real events offline."""
@@ -7792,7 +7787,6 @@ class DashboardClient:
     def connect(self) -> bool:
         """Test connection to daemon."""
         self._connected = self._test_connection()
-        self._demo_mode = not self._connected
         return self._connected
 
     def reconnect(self) -> bool:
@@ -7812,7 +7806,6 @@ class DashboardClient:
                     self._use_tcp = False
                     if self._test_connection():
                         self._connected = True
-                        self._demo_mode = False
                         logger.info(f"Connected to daemon at {path}")
                         return True
                     self.socket_path = old_path
@@ -7820,7 +7813,6 @@ class DashboardClient:
         # Try TCP connection (Windows primary, Unix fallback)
         if self._try_tcp_connection():
             self._connected = True
-            self._demo_mode = False
             self._use_tcp = True
             logger.info(f"Connected to daemon via TCP {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
             return True
@@ -7828,14 +7820,11 @@ class DashboardClient:
         return False
 
     def is_demo_mode(self) -> bool:
-        """Check if running in demo mode."""
-        return self._demo_mode
+        """Check if running in demo mode (always False - demo mode removed)."""
+        return False
 
     def get_status(self) -> Dict:
-        """Get daemon status."""
-        if self._demo_mode:
-            return self._demo_status()
-
+        """Get daemon status from connection or log file."""
         # Try live connection first
         if self._connected:
             response = self._send_request('status')
@@ -7858,13 +7847,21 @@ class DashboardClient:
         if self._log_file_path:
             return self._read_status_from_log()
 
-        return self._demo_status()
+        # No connection and no log file - return empty status
+        return {
+            'mode': 'OFFLINE',
+            'mode_since': datetime.utcnow().isoformat(),
+            'uptime': 0,
+            'events_today': 0,
+            'violations': 0,
+            'tripwire_enabled': False,
+            'clock_monitor_enabled': False,
+            'network_attestation_enabled': False,
+            'is_frozen': False,
+        }
 
     def get_events(self, limit: int = 20) -> List[DashboardEvent]:
-        """Get recent events."""
-        if self._demo_mode:
-            return self._demo_events(limit)
-
+        """Get recent events from connection or log file."""
         # Try live connection first
         if self._connected:
             response = self._send_request('get_events', {'count': limit})
@@ -7884,13 +7881,11 @@ class DashboardClient:
         if self._log_file_path:
             return self._read_events_from_log(limit)
 
-        return self._demo_events(limit)
+        # No connection and no log file - return empty list
+        return []
 
     def get_alerts(self) -> List[DashboardAlert]:
-        """Get active alerts."""
-        if self._demo_mode:
-            return self._demo_alerts()
-
+        """Get active alerts from daemon."""
         # Try to get alerts from daemon
         response = self._send_request('get_alerts')
         if response.get('success'):
@@ -7905,13 +7900,10 @@ class DashboardClient:
                     source=a.get('source', ''),
                 ))
             return alerts
-        return self._demo_alerts()
+        return []
 
     def get_sandboxes(self) -> List[SandboxStatus]:
         """Get active sandboxes."""
-        if self._demo_mode:
-            return self._demo_sandboxes()
-
         response = self._send_request('get_sandboxes')
         if response.get('success'):
             sandboxes = []
@@ -7926,22 +7918,19 @@ class DashboardClient:
                     uptime=s.get('uptime', 0),
                 ))
             return sandboxes
-        return self._demo_sandboxes()
+        return []
 
     def get_siem_status(self) -> Dict:
         """Get SIEM shipping status."""
-        if self._demo_mode:
-            return self._demo_siem()
-
         response = self._send_request('get_siem_status')
         if response.get('success'):
-            return response.get('siem_status', self._demo_siem())
-        return self._demo_siem()
+            return response.get('siem_status', {})
+        return {'events_shipped_today': 0, 'last_ship_time': None, 'queue_size': 0}
 
     def set_mode(self, mode: str, reason: str = '') -> Tuple[bool, str]:
         """Request mode change."""
-        if self._demo_mode:
-            return False, "Demo mode - daemon not connected"
+        if not self._connected:
+            return False, "Daemon not connected"
 
         response = self._send_request('set_mode', {
             'mode': mode.lower(),
@@ -7954,8 +7943,8 @@ class DashboardClient:
 
     def acknowledge_alert(self, alert_id: str) -> Tuple[bool, str]:
         """Acknowledge an alert."""
-        if self._demo_mode:
-            return True, "Demo mode - alert acknowledged locally"
+        if not self._connected:
+            return False, "Daemon not connected"
 
         response = self._send_request('acknowledge_alert', {'alert_id': alert_id})
         if response.get('success'):
@@ -7965,8 +7954,9 @@ class DashboardClient:
     def export_events(self, start_time: Optional[str] = None,
                       end_time: Optional[str] = None) -> List[Dict]:
         """Export events for a time range."""
-        if self._demo_mode:
-            return [e.__dict__ for e in self._demo_events(100)]
+        if self._log_file_path:
+            events = self._read_events_from_log(100)
+            return [e.__dict__ for e in events]
 
         params = {}
         if start_time:
@@ -7979,126 +7969,6 @@ class DashboardClient:
         if response.get('success'):
             return response.get('events', [])
         return []
-
-    # Demo mode data generators
-    def _demo_status(self) -> Dict:
-        """Generate demo status."""
-        modes = ['TRUSTED', 'RESTRICTED', 'AIRGAP']
-        return {
-            'mode': modes[int(time.time() / 30) % len(modes)],
-            'mode_since': datetime.utcnow().isoformat(),
-            'uptime': int(time.time()) % 86400,
-            'events_today': 1247 + int(time.time()) % 100,
-            'violations': random.randint(0, 2),
-            'tripwire_enabled': True,
-            'clock_monitor_enabled': True,
-            'network_attestation_enabled': True,
-            'is_frozen': False,
-        }
-
-    def _demo_events(self, limit: int) -> List[DashboardEvent]:
-        """Generate demo events with variety."""
-        events = []
-        base_time = datetime.utcnow()
-        self._demo_event_offset = (self._demo_event_offset + 1) % 100
-
-        event_types = [
-            ("MODE_CHANGE", "INFO", "Mode transitioned to TRUSTED"),
-            ("POLICY_DECISION", "INFO", "Tool request approved: file_read"),
-            ("SANDBOX_START", "INFO", "Sandbox sandbox-{:03d} started"),
-            ("TOOL_REQUEST", "INFO", "Agent requested network access"),
-            ("HEALTH_CHECK", "INFO", "Health check passed"),
-            ("API_REQUEST", "INFO", "API request from integration"),
-            ("TRIPWIRE", "WARN", "File modification detected: /etc/passwd"),
-            ("CLOCK_DRIFT", "WARN", "Clock drift detected: 45s"),
-            ("VIOLATION", "ERROR", "Unauthorized tool access attempt"),
-            ("PII_DETECTED", "WARN", "PII detected in agent output"),
-        ]
-
-        for i in range(min(limit, 15)):
-            idx = (i + self._demo_event_offset) % len(event_types)
-            etype, sev, details = event_types[idx]
-            details = details.format(i) if '{' in details else details
-            events.append(DashboardEvent(
-                timestamp=(base_time - timedelta(seconds=i*30 + random.randint(0, 10))).isoformat(),
-                event_type=etype,
-                details=details,
-                severity=sev,
-            ))
-
-        return events
-
-    def _demo_alerts(self) -> List[DashboardAlert]:
-        """Generate demo alerts."""
-        alerts = [
-            DashboardAlert(
-                alert_id="alert-001",
-                timestamp=datetime.utcnow().isoformat(),
-                severity="HIGH",
-                message="Prompt injection attempt detected in agent input",
-                status="NEW",
-                source="prompt_injection",
-            ),
-            DashboardAlert(
-                alert_id="alert-002",
-                timestamp=(datetime.utcnow() - timedelta(hours=1)).isoformat(),
-                severity="MEDIUM",
-                message="Clock drift warning (150s) - NTP sync recommended",
-                status="ACKNOWLEDGED",
-                source="clock_monitor",
-            ),
-        ]
-        # Randomly add more alerts
-        if random.random() < 0.3:
-            alerts.append(DashboardAlert(
-                alert_id=f"alert-{random.randint(100, 999)}",
-                timestamp=(datetime.utcnow() - timedelta(minutes=random.randint(5, 60))).isoformat(),
-                severity=random.choice(["LOW", "MEDIUM", "HIGH"]),
-                message=random.choice([
-                    "Unusual network activity detected",
-                    "Memory usage threshold exceeded",
-                    "Configuration file modified",
-                    "Authentication failure detected",
-                ]),
-                status="NEW",
-                source="monitor",
-            ))
-        return alerts
-
-    def _demo_sandboxes(self) -> List[SandboxStatus]:
-        """Generate demo sandbox status."""
-        sandboxes = [
-            SandboxStatus(
-                sandbox_id="sandbox-001",
-                profile="standard",
-                status="running",
-                memory_used=256*1024*1024 + random.randint(0, 100*1024*1024),
-                memory_limit=1024*1024*1024,
-                cpu_percent=25.5 + random.random() * 20,
-                uptime=1800 + int(time.time()) % 3600,
-            ),
-        ]
-        if random.random() < 0.5:
-            sandboxes.append(SandboxStatus(
-                sandbox_id="sandbox-002",
-                profile="restricted",
-                status="running",
-                memory_used=128*1024*1024 + random.randint(0, 50*1024*1024),
-                memory_limit=512*1024*1024,
-                cpu_percent=10.0 + random.random() * 15,
-                uptime=600 + random.randint(0, 600),
-            ))
-        return sandboxes
-
-    def _demo_siem(self) -> Dict:
-        """Generate demo SIEM status."""
-        return {
-            'connected': True,
-            'backend': 'kafka',
-            'last_shipped': datetime.utcnow().isoformat(),
-            'queue_depth': random.randint(5, 50),
-            'events_shipped_today': 5432 + int(time.time()) % 1000,
-        }
 
 
 class Dashboard:
