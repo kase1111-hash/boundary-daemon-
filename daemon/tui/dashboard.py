@@ -164,6 +164,11 @@ class Colors:
     TEXT_RAIN = 39       # Blue-tinted text for rain mode
     TEXT_SNOW = 40       # White text for snow mode
     TEXT_SAND = 41       # Yellow/tan text for sand mode
+    # Christmas light colors (secret event Dec 20-31)
+    XMAS_RED = 42        # Red Christmas light
+    XMAS_GREEN = 43      # Green Christmas light
+    XMAS_BLUE = 44       # Blue Christmas light
+    XMAS_YELLOW = 45     # Yellow Christmas light
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -249,6 +254,11 @@ class Colors:
         curses.init_pair(Colors.TEXT_RAIN, curses.COLOR_CYAN, curses.COLOR_BLACK)  # Blue/cyan for rain
         curses.init_pair(Colors.TEXT_SNOW, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White for snow
         curses.init_pair(Colors.TEXT_SAND, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Yellow/tan for sand
+        # Christmas light colors
+        curses.init_pair(Colors.XMAS_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -1955,6 +1965,11 @@ class AlleyScene:
         self._wind_wisp_timer = 0
         self._tree_positions: List[Tuple[int, int]] = []  # (x, y) for trees
         self._pine_tree_positions: List[Tuple[int, int]] = []  # (x, y) for pine trees
+
+        # Christmas lights (secret event Dec 20-31)
+        self._christmas_mode = self._check_christmas_week()
+        self._christmas_light_frame = 0
+        self._christmas_light_timer = 0
         self._tree_sway_frame = 0
         # Wind direction: 1 = blowing right (from left), -1 = blowing left (from right)
         self._wind_direction = 1
@@ -2040,6 +2055,21 @@ class AlleyScene:
         self._qte_explosions = []
         self._init_clouds()  # Reinit clouds for new size
         self._generate_scene()
+
+    def _check_christmas_week(self) -> bool:
+        """Check if it's Christmas week (Dec 20-31) for secret lights event."""
+        today = datetime.now()
+        return today.month == 12 and today.day >= 20
+
+    def _update_christmas_lights(self):
+        """Update Christmas light animation frame."""
+        if not self._christmas_mode:
+            return
+        self._christmas_light_timer += 1
+        # Change light pattern every 15 frames (~4 times per second at 60fps)
+        if self._christmas_light_timer >= 15:
+            self._christmas_light_timer = 0
+            self._christmas_light_frame = (self._christmas_light_frame + 1) % 4
 
     def _init_clouds(self):
         """Initialize cloud layer with cumulus clouds and wisps."""
@@ -2961,6 +2991,10 @@ class AlleyScene:
         """Render pine trees on top of buildings (foreground layer)."""
         if not hasattr(self, '_pine_tree_positions'):
             return
+
+        # Christmas light colors cycle through 4 patterns
+        xmas_colors = [Colors.XMAS_RED, Colors.XMAS_GREEN, Colors.XMAS_BLUE, Colors.XMAS_YELLOW]
+
         for tree_x, tree_y in self._pine_tree_positions:
             # Use windy pine sprite based on wind direction
             if self._wind_direction > 0:
@@ -2974,17 +3008,37 @@ class AlleyScene:
                     py = tree_y + row_idx
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
-                            if char == '*':
-                                # Star on top - yellow
-                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
-                            elif char in '/\\|':
-                                # Pine needles and trunk - green
-                                attr = curses.color_pair(Colors.MATRIX_DIM)
-                            else:
-                                attr = curses.color_pair(Colors.ALLEY_MID)
-                            screen.attron(attr)
-                            screen.addstr(py, px, char)
-                            screen.attroff(attr)
+                            # Check for Christmas lights on branch rows (rows 1-6 have branches)
+                            is_light = False
+                            if self._christmas_mode and row_idx >= 1 and row_idx <= 6:
+                                # Place lights on alternating positions along branches
+                                # Pattern shifts with frame to create "chasing" effect
+                                light_pattern = (col_idx + self._christmas_light_frame) % 3 == 0
+                                if char in '/\\' and light_pattern:
+                                    is_light = True
+                                    # Cycle color based on position and frame
+                                    color_idx = (col_idx + row_idx + self._christmas_light_frame) % 4
+                                    attr = curses.color_pair(xmas_colors[color_idx]) | curses.A_BOLD
+                                    screen.attron(attr)
+                                    screen.addstr(py, px, 'o')  # Light bulb
+                                    screen.attroff(attr)
+
+                            if not is_light:
+                                if char == '*':
+                                    # Star on top - yellow (extra bright during Christmas)
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                    if self._christmas_mode:
+                                        # Blink the star
+                                        if self._christmas_light_frame % 2 == 0:
+                                            attr |= curses.A_BLINK if hasattr(curses, 'A_BLINK') else 0
+                                elif char in '/\\|':
+                                    # Pine needles and trunk - green
+                                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
                         except curses.error:
                             pass
 
@@ -4090,6 +4144,9 @@ class AlleyScene:
 
         # Update meteor damage overlays
         self._update_damage_overlays()
+
+        # Update Christmas lights (secret event Dec 20-31)
+        self._update_christmas_lights()
 
     def _update_cars(self):
         """Update car/truck/semi positions and spawn new vehicles."""

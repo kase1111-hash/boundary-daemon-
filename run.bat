@@ -29,11 +29,11 @@ if %errorlevel% neq 0 (
 
 :: Kill any existing daemon processes
 echo Stopping any existing daemon processes...
-taskkill /F /IM python.exe /FI "WINDOWTITLE eq boundary*" >nul 2>&1
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq Boundary Daemon" >nul 2>&1
 
-:: Start daemon in a new minimized window (not fully hidden, so we can debug)
+:: Start daemon in a new minimized window with logging
 echo Starting Boundary Daemon...
-start /MIN "Boundary Daemon" cmd /c "python -m daemon --mode trusted 2>&1 | tee daemon.log"
+start /MIN "Boundary Daemon" cmd /c "python -m daemon --mode trusted > daemon.log 2>&1"
 
 :: Wait for daemon to initialize and create TCP listener
 echo Waiting for daemon to initialize (checking TCP port 19847)...
@@ -49,16 +49,38 @@ if %errorlevel% equ 0 (
     goto :DAEMON_READY
 )
 
-if %RETRIES% lss 10 (
-    echo   Still waiting... [%RETRIES%/10]
+:: Also check if log file has content (daemon started but maybe errored)
+if exist daemon.log (
+    for %%A in (daemon.log) do if %%~zA gtr 100 (
+        echo Daemon log has content, checking for errors...
+        findstr /i "error exception traceback" daemon.log >nul
+        if %errorlevel% equ 0 (
+            echo.
+            echo ERROR: Daemon failed to start. Check daemon.log:
+            echo ----------------------------------------
+            type daemon.log
+            echo ----------------------------------------
+            pause
+            exit /b 1
+        )
+    )
+)
+
+if %RETRIES% lss 15 (
+    echo   Still waiting... [%RETRIES%/15]
     goto :WAIT_LOOP
 )
 
 echo.
 echo WARNING: Daemon may not have started properly.
-echo Check daemon.log for errors.
-echo Continuing anyway...
+echo Check daemon.log for errors:
+if exist daemon.log (
+    type daemon.log
+) else (
+    echo [daemon.log not found]
+)
 echo.
+pause
 
 :DAEMON_READY
 :: Start the Matrix TUI (visible)
