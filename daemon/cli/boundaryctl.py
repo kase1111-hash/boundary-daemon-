@@ -12,6 +12,7 @@ Commands:
     config          Configuration management
     case            Case management
     ceremony        Start a ceremony
+    wallpaper       Run dashboard as Windows wallpaper (via Lively)
 
 Usage:
     boundaryctl status
@@ -23,6 +24,8 @@ Usage:
     boundaryctl config lint --fix
     boundaryctl case list
     boundaryctl case show CASE-20240101-abc123
+    boundaryctl wallpaper start
+    boundaryctl wallpaper stop
 
 Environment:
     BOUNDARY_SOCKET   Path to daemon socket
@@ -249,6 +252,114 @@ def cmd_ceremony(args):
         return 1
 
 
+def cmd_wallpaper(args):
+    """Wallpaper management - run dashboard as Windows wallpaper via Lively."""
+    import sys
+
+    if sys.platform != 'win32':
+        print("Wallpaper mode is only supported on Windows.")
+        print("Lively Wallpaper is a Windows-only application.")
+        return 1
+
+    try:
+        from daemon.wallpaper.lively import LivelyWallpaper, LivelyNotFoundError
+    except ImportError:
+        print("Wallpaper module not available. Run from daemon directory.")
+        return 1
+
+    try:
+        lively = LivelyWallpaper()
+    except Exception as e:
+        print(f"Failed to initialize Lively integration: {e}")
+        return 1
+
+    if args.wallpaper_cmd == 'start':
+        if not lively.is_installed:
+            print("Lively Wallpaper not found!")
+            print()
+            print("Install Lively Wallpaper (free) from:")
+            print("  Microsoft Store: https://apps.microsoft.com/detail/9NTM2QC6QWS7")
+            print("  GitHub: https://github.com/rocksdanister/lively/releases")
+            return 1
+
+        print("Starting Boundary Daemon Matrix wallpaper...")
+        monitor = getattr(args, 'monitor', 0)
+        try:
+            if lively.start(monitor=monitor):
+                print("Wallpaper started successfully!")
+                print()
+                print("Controls:")
+                print("  boundaryctl wallpaper stop    - Stop wallpaper")
+                print("  boundaryctl wallpaper pause   - Pause animation")
+                print("  boundaryctl wallpaper resume  - Resume animation")
+                print("  boundaryctl wallpaper mute    - Mute audio")
+                return 0
+            else:
+                print("Failed to start wallpaper.")
+                return 1
+        except LivelyNotFoundError as e:
+            print(str(e))
+            return 1
+
+    elif args.wallpaper_cmd == 'stop':
+        print("Stopping wallpaper...")
+        if lively.stop():
+            print("Wallpaper stopped.")
+            return 0
+        else:
+            print("Failed to stop wallpaper (may not be running).")
+            return 1
+
+    elif args.wallpaper_cmd == 'pause':
+        if lively.pause():
+            print("Wallpaper paused.")
+            return 0
+        else:
+            print("Failed to pause wallpaper.")
+            return 1
+
+    elif args.wallpaper_cmd == 'resume':
+        if lively.resume():
+            print("Wallpaper resumed.")
+            return 0
+        else:
+            print("Failed to resume wallpaper.")
+            return 1
+
+    elif args.wallpaper_cmd == 'mute':
+        if lively.set_volume(0):
+            print("Wallpaper audio muted.")
+            return 0
+        else:
+            print("Failed to mute audio.")
+            return 1
+
+    elif args.wallpaper_cmd == 'unmute':
+        volume = getattr(args, 'volume', 50)
+        if lively.set_volume(volume):
+            print(f"Wallpaper audio set to {volume}%.")
+            return 0
+        else:
+            print("Failed to set audio volume.")
+            return 1
+
+    elif args.wallpaper_cmd == 'status':
+        status = lively.get_status()
+        print("Lively Wallpaper Status:")
+        print(f"  Installed: {'Yes' if status['installed'] else 'No'}")
+        print(f"  Platform: {status['platform']}")
+        print(f"  Supported: {'Yes' if status['supported'] else 'No'}")
+        if status['lively_path']:
+            print(f"  Lively Path: {status['lively_path']}")
+        if status['library_path']:
+            print(f"  Library Path: {status['library_path']}")
+        return 0
+
+    else:
+        print("Unknown wallpaper command. Use: start, stop, pause, resume, mute, unmute, status")
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='boundaryctl',
@@ -331,6 +442,27 @@ def main():
     ceremony_parser = subparsers.add_parser('ceremony', help='Start a ceremony')
     ceremony_parser.add_argument('ceremony_type', choices=['mode_override', 'emergency_access', 'data_export'])
     ceremony_parser.set_defaults(func=cmd_ceremony)
+
+    # wallpaper - Lively Wallpaper integration (Windows only)
+    wallpaper_parser = subparsers.add_parser('wallpaper', help='Run dashboard as Windows wallpaper (via Lively)')
+    wallpaper_sub = wallpaper_parser.add_subparsers(dest='wallpaper_cmd')
+
+    wp_start = wallpaper_sub.add_parser('start', help='Start dashboard as wallpaper')
+    wp_start.add_argument('--monitor', '-m', type=int, default=0,
+                          help='Monitor index (0=primary, -1=all)')
+
+    wallpaper_sub.add_parser('stop', help='Stop wallpaper')
+    wallpaper_sub.add_parser('pause', help='Pause wallpaper animation')
+    wallpaper_sub.add_parser('resume', help='Resume wallpaper animation')
+    wallpaper_sub.add_parser('mute', help='Mute wallpaper audio')
+
+    wp_unmute = wallpaper_sub.add_parser('unmute', help='Unmute wallpaper audio')
+    wp_unmute.add_argument('--volume', '-v', type=int, default=50,
+                           help='Volume level 0-100 (default: 50)')
+
+    wallpaper_sub.add_parser('status', help='Show Lively installation status')
+
+    wallpaper_parser.set_defaults(func=cmd_wallpaper)
 
     args = parser.parse_args()
 
