@@ -164,6 +164,21 @@ class Colors:
     TEXT_RAIN = 39       # Blue-tinted text for rain mode
     TEXT_SNOW = 40       # White text for snow mode
     TEXT_SAND = 41       # Yellow/tan text for sand mode
+    # Christmas light colors (secret event Dec 20-31)
+    XMAS_RED = 42        # Red Christmas light
+    XMAS_GREEN = 43      # Green Christmas light
+    XMAS_BLUE = 44       # Blue Christmas light
+    XMAS_YELLOW = 45     # Yellow Christmas light
+    # Halloween colors (secret event Oct 24-31)
+    HALLOWEEN_ORANGE = 46  # Orange pumpkin glow
+    HALLOWEEN_PURPLE = 47  # Spooky purple
+    # Firework colors (4th of July Jul 1-7)
+    FIREWORK_WHITE = 48   # White burst
+    FIREWORK_MAGENTA = 49 # Magenta burst
+    # Easter colors
+    EASTER_PINK = 50      # Pink easter egg
+    EASTER_CYAN = 51      # Cyan easter egg
+    EASTER_LAVENDER = 52  # Lavender easter egg
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -249,6 +264,21 @@ class Colors:
         curses.init_pair(Colors.TEXT_RAIN, curses.COLOR_CYAN, curses.COLOR_BLACK)  # Blue/cyan for rain
         curses.init_pair(Colors.TEXT_SNOW, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White for snow
         curses.init_pair(Colors.TEXT_SAND, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Yellow/tan for sand
+        # Christmas light colors
+        curses.init_pair(Colors.XMAS_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_BLUE, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.XMAS_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Halloween colors
+        curses.init_pair(Colors.HALLOWEEN_ORANGE, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Orange via yellow
+        curses.init_pair(Colors.HALLOWEEN_PURPLE, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        # Firework colors
+        curses.init_pair(Colors.FIREWORK_WHITE, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.FIREWORK_MAGENTA, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        # Easter colors
+        curses.init_pair(Colors.EASTER_PINK, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        curses.init_pair(Colors.EASTER_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.EASTER_LAVENDER, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -1442,6 +1472,136 @@ class AlleyScene:
     WIND_WISPS = ['~', '≈', '≋', '～', '-', '=']
 
     # ==========================================
+    # HOLIDAY EVENT SPRITES
+    # ==========================================
+
+    # Pumpkin sprite (Halloween Oct 24-31)
+    PUMPKIN = [
+        " ,---, ",
+        "(o ^ o)",
+        " \\___/ ",
+    ]
+
+    # Spooky bare tree (Halloween - replaces regular trees)
+    SPOOKY_TREE = [
+        "    \\|/    ",
+        "   --+--   ",
+        "  / | \\  ",
+        " /  |  \\ ",
+        "    |     ",
+        "   _|_    ",
+    ]
+
+    # Easter egg patterns (simple colored eggs)
+    EASTER_EGG = [
+        " /\\ ",
+        "(  )",
+        " \\/ ",
+    ]
+
+    # Firework burst patterns
+    FIREWORK_BURST = [
+        "  \\ | /  ",
+        " -- * -- ",
+        "  / | \\  ",
+    ]
+
+    FIREWORK_STAR = [
+        "   *   ",
+        " * + * ",
+        "   *   ",
+    ]
+
+    FIREWORK_SHOWER = [
+        " ' ' ' ",
+        "  ' '  ",
+        " ' ' ' ",
+    ]
+
+    # ==========================================
+    # SEASONAL CONSTELLATIONS - Security Canary
+    # Stars tied to memory monitor health
+    # ==========================================
+
+    # Spring constellation: Leo (the lion) - Mar-May
+    # Recognizable by the "sickle" (backwards question mark) and triangle
+    CONSTELLATION_LEO = {
+        'name': 'Leo',
+        'stars': [
+            # Sickle (head) - backwards question mark shape
+            (0, 0, 2),   # Regulus (brightest, alpha)
+            (2, -2, 1),  # Eta Leonis
+            (4, -3, 1),  # Gamma (Algieba)
+            (6, -2, 2),  # Zeta
+            (7, 0, 1),   # Mu
+            (5, 1, 1),   # Epsilon
+            # Body/hindquarters triangle
+            (10, 0, 2),  # Denebola (beta, tail)
+            (8, -1, 1),  # Delta
+            (6, 1, 1),   # Theta
+        ],
+    }
+
+    # Summer constellation: Scorpius (the scorpion) - Jun-Aug
+    # Recognizable by the curved tail and red Antares
+    CONSTELLATION_SCORPIUS = {
+        'name': 'Scorpius',
+        'stars': [
+            # Head/claws
+            (0, 0, 1),   # Graffias (beta)
+            (2, -1, 1),  # Dschubba (delta)
+            (4, 0, 1),   # Pi Scorpii
+            # Body with Antares (heart)
+            (5, 2, 2),   # Antares (alpha, red supergiant)
+            (6, 3, 1),   # Tau
+            # Curved tail
+            (7, 5, 1),   # Epsilon
+            (8, 6, 2),   # Mu
+            (10, 7, 1),  # Zeta
+            (12, 6, 1),  # Eta
+            (14, 5, 2),  # Shaula (lambda, stinger)
+            (15, 4, 1),  # Lesath (upsilon)
+        ],
+    }
+
+    # Fall constellation: Pegasus (the winged horse) - Sep-Nov
+    # Recognizable by the Great Square
+    CONSTELLATION_PEGASUS = {
+        'name': 'Pegasus',
+        'stars': [
+            # The Great Square
+            (0, 0, 2),   # Markab (alpha)
+            (8, 0, 2),   # Scheat (beta)
+            (8, -6, 2),  # Algenib (gamma)
+            (0, -6, 2),  # Alpheratz (actually Andromeda alpha)
+            # Neck and head
+            (-3, 2, 1),  # Homam (zeta)
+            (-6, 3, 1),  # Biham (theta)
+            (-9, 2, 2),  # Enif (epsilon, nose)
+        ],
+    }
+
+    # Winter constellation: Orion (the hunter) - Dec-Feb
+    # Most recognizable - belt of 3 stars, Betelgeuse and Rigel
+    CONSTELLATION_ORION = {
+        'name': 'Orion',
+        'stars': [
+            # Shoulders
+            (0, 0, 2),   # Betelgeuse (alpha, red)
+            (8, 0, 1),   # Bellatrix (gamma)
+            # Belt (3 stars in a row)
+            (2, 3, 2),   # Alnitak (zeta)
+            (4, 3, 2),   # Alnilam (epsilon)
+            (6, 3, 2),   # Mintaka (delta)
+            # Feet
+            (0, 6, 2),   # Saiph (kappa)
+            (8, 6, 2),   # Rigel (beta, blue-white)
+            # Sword (below belt)
+            (4, 5, 1),   # Orion Nebula area
+        ],
+    }
+
+    # ==========================================
     # METEOR QTE EVENT - Quick Time Event
     # ==========================================
 
@@ -1955,7 +2115,56 @@ class AlleyScene:
         self._wind_wisp_timer = 0
         self._tree_positions: List[Tuple[int, int]] = []  # (x, y) for trees
         self._pine_tree_positions: List[Tuple[int, int]] = []  # (x, y) for pine trees
+
+        # Christmas lights (secret event Dec 20-31)
+        self._christmas_mode = self._check_christmas_week()
+        self._christmas_light_frame = 0
+        self._christmas_light_timer = 0
+        # Halloween (secret event Oct 24-31)
+        self._halloween_mode = self._check_halloween_week()
+        self._pumpkin_positions: List[Tuple[int, int]] = []  # (x, y) for pumpkins
+        self._pumpkin_glow_frame = 0
+        self._pumpkin_glow_timer = 0
+        # 4th of July (secret event Jul 1-7)
+        self._july4th_mode = self._check_july4th_week()
+        self._fireworks: List[Dict] = []  # {x, y, frame, color, type}
+        self._firework_timer = 0
+        # Easter (secret event - Sunday in spring)
+        self._easter_mode = self._check_easter_week()
+        self._easter_egg_positions: List[Tuple[int, int, int]] = []  # (x, y, color_idx)
         self._tree_sway_frame = 0
+
+        # ==========================================
+        # SECURITY CANARY SYSTEM
+        # Visual elements tied to daemon monitor health
+        # If monitors fail, scene elements disappear
+        # ==========================================
+        self._security_canary = {
+            'stars': True,          # Tied to memory_monitor
+            'clouds': True,         # Tied to resource_monitor
+            'traffic_lights': True, # Tied to health_monitor
+            'street_lights': True,  # Tied to state_monitor
+            'trees': True,          # Tied to file_integrity
+            'pedestrians': True,    # Tied to process_security
+            'cafe_lights': True,    # Tied to wifi_security
+            'vehicles': True,       # Tied to log_watchdog
+        }
+        self._canary_check_timer = 0
+        self._canary_check_interval = 300  # Check every 5 seconds at 60fps
+
+        # Seasonal constellation (position in sky, based on date)
+        self._constellation = self._get_seasonal_constellation()
+        self._constellation_x = 0  # Set during scene generation
+        self._constellation_y = 0
+        self._star_twinkle_timer = 0
+        self._star_twinkle_frame = 0
+
+        # Scene seeding - deterministic random based on date for consistency
+        # Same date = same scene layout (for screenshot validation)
+        today = datetime.now()
+        self._scene_seed = today.year * 10000 + today.month * 100 + today.day
+        random.seed(self._scene_seed)
+
         # Wind direction: 1 = blowing right (from left), -1 = blowing left (from right)
         self._wind_direction = 1
         self._wind_direction_timer = 0
@@ -2040,6 +2249,183 @@ class AlleyScene:
         self._qte_explosions = []
         self._init_clouds()  # Reinit clouds for new size
         self._generate_scene()
+
+    def _check_christmas_week(self) -> bool:
+        """Check if it's Christmas week (Dec 20-31) for secret lights event."""
+        today = datetime.now()
+        return today.month == 12 and today.day >= 20
+
+    def _check_halloween_week(self) -> bool:
+        """Check if it's Halloween week (Oct 24-31) for spooky event."""
+        today = datetime.now()
+        return today.month == 10 and today.day >= 24
+
+    def _check_july4th_week(self) -> bool:
+        """Check if it's 4th of July week (Jul 1-7) for fireworks event."""
+        today = datetime.now()
+        return today.month == 7 and today.day <= 7
+
+    def _check_easter_week(self) -> bool:
+        """Check if it's Easter week (Easter Sunday +/- 3 days)."""
+        today = datetime.now()
+        # Calculate Easter Sunday using Anonymous Gregorian algorithm
+        year = today.year
+        a = year % 19
+        b = year // 100
+        c = year % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day = ((h + l - 7 * m + 114) % 31) + 1
+        easter = datetime(year, month, day)
+        # Check if within 3 days of Easter
+        diff = abs((today - easter).days)
+        return diff <= 3
+
+    def _get_seasonal_constellation(self) -> dict:
+        """Get the constellation for the current season."""
+        today = datetime.now()
+        month = today.month
+        # Spring: March-May -> Leo
+        if 3 <= month <= 5:
+            return self.CONSTELLATION_LEO
+        # Summer: June-August -> Scorpius
+        elif 6 <= month <= 8:
+            return self.CONSTELLATION_SCORPIUS
+        # Fall: September-November -> Pegasus
+        elif 9 <= month <= 11:
+            return self.CONSTELLATION_PEGASUS
+        # Winter: December-February -> Orion
+        else:
+            return self.CONSTELLATION_ORION
+
+    def _check_security_canaries(self, daemon_client=None):
+        """
+        Check daemon monitor health and update canary state.
+        Visual elements disappear when their tied monitor fails.
+
+        Monitor -> Visual Element mapping:
+        - memory_monitor    -> stars (constellation)
+        - resource_monitor  -> clouds
+        - health_monitor    -> traffic lights
+        - state_monitor     -> street lights
+        - file_integrity    -> trees/foliage
+        - process_security  -> pedestrians
+        - wifi_security     -> cafe lights
+        - log_watchdog      -> vehicles
+        """
+        if daemon_client is None:
+            return  # Can't check without client
+
+        # Default all to True (assume healthy)
+        monitors_healthy = {
+            'memory_monitor': True,
+            'resource_monitor': True,
+            'health_monitor': True,
+            'state_monitor': True,
+            'file_integrity': True,
+            'process_security': True,
+            'wifi_security': True,
+            'log_watchdog': True,
+        }
+
+        # Try to get status from daemon
+        try:
+            if hasattr(daemon_client, '_send_request'):
+                response = daemon_client._send_request('get_health_stats')
+                if response.get('success'):
+                    stats = response.get('health_stats', {})
+                    # Check each monitor's health status
+                    monitors = stats.get('monitors', {})
+                    for monitor_name, status in monitors.items():
+                        if monitor_name in monitors_healthy:
+                            monitors_healthy[monitor_name] = status.get('healthy', True)
+
+                # Also check monitoring summary
+                response = daemon_client._send_request('get_monitoring_summary')
+                if response.get('success'):
+                    summary = response.get('summary', {})
+                    # Check specific monitor availability
+                    if not summary.get('memory_monitor_active', True):
+                        monitors_healthy['memory_monitor'] = False
+                    if not summary.get('resource_monitor_active', True):
+                        monitors_healthy['resource_monitor'] = False
+        except Exception:
+            pass  # Fail silently, keep previous canary state
+
+        # Update canary state based on monitor health
+        self._security_canary['stars'] = monitors_healthy['memory_monitor']
+        self._security_canary['clouds'] = monitors_healthy['resource_monitor']
+        self._security_canary['traffic_lights'] = monitors_healthy['health_monitor']
+        self._security_canary['street_lights'] = monitors_healthy['state_monitor']
+        self._security_canary['trees'] = monitors_healthy['file_integrity']
+        self._security_canary['pedestrians'] = monitors_healthy['process_security']
+        self._security_canary['cafe_lights'] = monitors_healthy['wifi_security']
+        self._security_canary['vehicles'] = monitors_healthy['log_watchdog']
+
+    def _update_security_canaries(self, daemon_client=None):
+        """Periodically check security canary status."""
+        self._canary_check_timer += 1
+        if self._canary_check_timer >= self._canary_check_interval:
+            self._canary_check_timer = 0
+            self._check_security_canaries(daemon_client)
+
+        # Update star twinkle animation
+        self._star_twinkle_timer += 1
+        if self._star_twinkle_timer >= 30:  # Twinkle every half second
+            self._star_twinkle_timer = 0
+            self._star_twinkle_frame = (self._star_twinkle_frame + 1) % 4
+
+    def _update_christmas_lights(self):
+        """Update Christmas light animation frame."""
+        if not self._christmas_mode:
+            return
+        self._christmas_light_timer += 1
+        # Change light pattern every 15 frames (~4 times per second at 60fps)
+        if self._christmas_light_timer >= 15:
+            self._christmas_light_timer = 0
+            self._christmas_light_frame = (self._christmas_light_frame + 1) % 4
+
+    def _update_halloween(self):
+        """Update Halloween pumpkin glow animation."""
+        if not self._halloween_mode:
+            return
+        self._pumpkin_glow_timer += 1
+        # Flicker glow every 10-20 frames
+        if self._pumpkin_glow_timer >= random.randint(10, 20):
+            self._pumpkin_glow_timer = 0
+            self._pumpkin_glow_frame = (self._pumpkin_glow_frame + 1) % 3
+
+    def _update_fireworks(self):
+        """Update 4th of July firework animations."""
+        if not self._july4th_mode:
+            return
+        self._firework_timer += 1
+        # Spawn new firework every 30-90 frames
+        if self._firework_timer >= random.randint(30, 90):
+            self._firework_timer = 0
+            # Launch firework at random x position in sky
+            self._fireworks.append({
+                'x': random.randint(10, self.width - 10),
+                'y': random.randint(3, 12),
+                'frame': 0,
+                'color': random.choice([Colors.XMAS_RED, Colors.FIREWORK_WHITE,
+                                       Colors.XMAS_BLUE, Colors.FIREWORK_MAGENTA,
+                                       Colors.XMAS_YELLOW]),
+                'type': random.choice(['burst', 'star', 'shower']),
+            })
+        # Update existing fireworks
+        for fw in self._fireworks[:]:
+            fw['frame'] += 1
+            if fw['frame'] > 20:  # Firework fades after 20 frames
+                self._fireworks.remove(fw)
 
     def _init_clouds(self):
         """Initialize cloud layer with cumulus clouds and wisps."""
@@ -2929,38 +3315,65 @@ class AlleyScene:
                             pass
 
     def _render_trees(self, screen):
-        """Render trees on top of buildings (foreground layer)."""
+        """Render trees on top of buildings (foreground layer). Tied to file_integrity health."""
+        # Security canary: no trees if file integrity monitor is down
+        if not self._security_canary.get('trees', True):
+            return
         for tree_x, tree_y in self._tree_positions:
-            # Use windy tree sprite based on wind direction
-            if self._wind_direction > 0:
-                tree_sprite = self.TREE_WINDY_RIGHT
+            # During Halloween, use spooky bare trees
+            if self._halloween_mode:
+                tree_sprite = self.SPOOKY_TREE
+                for row_idx, row in enumerate(tree_sprite):
+                    for col_idx, char in enumerate(row):
+                        px = tree_x + col_idx
+                        py = tree_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                # Spooky purple/dark colors
+                                if char in '\\|/-+':
+                                    attr = curses.color_pair(Colors.HALLOWEEN_PURPLE) | curses.A_DIM
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
             else:
-                tree_sprite = self.TREE_WINDY_LEFT
+                # Normal tree rendering
+                if self._wind_direction > 0:
+                    tree_sprite = self.TREE_WINDY_RIGHT
+                else:
+                    tree_sprite = self.TREE_WINDY_LEFT
 
-            for row_idx, row in enumerate(tree_sprite):
-                for col_idx, char in enumerate(row):
-                    px = tree_x + col_idx
-                    py = tree_y + row_idx
-                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
-                        try:
-                            if char == '@':
-                                # Leaves - green
-                                attr = curses.color_pair(Colors.MATRIX_DIM)
-                            elif char in '()|':
-                                # Trunk - brown/dark
-                                attr = curses.color_pair(Colors.SAND_DIM)
-                            else:
-                                attr = curses.color_pair(Colors.ALLEY_MID)
-                            screen.attron(attr)
-                            screen.addstr(py, px, char)
-                            screen.attroff(attr)
-                        except curses.error:
-                            pass
+                for row_idx, row in enumerate(tree_sprite):
+                    for col_idx, char in enumerate(row):
+                        px = tree_x + col_idx
+                        py = tree_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                if char == '@':
+                                    # Leaves - green
+                                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                                elif char in '()|':
+                                    # Trunk - brown/dark
+                                    attr = curses.color_pair(Colors.SAND_DIM)
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
 
     def _render_pine_trees(self, screen):
         """Render pine trees on top of buildings (foreground layer)."""
         if not hasattr(self, '_pine_tree_positions'):
             return
+
+        # Christmas light colors cycle through 4 patterns
+        xmas_colors = [Colors.XMAS_RED, Colors.XMAS_GREEN, Colors.XMAS_BLUE, Colors.XMAS_YELLOW]
+
         for tree_x, tree_y in self._pine_tree_positions:
             # Use windy pine sprite based on wind direction
             if self._wind_direction > 0:
@@ -2974,22 +3387,171 @@ class AlleyScene:
                     py = tree_y + row_idx
                     if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                         try:
-                            if char == '*':
-                                # Star on top - yellow
-                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
-                            elif char in '/\\|':
-                                # Pine needles and trunk - green
-                                attr = curses.color_pair(Colors.MATRIX_DIM)
-                            else:
-                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            # Check for Christmas lights on branch rows (rows 1-6 have branches)
+                            is_light = False
+                            if self._christmas_mode and row_idx >= 1 and row_idx <= 6:
+                                # Place lights on alternating positions along branches
+                                # Pattern shifts with frame to create "chasing" effect
+                                light_pattern = (col_idx + self._christmas_light_frame) % 3 == 0
+                                if char in '/\\' and light_pattern:
+                                    is_light = True
+                                    # Cycle color based on position and frame
+                                    color_idx = (col_idx + row_idx + self._christmas_light_frame) % 4
+                                    attr = curses.color_pair(xmas_colors[color_idx]) | curses.A_BOLD
+                                    screen.attron(attr)
+                                    screen.addstr(py, px, 'o')  # Light bulb
+                                    screen.attroff(attr)
+
+                            if not is_light:
+                                if char == '*':
+                                    # Star on top - yellow (extra bright during Christmas)
+                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                                    if self._christmas_mode:
+                                        # Blink the star
+                                        if self._christmas_light_frame % 2 == 0:
+                                            attr |= curses.A_BLINK if hasattr(curses, 'A_BLINK') else 0
+                                elif char in '/\\|':
+                                    # Pine needles and trunk - green
+                                    attr = curses.color_pair(Colors.MATRIX_DIM)
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_MID)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_fireworks(self, screen):
+        """Render 4th of July fireworks in the sky."""
+        if not self._july4th_mode:
+            return
+        for fw in self._fireworks:
+            # Get sprite based on type
+            if fw['type'] == 'burst':
+                sprite = self.FIREWORK_BURST
+            elif fw['type'] == 'star':
+                sprite = self.FIREWORK_STAR
+            else:
+                sprite = self.FIREWORK_SHOWER
+            # Calculate fade based on frame
+            if fw['frame'] < 5:
+                attr = curses.color_pair(fw['color']) | curses.A_BOLD
+            elif fw['frame'] < 12:
+                attr = curses.color_pair(fw['color'])
+            else:
+                attr = curses.color_pair(fw['color']) | curses.A_DIM
+            # Render sprite centered on position
+            for row_idx, row in enumerate(sprite):
+                for col_idx, char in enumerate(row):
+                    px = fw['x'] - len(row) // 2 + col_idx
+                    py = fw['y'] + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
                         except curses.error:
                             pass
 
+    def _render_pumpkins(self, screen):
+        """Render Halloween pumpkins with flickering glow."""
+        if not self._halloween_mode:
+            return
+        for pumpkin_x, pumpkin_y in self._pumpkin_positions:
+            # Flicker effect based on glow frame
+            if self._pumpkin_glow_frame == 0:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE) | curses.A_BOLD
+            elif self._pumpkin_glow_frame == 1:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE)
+            else:
+                attr = curses.color_pair(Colors.HALLOWEEN_ORANGE) | curses.A_DIM
+            for row_idx, row in enumerate(self.PUMPKIN):
+                for col_idx, char in enumerate(row):
+                    px = pumpkin_x + col_idx
+                    py = pumpkin_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_easter_eggs(self, screen):
+        """Render Easter eggs hidden around the scene."""
+        if not self._easter_mode:
+            return
+        egg_colors = [Colors.EASTER_PINK, Colors.EASTER_CYAN, Colors.EASTER_LAVENDER,
+                      Colors.XMAS_YELLOW, Colors.XMAS_GREEN]
+        for egg_x, egg_y, color_idx in self._easter_egg_positions:
+            attr = curses.color_pair(egg_colors[color_idx % len(egg_colors)]) | curses.A_BOLD
+            for row_idx, row in enumerate(self.EASTER_EGG):
+                for col_idx, char in enumerate(row):
+                    px = egg_x + col_idx
+                    py = egg_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char not in ' ':
+                        try:
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
+
+    def _render_constellation(self, screen):
+        """Render seasonal constellation in the sky. Tied to memory_monitor health."""
+        # Security canary: no stars if memory monitor is down
+        if not self._security_canary.get('stars', True):
+            return
+
+        if not self._constellation:
+            return
+
+        # Position constellation in upper sky area
+        base_x = self._constellation_x
+        base_y = self._constellation_y
+
+        stars = self._constellation.get('stars', [])
+        for dx, dy, brightness in stars:
+            px = base_x + dx
+            py = base_y + dy
+
+            if 0 <= px < self.width - 1 and 1 <= py < 15:  # Keep in sky area
+                try:
+                    # Subtle star characters based on brightness
+                    if brightness == 2:
+                        # Bright star - alternates with twinkle
+                        if self._star_twinkle_frame == 0:
+                            char = '*'
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        elif self._star_twinkle_frame == 1:
+                            char = '+'
+                            attr = curses.color_pair(Colors.GREY_BLOCK)
+                        elif self._star_twinkle_frame == 2:
+                            char = '*'
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_DIM
+                        else:
+                            char = '·'
+                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                    else:
+                        # Dim star - more subtle, less twinkle
+                        if self._star_twinkle_frame % 2 == 0:
+                            char = '·'
+                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                        else:
+                            char = '.'
+                            attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+
+                    screen.attron(attr)
+                    screen.addstr(py, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
     def _render_clouds(self, screen):
         """Render cloud layer."""
+        # Security canary: no clouds if resource monitor is down
+        if not self._security_canary.get('clouds', True):
+            return
         for cloud in self._clouds:
             if cloud['type'] in ['main', 'cumulus']:
                 # Render multi-line cloud (main or cumulus)
@@ -3151,6 +3713,14 @@ class AlleyScene:
         # Draw solid cloud cover at top (double line)
         self._draw_cloud_cover()
 
+        # Position seasonal constellation in the sky (between buildings, below clouds)
+        # Use seeded random for consistent daily positioning
+        random.seed(self._scene_seed)
+        self._constellation_x = random.randint(self.width // 4, self.width * 3 // 4 - 20)
+        self._constellation_y = random.randint(5, 10)  # Upper sky, below cloud cover
+        # Reset random to time-based for dynamic elements
+        random.seed()
+
         # Calculate building positions first for overlap avoidance
         self._building_x = 9
         building1_right = self._building_x + len(self.BUILDING[0])
@@ -3293,6 +3863,33 @@ class AlleyScene:
         if pine_x + len(self.PINE_TREE[0]) < self.width - 2 and pine_y > 0:
             self._pine_tree_positions.append((pine_x, pine_y))
             self._draw_pine_tree(pine_x, pine_y)
+
+        # Place pumpkins during Halloween (near trees and buildings)
+        if self._halloween_mode:
+            self._pumpkin_positions = []
+            # Pumpkin near each tree
+            for tree_x, tree_y in self._tree_positions:
+                pumpkin_x = tree_x + random.randint(-3, 3)
+                pumpkin_y = ground_y - 3  # On ground level
+                if 0 < pumpkin_x < self.width - 10:
+                    self._pumpkin_positions.append((pumpkin_x, pumpkin_y))
+            # Extra pumpkin near cafe door
+            self._pumpkin_positions.append((self.cafe_x + 2, ground_y - 3))
+
+        # Place easter eggs during Easter (hidden around scene)
+        if self._easter_mode:
+            self._easter_egg_positions = []
+            # Hide eggs near trees
+            for i, (tree_x, tree_y) in enumerate(self._tree_positions):
+                egg_x = tree_x + random.randint(-2, 5)
+                egg_y = ground_y - 3
+                if 0 < egg_x < self.width - 6:
+                    self._easter_egg_positions.append((egg_x, egg_y, i))
+            # Hide eggs near cafe
+            self._easter_egg_positions.append((self.cafe_x + 5, ground_y - 3, 3))
+            # Hide eggs near buildings
+            if hasattr(self, '_building_x'):
+                self._easter_egg_positions.append((self._building_x + 8, ground_y - 3, 4))
 
         # Draw crosswalk between cafe and right building (shifted right 12 chars total)
         # cafe_right already calculated above
@@ -4090,6 +4687,18 @@ class AlleyScene:
 
         # Update meteor damage overlays
         self._update_damage_overlays()
+
+        # Update Christmas lights (secret event Dec 20-31)
+        self._update_christmas_lights()
+
+        # Update Halloween pumpkin glow (secret event Oct 24-31)
+        self._update_halloween()
+
+        # Update 4th of July fireworks (secret event Jul 1-7)
+        self._update_fireworks()
+
+        # Update security canaries (tie visual elements to monitor health)
+        self._update_security_canaries()
 
     def _update_cars(self):
         """Update car/truck/semi positions and spawn new vehicles."""
@@ -4897,6 +5506,9 @@ class AlleyScene:
 
     def render(self, screen):
         """Render the alley scene to the screen with proper layering."""
+        # Render constellation first (furthest back, behind clouds and buildings)
+        self._render_constellation(screen)
+
         # Render distant clouds first (furthest back, behind everything)
         self._render_distant_clouds(screen)
 
@@ -4943,6 +5555,11 @@ class AlleyScene:
         # Render trees as foreground layer (in front of buildings)
         self._render_trees(screen)
         self._render_pine_trees(screen)
+
+        # Render holiday events
+        self._render_fireworks(screen)  # 4th of July fireworks in sky
+        self._render_pumpkins(screen)   # Halloween pumpkins near trees
+        self._render_easter_eggs(screen)  # Easter eggs hidden in scene
 
         # Render sidewalk/curb on top of scene but behind all sprites
         self._render_sidewalk(screen)
@@ -5376,7 +5993,10 @@ class AlleyScene:
             draw_character(self._agent_x, agent_sprite, Colors.ALLEY_MID)
 
     def _render_cars(self, screen):
-        """Render vehicles (cars, trucks, semis) on the street with colored body panels."""
+        """Render vehicles (cars, trucks, semis) on the street. Tied to log_watchdog health."""
+        # Security canary: no vehicles if log watchdog is down
+        if not self._security_canary.get('vehicles', True):
+            return
         # Vehicles are 4-5 rows tall, bottom row at street level
         street_y = self.height - 1
         # Vehicles can't render above the 1/5th line
@@ -5409,7 +6029,10 @@ class AlleyScene:
                             pass
 
     def _render_pedestrians(self, screen):
-        """Render pedestrians on the sidewalk (curb level) with arm animation."""
+        """Render pedestrians on the sidewalk. Tied to process_security health."""
+        # Security canary: no pedestrians if process security is down
+        if not self._security_canary.get('pedestrians', True):
+            return
         # Pedestrians walk on the curb/sidewalk area (moved up 2 rows)
         base_curb_y = self.height - 4
 
@@ -5638,7 +6261,10 @@ class AlleyScene:
                         pass
 
     def _render_street_light_flicker(self, screen):
-        """Render flickering light effects under street lights."""
+        """Render flickering light effects under street lights. Tied to state_monitor."""
+        # Security canary: no street lights if state monitor is down
+        if not self._security_canary.get('street_lights', True):
+            return
         # Light glow characters - brightest to dimmest
         glow_chars = ['█', '▓', '▒', '░']
 
@@ -5739,7 +6365,10 @@ class AlleyScene:
                 pass
 
     def _render_cafe_people(self, screen):
-        """Render the 3 people in Shell Cafe's first floor (door area) with animated arms."""
+        """Render the 3 people in Shell Cafe. Tied to wifi_security health."""
+        # Security canary: no cafe people/lights if wifi security is down
+        if not self._security_canary.get('cafe_lights', True):
+            return
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
@@ -5937,7 +6566,10 @@ class AlleyScene:
                 pass
 
     def _render_traffic_light(self, screen):
-        """Render the traffic light with current light states."""
+        """Render the traffic light with current light states. Tied to health_monitor."""
+        # Security canary: no traffic lights if health monitor is down
+        if not self._security_canary.get('traffic_lights', True):
+            return
         # Position traffic light on right side of scene (shifted 4 chars left)
         light_x = min(self.width - 10, self.box_x + len(self.BOX[0]) + 96)
         light_y = self.height - len(self.TRAFFIC_LIGHT_TEMPLATE) - 1  # Above curb, moved down
