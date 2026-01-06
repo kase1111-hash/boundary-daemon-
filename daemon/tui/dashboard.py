@@ -1185,6 +1185,28 @@ class AlleyScene:
         "     `-'(_)--(_)-=   ",
     ]
 
+    # Taxi car sprites (yellow with TAXI sign on roof)
+    TAXI_RIGHT = [
+        "      _TAXI_          ",
+        "   __/█_||_█\\`._      ",
+        "  (  ███  ███  \\     ",
+        "  =`-(_)--(_)-'      ",
+    ]
+    TAXI_LEFT = [
+        "       _TAXI_         ",
+        "     _.'█_||_█\\__    ",
+        "    /  ███  ███   )   ",
+        "     `-'(_)--(_)-=   ",
+    ]
+
+    # 4 car body colors
+    CAR_BODY_COLORS = [
+        Colors.SHADOW_RED,      # Red car
+        Colors.ALLEY_BLUE,      # Blue car
+        Colors.MATRIX_DIM,      # Green car
+        Colors.GREY_BLOCK,      # Grey car
+    ]
+
     # Truck sprites - delivery truck/van style (4 rows)
     TRUCK_RIGHT = [
         "    .----------.__    ",
@@ -1198,6 +1220,56 @@ class AlleyScene:
         " |;~-.██__.--._██|    ",
         "   `-(_)------(_)'    ",
     ]
+
+    # Work truck with company logo area (template - text gets filled in)
+    WORK_TRUCK_RIGHT = [
+        "    .----------.__    ",
+        "    |{logo:^10}|[_|__ ",
+        "    |{line2:^10}.-~;| ",
+        "    `(_)------(_)-'   ",
+    ]
+    WORK_TRUCK_LEFT = [
+        "    __.----------.    ",
+        " __|_]|{logo:^10}|    ",
+        " |;~-.{line2:^10}|    ",
+        "   `-(_)------(_)'    ",
+    ]
+
+    # 4 truck body colors
+    TRUCK_BODY_COLORS = [
+        Colors.SHADOW_RED,      # Red truck
+        Colors.ALLEY_BLUE,      # Blue truck
+        Colors.RAT_YELLOW,      # Yellow truck
+        Colors.MATRIX_DIM,      # Green truck
+    ]
+
+    # Noire York City department trucks (white with city logo)
+    CITY_TRUCK_DEPARTMENTS = [
+        ("NOIRE YORK", "WATER DEPT"),
+        ("NOIRE YORK", "SANITATION"),
+        ("NOIRE YORK", "PARKS DEPT"),
+        ("NOIRE YORK", "ELECTRIC"),
+        ("NOIRE YORK", "GAS & UTIL"),
+        ("NOIRE YORK", "TRANSIT"),
+        ("NOIRE YORK", "FIRE DEPT"),
+        ("NOIRE YORK", "POLICE"),
+    ]
+
+    # Prop plane sprites (small single-engine plane)
+    PROP_PLANE_RIGHT = [
+        "     __",
+        " ---(_)=====>",
+        "     ~~",
+    ]
+    PROP_PLANE_LEFT = [
+        "        __     ",
+        " <=====(_)--- ",
+        "        ~~     ",
+    ]
+
+    # Banner attachment characters
+    BANNER_ATTACH = "~~o"
+    BANNER_END = "o~~"
 
     # Semi-truck base sprites - big 18-wheeler (5 rows tall, much wider)
     # Text area is 27 chars wide (rows 1-2 inside the trailer)
@@ -1783,6 +1855,10 @@ class AlleyScene:
         self._semi_active_warnings: List[Dict] = []  # Active warning trucks {car_ref, message, scroll_pos}
         self._last_event_check = 0  # Timer for checking real daemon events
         self._known_event_ids: set = set()  # Track seen events to avoid duplicates
+        # Prop plane with scrolling banner for announcements
+        self._prop_plane: Dict = None  # {x, y, direction, speed, message, scroll_offset}
+        self._prop_plane_queue: List[str] = []  # Queue of messages to display
+        self._prop_plane_cooldown = 0  # Cooldown between planes
         # Manholes and drains with occasional steam
         self._manhole_positions: List[Tuple[int, int]] = []  # (x, y)
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
@@ -3561,57 +3637,85 @@ class AlleyScene:
         color_idx = car.get('color_idx', 0)
         return f"SEMI-{seed_hex}-C{company_idx:02d}L{layout_idx}K{color_idx}"
 
+    def _generate_work_truck_sprite(self, direction: int, logo: str, line2: str) -> List[str]:
+        """Generate a work truck sprite with logo text."""
+        if direction == 1:
+            base = self.WORK_TRUCK_RIGHT
+        else:
+            base = self.WORK_TRUCK_LEFT
+        sprite = []
+        for row in base:
+            formatted = row.format(logo=logo[:10], line2=line2[:10])
+            sprite.append(formatted)
+        return sprite
+
     def _spawn_car(self, warning_message: str = None):
-        """Spawn a new car, truck, or semi-truck on the street.
+        """Spawn a new car, taxi, truck, work truck, city truck, or semi-truck on the street.
+
+        Vehicle distribution:
+        - 45% regular cars (4 colors)
+        - 10% taxis (yellow)
+        - 20% regular trucks (4 colors with company names)
+        - 10% work trucks (white with company logos)
+        - 5% city trucks (Noire York departments)
+        - 10% semi-trucks (50 companies, 5 layouts, 4 colors)
 
         Args:
             warning_message: If provided, spawns a warning semi-truck with this message
         """
-        # Pick a random body color for cars/trucks
-        body_color = random.choice(self.CAR_COLORS)
-
-        # Choose vehicle type (weighted): 60% car, 30% truck, 10% semi
         # Force semi if warning_message is provided
         if warning_message:
             vehicle_roll = 1.0  # Force semi
         else:
             vehicle_roll = random.random()
 
-        if vehicle_roll < 0.6:
+        # Determine direction first
+        direction = 1 if random.random() < 0.5 else -1
+        extra_data = {}
+
+        if vehicle_roll < 0.45:
+            # Regular car with random color from 4 options
             vehicle_type = 'car'
             sprite_right = self.CAR_RIGHT
             sprite_left = self.CAR_LEFT
+            body_color = random.choice(self.CAR_BODY_COLORS)
             speed_range = (0.8, 1.5)
             spawn_offset = 25
-            extra_data = {}
-        elif vehicle_roll < 0.9:
+
+        elif vehicle_roll < 0.55:
+            # Taxi (always yellow)
+            vehicle_type = 'taxi'
+            sprite_right = self.TAXI_RIGHT
+            sprite_left = self.TAXI_LEFT
+            body_color = Colors.RAT_YELLOW
+            speed_range = (0.9, 1.6)  # Taxis drive a bit faster
+            spawn_offset = 25
+            extra_data = {'is_taxi': True}
+
+        elif vehicle_roll < 0.75:
+            # Regular truck with color and company name
             vehicle_type = 'truck'
             sprite_right = self.TRUCK_RIGHT
             sprite_left = self.TRUCK_LEFT
+            body_color = random.choice(self.TRUCK_BODY_COLORS)
             speed_range = (0.6, 1.2)
             spawn_offset = 30
-            extra_data = {}
-        else:
-            vehicle_type = 'semi'
-            speed_range = (0.4, 0.8)
-            spawn_offset = 55  # Semi is much wider
-            # Generate unique semi with advertising
-            direction = 1 if random.random() < 0.5 else -1
-            sprite, company_idx, layout_idx, color_idx, seed_hex = self._generate_semi_sprite(
-                direction, warning_message
-            )
-            # Use semi-specific color
-            body_color = self.SEMI_COLORS[color_idx]
-            extra_data = {
-                'company_idx': company_idx,
-                'layout_idx': layout_idx,
-                'color_idx': color_idx,
-                'seed_hex': seed_hex,
-                'is_warning': warning_message is not None,
-                'warning_message': warning_message,
-            }
+            # Pick a random company name from the semi companies
+            company = random.choice(self.SEMI_COMPANIES)
+            extra_data = {'company': company}
 
-            # For semi, we already have the sprite and direction
+        elif vehicle_roll < 0.85:
+            # Work truck (white with company logo)
+            vehicle_type = 'work_truck'
+            company = random.choice(self.SEMI_COMPANIES)
+            # Generate sprite with company name
+            sprite = self._generate_work_truck_sprite(direction, company[:10], "SERVICE")
+            body_color = Colors.ALLEY_LIGHT  # White
+            speed_range = (0.5, 1.0)
+            spawn_offset = 30
+            extra_data = {'company': company}
+
+            # Work truck already has sprite, spawn and return
             if direction == 1:
                 self._cars.append({
                     'x': float(-spawn_offset),
@@ -3632,11 +3736,86 @@ class AlleyScene:
                     'type': vehicle_type,
                     **extra_data,
                 })
-            return  # Semi is handled, exit early
+            return
 
-        # For car/truck, randomly choose direction
-        if random.random() < 0.5:
-            # Vehicle going right (spawn on left)
+        elif vehicle_roll < 0.90:
+            # Noire York City truck (white with city department)
+            vehicle_type = 'city_truck'
+            dept = random.choice(self.CITY_TRUCK_DEPARTMENTS)
+            sprite = self._generate_work_truck_sprite(direction, dept[0][:10], dept[1][:10])
+            body_color = Colors.ALLEY_LIGHT  # White city trucks
+            speed_range = (0.4, 0.9)  # City trucks drive slower
+            spawn_offset = 30
+            extra_data = {'department': dept[1]}
+
+            # City truck already has sprite, spawn and return
+            if direction == 1:
+                self._cars.append({
+                    'x': float(-spawn_offset),
+                    'direction': 1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            else:
+                self._cars.append({
+                    'x': float(self.width + spawn_offset),
+                    'direction': -1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            return
+
+        else:
+            # Semi-truck with advertising
+            vehicle_type = 'semi'
+            speed_range = (0.4, 0.8)
+            spawn_offset = 55  # Semi is much wider
+            # Generate unique semi with advertising
+            sprite, company_idx, layout_idx, color_idx, seed_hex = self._generate_semi_sprite(
+                direction, warning_message
+            )
+            # Use semi-specific color
+            body_color = self.SEMI_COLORS[color_idx]
+            extra_data = {
+                'company_idx': company_idx,
+                'layout_idx': layout_idx,
+                'color_idx': color_idx,
+                'seed_hex': seed_hex,
+                'is_warning': warning_message is not None,
+                'warning_message': warning_message,
+            }
+
+            # Semi already has sprite, spawn and return
+            if direction == 1:
+                self._cars.append({
+                    'x': float(-spawn_offset),
+                    'direction': 1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            else:
+                self._cars.append({
+                    'x': float(self.width + spawn_offset),
+                    'direction': -1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            return
+
+        # For regular car/taxi/truck, spawn with the selected sprite
+        if direction == 1:
             self._cars.append({
                 'x': float(-spawn_offset),
                 'direction': 1,
@@ -3647,7 +3826,6 @@ class AlleyScene:
                 **extra_data,
             })
         else:
-            # Vehicle going left (spawn on right)
             self._cars.append({
                 'x': float(self.width + spawn_offset),
                 'direction': -1,
@@ -3710,6 +3888,9 @@ class AlleyScene:
 
         # Update turtle head animation
         self._update_turtle()
+
+        # Update prop plane with banner
+        self._update_prop_plane()
 
         # Update clouds
         self._update_clouds()
@@ -4067,6 +4248,54 @@ class AlleyScene:
                 self._turtle_timer = 0
                 self._turtle_cooldown = random.randint(300, 900)  # 5-15 seconds
 
+    def queue_plane_announcement(self, message: str):
+        """Queue a message to be displayed by a prop plane with banner.
+
+        Used for mode changes, weather changes, and similar announcements.
+        """
+        self._prop_plane_queue.append(message)
+
+    def _update_prop_plane(self):
+        """Update prop plane position and spawn new planes for queued messages."""
+        # Handle cooldown
+        if self._prop_plane_cooldown > 0:
+            self._prop_plane_cooldown -= 1
+
+        # Spawn new plane if queue has messages and no active plane
+        if self._prop_plane is None and self._prop_plane_queue and self._prop_plane_cooldown <= 0:
+            message = self._prop_plane_queue.pop(0)
+            direction = random.choice([1, -1])
+            # Plane flies in upper portion of screen
+            y = random.randint(3, max(4, self.height // 4))
+
+            if direction == 1:
+                x = -len(self.PROP_PLANE_RIGHT[1]) - len(message) - 10
+            else:
+                x = self.width + 10
+
+            self._prop_plane = {
+                'x': float(x),
+                'y': y,
+                'direction': direction,
+                'speed': random.uniform(0.4, 0.7),
+                'message': message,
+                'scroll_offset': 0,
+            }
+            self._prop_plane_cooldown = 300  # 5 seconds between planes
+
+        # Update active plane
+        if self._prop_plane:
+            self._prop_plane['x'] += self._prop_plane['direction'] * self._prop_plane['speed']
+
+            # Check if plane has exited screen
+            plane_width = len(self.PROP_PLANE_RIGHT[1]) + len(self._prop_plane['message']) + 10
+            if self._prop_plane['direction'] == 1:
+                if self._prop_plane['x'] > self.width + 10:
+                    self._prop_plane = None
+            else:
+                if self._prop_plane['x'] < -plane_width:
+                    self._prop_plane = None
+
     def _get_traffic_light_colors(self) -> Tuple[Tuple[str, int], Tuple[str, int], Tuple[str, int],
                                                    Tuple[str, int], Tuple[str, int], Tuple[str, int]]:
         """Get the current light colors for both directions.
@@ -4327,6 +4556,9 @@ class AlleyScene:
 
         # Render turtle head peeking from shell
         self._render_turtle(screen)
+
+        # Render prop plane with banner (flies in sky)
+        self._render_prop_plane(screen)
 
         # Render window frames on top of window people (so people appear inside)
         self._render_window_frames(screen)
@@ -5109,6 +5341,119 @@ class AlleyScene:
             screen.attroff(attr)
         except curses.error:
             pass
+
+    def _render_prop_plane(self, screen):
+        """Render prop plane with trailing banner message."""
+        if self._prop_plane is None:
+            return
+
+        plane = self._prop_plane
+        x = int(plane['x'])
+        y = plane['y']
+        direction = plane['direction']
+        message = plane['message']
+
+        # Select plane sprite based on direction
+        if direction == 1:
+            plane_sprite = self.PROP_PLANE_RIGHT
+            banner_offset = len(plane_sprite[1])  # Banner trails behind
+        else:
+            plane_sprite = self.PROP_PLANE_LEFT
+            banner_offset = -len(message) - 5  # Banner in front for left-going plane
+
+        # Draw plane
+        for row_idx, row in enumerate(plane_sprite):
+            py = y + row_idx
+            for col_idx, char in enumerate(row):
+                px = x + col_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    try:
+                        if char in '(_)':
+                            # Engine/body - dark
+                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_BOLD
+                        elif char in '-=':
+                            # Wings - light
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                        elif char == '>':
+                            # Nose pointing right
+                            attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+                        elif char == '<':
+                            # Nose pointing left
+                            attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+                        elif char == '~':
+                            # Tail/exhaust
+                            attr = curses.color_pair(Colors.ALLEY_MID)
+                        elif char == '_':
+                            # Top
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        else:
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        screen.attron(attr)
+                        screen.addstr(py, px, char)
+                        screen.attroff(attr)
+                    except curses.error:
+                        pass
+
+        # Draw banner connection and message
+        banner_y = y + 1  # Middle row of plane
+        banner_x = x + banner_offset
+
+        # Draw connection rope
+        if direction == 1:
+            rope = "~~o["
+            rope_x = banner_x
+        else:
+            rope = "]o~~"
+            rope_x = banner_x + len(message)
+
+        for i, char in enumerate(rope):
+            px = rope_x + i
+            if 0 <= px < self.width - 1 and 0 <= banner_y < self.height:
+                try:
+                    attr = curses.color_pair(Colors.ALLEY_MID)
+                    screen.attron(attr)
+                    screen.addstr(banner_y, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+        # Draw banner message
+        if direction == 1:
+            msg_x = rope_x + len(rope)
+        else:
+            msg_x = banner_x
+
+        for i, char in enumerate(message):
+            px = msg_x + i
+            if 0 <= px < self.width - 1 and 0 <= banner_y < self.height:
+                try:
+                    # Alternating colors for visibility
+                    if i % 2 == 0:
+                        attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
+                    else:
+                        attr = curses.color_pair(Colors.SHADOW_RED) | curses.A_BOLD
+                    screen.attron(attr)
+                    screen.addstr(banner_y, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+        # Draw banner end
+        if direction == 1:
+            end = "]"
+            end_x = msg_x + len(message)
+        else:
+            end = "["
+            end_x = msg_x - 1
+
+        if 0 <= end_x < self.width - 1 and 0 <= banner_y < self.height:
+            try:
+                attr = curses.color_pair(Colors.ALLEY_MID)
+                screen.attron(attr)
+                screen.addstr(banner_y, end_x, end)
+                screen.attroff(attr)
+            except curses.error:
+                pass
 
     def _render_traffic_light(self, screen):
         """Render the traffic light with current light states."""
@@ -6896,6 +7241,17 @@ class Dashboard:
                 # Sync calm mode to alley scene
                 if self.alley_scene:
                     self.alley_scene.set_calm_mode(new_mode == WeatherMode.CALM)
+                    # Announce weather change via prop plane
+                    weather_names = {
+                        WeatherMode.MATRIX: "MATRIX MODE",
+                        WeatherMode.RAIN: "RAIN STORM",
+                        WeatherMode.SNOW: "SNOW FALL",
+                        WeatherMode.SAND: "SAND STORM",
+                        WeatherMode.CALM: "CALM WEATHER",
+                    }
+                    self.alley_scene.queue_plane_announcement(
+                        f"★ WEATHER: {weather_names.get(new_mode, 'UNKNOWN')} ★"
+                    )
         elif key == ord('f') or key == ord('F'):
             # Cycle framerate (only in matrix mode)
             if self.matrix_mode:
@@ -7486,6 +7842,11 @@ class Dashboard:
                     self._show_message(message, Colors.STATUS_OK if success else Colors.STATUS_ERROR)
                     if success:
                         self._refresh_data()
+                        # Announce mode change via prop plane
+                        if self.alley_scene:
+                            self.alley_scene.queue_plane_announcement(
+                                f"★ MODE CHANGED: {new_mode} ★"
+                            )
                 return
 
     def _acknowledge_alert(self):
