@@ -3258,13 +3258,7 @@ class AlleyScene:
                 self._tree_positions.append((tree_x, tree_y))
                 self._draw_tree(tree_x, tree_y)
 
-        # Pine tree: to the right of Shell Cafe, 4 rows higher than regular trees
-        cafe_right = self.cafe_x + len(self.CAFE[0]) if hasattr(self, 'cafe_x') else 0
-        pine_x = cafe_right + 3  # 3 chars to the right of cafe
-        pine_y = ground_y - pine_height + 1 - 4  # 4 rows higher than regular trees
-        if pine_x + len(self.PINE_TREE[0]) < self.width - 2 and pine_y > 0:
-            self._pine_tree_positions.append((pine_x, pine_y))
-            self._draw_pine_tree(pine_x, pine_y)
+        # Note: Pine tree is placed after cafe is drawn (below)
 
         # Place dumpster to the LEFT of building 1 (above curb)
         self.dumpster_x = 2
@@ -3291,8 +3285,17 @@ class AlleyScene:
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
-        # Draw crosswalk between cafe and right building (shifted right 12 chars total)
+        # Pine tree: to the right of Shell Cafe, 4 rows higher than regular trees
         cafe_right = self.cafe_x + len(self.CAFE[0])
+        pine_height = len(self.PINE_TREE)
+        pine_x = cafe_right + 3  # 3 chars to the right of cafe
+        pine_y = ground_y - pine_height + 1 - 4  # 4 rows higher than regular trees
+        if pine_x + len(self.PINE_TREE[0]) < self.width - 2 and pine_y > 0:
+            self._pine_tree_positions.append((pine_x, pine_y))
+            self._draw_pine_tree(pine_x, pine_y)
+
+        # Draw crosswalk between cafe and right building (shifted right 12 chars total)
+        # cafe_right already calculated above
         self._crosswalk_x = cafe_right + 13  # +12 to move vanishing street right
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
@@ -3377,7 +3380,7 @@ class AlleyScene:
                 self._street_light_positions.append((light_x + 2, max(1, light_y) + 1))
 
     def _draw_cloud_cover(self):
-        """Draw solid double-line cloud cover at top of screen."""
+        """Draw solid double-line cloud cover at top of screen plus dotted fog layers."""
         # Draw two solid lines of clouds right below the status area (rows 1-2)
         # Mostly solid blocks with occasional texture variation
         for row in range(1, 3):  # Rows 1 and 2
@@ -3393,6 +3396,17 @@ class AlleyScene:
                 else:
                     char = '░'  # Light shade (rare)
                 self.scene[row][x] = (char, Colors.GREY_BLOCK)
+
+        # Add long dotted fog lines in the sky (rows 3-8)
+        fog_chars = ['·', '∙', '·', ' ', '·', '∙', ' ', '·', ' ', ' ']
+        for row in range(3, 9):
+            # Different density for each row - denser near top
+            density = 0.6 - (row - 3) * 0.08  # 0.6 down to 0.12
+            for x in range(self.width - 1):
+                if random.random() < density:
+                    char = random.choice(fog_chars)
+                    if char != ' ':
+                        self.scene[row][x] = (char, Colors.GREY_BLOCK)
 
     def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int):
         """Draw static cityscape backdrop in the gap between main buildings."""
