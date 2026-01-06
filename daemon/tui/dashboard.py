@@ -1098,18 +1098,15 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
-    # Vanishing point roof + flatter shell logo for Shell Cafe
+    # Turtle shell logo for Shell Cafe (hexagonal pattern)
     BIG_SHELL_LOGO = [
-        "             /\\             ",
-        "            /  \\            ",
-        "           /    \\           ",
-        "          /      \\          ",
-        "         /________\\         ",
-        "    ___.'----------'.___    ",
-        "   /   /            \\   \\   ",
-        "  |   (    (@@)      )   |  ",
-        "  |    \\            /    |  ",
-        "   \\____'----------'____/   ",
+        "      ___________      ",
+        "    /`    |    `\\    ",
+        "   / \\ __|__ / \\ \\   ",
+        "  |   \\/   \\/   \\ |  ",
+        "  |   /\\___/\\   / |  ",
+        "   \\ /  | |  \\ /  /   ",
+        "    \\___|_|___/      ",
     ]
 
     # Turtle head animation frames (peeks out from shell)
@@ -1121,16 +1118,13 @@ class AlleyScene:
     ]
 
     CAFE = [
-        "             /\\             ",
-        "            /  \\            ",
-        "           /    \\           ",
-        "          /      \\          ",
-        "         /________\\         ",
-        "    ___.'----------'.___    ",
-        "   /   /            \\   \\   ",
-        "  |   (    (@@)      )   |  ",
-        "  |    \\            /    |  ",
-        "   \\____'----------'____/   ",
+        "      ___________      ",
+        "    /`    |    `\\    ",
+        "   / \\ __|__ / \\ \\   ",
+        "  |   \\/   \\/   \\ |  ",
+        "  |   /\\___/\\   / |  ",
+        "   \\ /  | |  \\ /  /   ",
+        "    \\___|_|___/      ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -2839,13 +2833,13 @@ class AlleyScene:
                             except curses.error:
                                 pass
 
-        # Find the SHELL CAFE text in the sprite (row 11 after vanishing roof + shell)
-        if len(self.CAFE) > 11:
-            sign_row = self.CAFE[11]  # "  |     S H E L L  C A F E   |  "
+        # Find the SHELL CAFE text in the sprite (row 8 after turtle shell)
+        if len(self.CAFE) > 8:
+            sign_row = self.CAFE[8]  # "  |     S H E L L  C A F E   |  "
             for col_idx, char in enumerate(sign_row):
                 if char in 'SHELLCAFE':
                     px = cafe_x + col_idx
-                    py = cafe_y + 11
+                    py = cafe_y + 8
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             # Green bold for SHELL CAFE
@@ -2856,9 +2850,9 @@ class AlleyScene:
                         except curses.error:
                             pass
 
-        # Find and animate the OPEN sign (row 24 in CAFE sprite, after vanishing roof + shell)
-        if len(self.CAFE) > 24:
-            open_row = self.CAFE[24]  # "  |[                  OPEN ]|  "
+        # Find and animate the OPEN sign (row 21 in CAFE sprite, after turtle shell)
+        if len(self.CAFE) > 21:
+            open_row = self.CAFE[21]  # "  |[                  OPEN ]|  "
             open_start = open_row.find('OPEN')
             if open_start != -1:
                 # Determine which letters are lit based on phase
@@ -2866,7 +2860,7 @@ class AlleyScene:
                 letters = ['O', 'P', 'E', 'N']
                 for i, letter in enumerate(letters):
                     px = cafe_x + open_start + i
-                    py = cafe_y + 24
+                    py = cafe_y + 21
                     if 0 <= px < self.width - 1 and 0 <= py < self.height:
                         try:
                             if self._open_sign_phase == 0:
@@ -3214,9 +3208,9 @@ class AlleyScene:
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
-        # Draw crosswalk between cafe and right building
+        # Draw crosswalk between cafe and right building (shifted right 10 chars)
         cafe_right = self.cafe_x + len(self.CAFE[0])
-        self._crosswalk_x = cafe_right + 1
+        self._crosswalk_x = cafe_right + 11  # +10 to move vanishing street right
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
@@ -3665,10 +3659,11 @@ class AlleyScene:
             line1, line2 = self.SEMI_LAYOUTS[layout_idx](company)
 
         # Build sprite from base template
-        if direction == 1:  # Going right
-            base = self.SEMI_RIGHT_BASE
-        else:  # Going left
+        # Note: Sprite shows which way truck FACES - cab must lead when moving
+        if direction == 1:  # Going right - cab on right leads
             base = self.SEMI_LEFT_BASE
+        else:  # Going left - cab on left leads
+            base = self.SEMI_RIGHT_BASE
 
         sprite = []
         for row in base:
@@ -5575,11 +5570,11 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # First floor door area is at rows 24-25 of CAFE sprite (0-indexed)
-        # Row 24: "[                  OPEN ]" - visible through door glass
-        # Row 25: "[__________________     ]" - lower door area
-        window_row = 24  # Row with people heads (door glass area)
-        body_row = 25    # Row with bodies/arms
+        # First floor door area is at rows 21-22 of CAFE sprite (0-indexed, after turtle shell)
+        # Row 21: "[                  OPEN ]" - visible through door glass
+        # Row 22: "[__________________     ]" - lower door area
+        window_row = 21  # Row with people heads (door glass area)
+        body_row = 22    # Row with bodies/arms
         window_start_col = 4  # Start of door glass content area
 
         # Arm animation frames (both arms shown)
@@ -5626,9 +5621,9 @@ class AlleyScene:
         if not hasattr(self, 'cafe_x') or not hasattr(self, 'cafe_y'):
             return
 
-        # Turtle peeks out at row 7 of CAFE (middle of shell)
-        # Shell spans roughly columns 2-26 of CAFE sprite
-        shell_row = 7
+        # Turtle peeks out at row 3-4 of CAFE (middle of turtle shell logo)
+        # Shell spans roughly columns 2-22 of CAFE sprite
+        shell_row = 4
         turtle_y = self.cafe_y + shell_row
 
         # Position based on which side turtle peeks from
@@ -5664,12 +5659,13 @@ class AlleyScene:
         message = plane['message']
 
         # Select plane sprite based on direction
+        # Banner must trail BEHIND the plane (opposite side of nose)
         if direction == 1:
             plane_sprite = self.PROP_PLANE_RIGHT
-            banner_offset = len(plane_sprite[1])  # Banner trails behind
+            banner_offset = -len(message) - 8  # Banner trails behind (left of plane)
         else:
             plane_sprite = self.PROP_PLANE_LEFT
-            banner_offset = -len(message) - 5  # Banner in front for left-going plane
+            banner_offset = len(plane_sprite[1]) + 2  # Banner trails behind (right of plane)
 
         # Draw plane
         for row_idx, row in enumerate(plane_sprite):
@@ -5708,13 +5704,15 @@ class AlleyScene:
         banner_y = y + 1  # Middle row of plane
         banner_x = x + banner_offset
 
-        # Draw connection rope
+        # Draw connection rope (trails behind banner)
         if direction == 1:
-            rope = "~~o["
-            rope_x = banner_x
-        else:
+            # Moving right - rope connects on right side of banner, extends to plane on right
             rope = "]o~~"
             rope_x = banner_x + len(message)
+        else:
+            # Moving left - rope connects on left side of banner, extends to plane on left
+            rope = "~~o["
+            rope_x = banner_x - 4
 
         for i, char in enumerate(rope):
             px = rope_x + i
@@ -7164,9 +7162,9 @@ class Dashboard:
             traffic_light_bounds = (traffic_light_x, traffic_light_y,
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE[0]),
                                     len(self.alley_scene.TRAFFIC_LIGHT_TEMPLATE))
-            # Cafe bounds (snow melts on building but not on shell roof)
+            # Cafe bounds (snow melts on building but not on turtle shell roof)
             cafe_bounds = (self.alley_scene.cafe_x, self.alley_scene.cafe_y,
-                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)  # 8 rows for shell roof
+                          len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 7)  # 7 rows for turtle shell
             self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
             # Initialize creatures
             self.alley_rat = AlleyRat(self.width, self.height)
