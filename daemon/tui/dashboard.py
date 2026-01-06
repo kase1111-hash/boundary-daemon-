@@ -1737,21 +1737,21 @@ class AlleyScene:
     ]
 
     # Static cityscape backdrop (drawn behind main buildings in the gap)
-    # 140 chars wide, dense city skyline with various building heights
+    # 140 chars wide, dense city skyline with various building heights and solid walls
     CITYSCAPE = [
         "         T                    |~|                 T              T                    |~|              T           ",  # Row 0
-        "   ___  /|\\        ___       |=|    ___         /|\\   ___      /|\\        ___       |=|    ___      /|\\   ___    ",  # Row 1
-        "  |   | |=|  ___  |   |  ___ |=|   |   |  ___  |=|=| |   | ___ |=|  ___  |   |  ___ |=|   |   | ___ |=|=| |   |   ",  # Row 2
-        "  |[ ]| |=| |   | |[ ]| |   ||=|   |[ ]| |   | |=|=| |[ ]||   ||=| |   | |[ ]| |   ||=|   |[ ]||   ||=|=| |[ ]|   ",  # Row 3
-        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 4
-        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 5
-        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 6
-        "  |[ ]| |=| |[ ]| |[ ]| |[ ]||=|   |[ ]| |[ ]| |=|=| |[ ]||[ ]||=| |[ ]| |[ ]| |[ ]||=|   |[ ]||[ ]||=|=| |[ ]|   ",  # Row 7
-        "  |___| |=| |___| |___| |___||=|   |___| |___| |=|=| |___||___||=| |___| |___| |___||=|   |___||___||=|=| |___|   ",  # Row 8
-        "        |=|              |   ||=|              |=|=|      |   ||=|              |   ||=|        |  ||=|=|         ",  # Row 9
-        "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 10
-        "        |=|              |[ ]||=|              |=|=|      |[ ]||=|              |[ ]||=|        |[ ]||=|=|         ",  # Row 11
-        "        |=|              |___||=|              |=|=|      |___||=|              |___||=|        |___||=|=|         ",  # Row 12
+        "   ___  /|\\        ___       |█|    ___         /|\\   ___      /|\\        ___       |█|    ___      /|\\   ___    ",  # Row 1
+        "  |███| |█|  ___  |███|  ___ |█|   |███|  ___  |█|█| |███| ___ |█|  ___  |███|  ___ |█|   |███| ___ |█|█| |███|   ",  # Row 2
+        "  |[ ]| |█| |███| |[ ]| |███||█|   |[ ]| |███| |█|█| |[ ]||███||█| |███| |[ ]| |███||█|   |[ ]||███||█|█| |[ ]|   ",  # Row 3
+        "  |[ ]| |█| |[ ]| |[ ]| |[ ]||█|   |[ ]| |[ ]| |█|█| |[ ]||[ ]||█| |[ ]| |[ ]| |[ ]||█|   |[ ]||[ ]||█|█| |[ ]|   ",  # Row 4
+        "  |[ ]| |█| |[ ]| |[ ]| |[ ]||█|   |[ ]| |[ ]| |█|█| |[ ]||[ ]||█| |[ ]| |[ ]| |[ ]||█|   |[ ]||[ ]||█|█| |[ ]|   ",  # Row 5
+        "  |[ ]| |█| |[ ]| |[ ]| |[ ]||█|   |[ ]| |[ ]| |█|█| |[ ]||[ ]||█| |[ ]| |[ ]| |[ ]||█|   |[ ]||[ ]||█|█| |[ ]|   ",  # Row 6
+        "  |[ ]| |█| |[ ]| |[ ]| |[ ]||█|   |[ ]| |[ ]| |█|█| |[ ]||[ ]||█| |[ ]| |[ ]| |[ ]||█|   |[ ]||[ ]||█|█| |[ ]|   ",  # Row 7
+        "  |███| |█| |███| |███| |███||█|   |███| |███| |█|█| |███||███||█| |███| |███| |███||█|   |███||███||█|█| |███|   ",  # Row 8
+        "        |█|              |███||█|              |█|█|      |███||█|              |███||█|        |███||█|█|         ",  # Row 9
+        "        |█|              |[ ]||█|              |█|█|      |[ ]||█|              |[ ]||█|        |[ ]||█|█|         ",  # Row 10
+        "        |█|              |[ ]||█|              |█|█|      |[ ]||█|              |[ ]||█|        |[ ]||█|█|         ",  # Row 11
+        "        |█|              |███||█|              |█|█|      |███||█|              |███||█|        |███||█|█|         ",  # Row 12
         "        |_|                  |_|              |_||_|          |_|                  |_|             |_||_|         ",  # Row 13
     ]
 
@@ -3291,9 +3291,9 @@ class AlleyScene:
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
-        # Draw crosswalk between cafe and right building (shifted right 10 chars)
+        # Draw crosswalk between cafe and right building (shifted right 12 chars total)
         cafe_right = self.cafe_x + len(self.CAFE[0])
-        self._crosswalk_x = cafe_right + 11  # +10 to move vanishing street right
+        self._crosswalk_x = cafe_right + 13  # +12 to move vanishing street right
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
@@ -3437,9 +3437,12 @@ class AlleyScene:
                     color = Colors.ALLEY_MID
                     # Check if this is a window position (between brackets)
                     # and set up animation
-                elif char in '|_/\\':
-                    # Building structure
+                elif char == '█':
+                    # Solid wall blocks - darker for filled appearance
                     color = Colors.ALLEY_DARK
+                elif char in '|_/\\':
+                    # Building structure/outlines
+                    color = Colors.ALLEY_MID
                 elif char in '~T':
                     # Antenna/tower tops
                     color = Colors.ALLEY_MID
@@ -4201,6 +4204,9 @@ class AlleyScene:
                 'frame_timer': 0,
                 'skin_color': skin_color,
                 'clothing_color': clothing_color,
+                'y_offset': random.choice([-1, 0, 1]),  # Wander on 2-row sidewalk
+                'target_y_offset': random.choice([-1, 0, 1]),
+                'y_wander_timer': random.randint(30, 80),
             })
         else:
             # Pedestrian going left (spawn on right)
@@ -4213,6 +4219,9 @@ class AlleyScene:
                 'frame_timer': 0,
                 'skin_color': skin_color,
                 'clothing_color': clothing_color,
+                'y_offset': random.choice([-1, 0, 1]),  # Wander on 2-row sidewalk
+                'target_y_offset': random.choice([-1, 0, 1]),
+                'y_wander_timer': random.randint(30, 80),
             })
 
     def _update_pedestrians(self):
@@ -4283,6 +4292,22 @@ class AlleyScene:
                     ped['frame_idx'] = (ped['frame_idx'] + 1) % len(ped['frames'])
 
             ped['x'] += ped['direction'] * ped['speed']
+
+            # Y wandering - pedestrians drift up/down on sidewalk to pass each other
+            if not meteor_active:
+                ped['y_wander_timer'] = ped.get('y_wander_timer', 50) - 1
+                if ped['y_wander_timer'] <= 0:
+                    # Pick new target y position
+                    ped['target_y_offset'] = random.choice([-1, 0, 1])
+                    ped['y_wander_timer'] = random.randint(40, 100)
+
+                # Gradually move toward target y
+                current_y = ped.get('y_offset', 0)
+                target_y = ped.get('target_y_offset', 0)
+                if current_y < target_y:
+                    ped['y_offset'] = current_y + 1
+                elif current_y > target_y:
+                    ped['y_offset'] = current_y - 1
 
             # Keep pedestrian if still on screen (with margin)
             if -10 < ped['x'] < self.width + 10:
@@ -5372,10 +5397,14 @@ class AlleyScene:
     def _render_pedestrians(self, screen):
         """Render pedestrians on the sidewalk (curb level) with arm animation."""
         # Pedestrians walk on the curb/sidewalk area (moved up 2 rows)
-        curb_y = self.height - 4
+        base_curb_y = self.height - 4
 
         for ped in self._pedestrians:
             x = int(ped['x'])
+            # Get y offset for wandering (pedestrians can be on different rows)
+            y_offset = ped.get('y_offset', 0)
+            curb_y = base_curb_y + y_offset  # Apply wandering offset
+
             # Get current animation frame
             frames = ped.get('frames', [])
             frame_idx = ped.get('frame_idx', 0)
