@@ -3997,7 +3997,7 @@ class AlleyScene:
         self._cars = new_cars
 
     def _update_closeup_car(self):
-        """Update close-up car perspective effect (stays in place, grows then shrinks)."""
+        """Update close-up car perspective effect with two types: approaching and departing."""
         # Spawn new close-up car occasionally
         self._closeup_car_timer += 1
         if self._closeup_car is None and self._closeup_car_timer >= random.randint(200, 400):
@@ -4006,35 +4006,57 @@ class AlleyScene:
             building1_right = self._building_x + len(self.BUILDING[0]) if hasattr(self, '_building_x') else 70
             building2_left = self._building2_x if hasattr(self, '_building2_x') else self.width - 60
             gap_center = (building1_right + building2_left) // 2
-            # Right street light is at gap_center + 38
-            # Traffic light is at box_x + BOX width + 100
             street_light_x = gap_center + 38
             traffic_light_x = self.box_x + len(self.BOX[0]) + 100 if hasattr(self, 'box_x') else self.width - 20
-            # Position car between street light and traffic light
             car_x = (street_light_x + traffic_light_x) // 2
-            self._closeup_car = {
-                'x': float(car_x),
-                'direction': random.choice([-1, 1]),  # Face left or right
-                'scale': 0.5,  # Start small
-                'phase': 0,    # 0=growing, 1=shrinking
-                'scale_speed': 0.15,  # Faster grow/shrink
-            }
+
+            # Randomly choose car type: approaching (from distance) or departing (from behind camera)
+            car_type = random.choice(['approaching', 'departing'])
+
+            if car_type == 'approaching':
+                # Approaching: starts small/far, grows big, then disappears behind camera
+                self._closeup_car = {
+                    'x': float(car_x),
+                    'direction': random.choice([-1, 1]),  # Face left or right
+                    'scale': 0.5,  # Start small (far away)
+                    'type': 'approaching',
+                    'phase': 0,    # 0=growing, 1=passing behind camera
+                    'scale_speed': 0.12,
+                }
+            else:
+                # Departing: starts big (just passed camera), shrinks as it drives away
+                self._closeup_car = {
+                    'x': float(car_x),
+                    'direction': random.choice([-1, 1]),  # Face left or right
+                    'scale': 3.0,  # Start big (just passed camera)
+                    'type': 'departing',
+                    'phase': 0,    # 0=shrinking away
+                    'scale_speed': 0.10,
+                }
 
         # Update close-up car
         if self._closeup_car:
             car = self._closeup_car
-            # Car stays in place, only scale changes
-            if car['phase'] == 0:
-                # Growing phase
-                car['scale'] += car['scale_speed']
-                if car['scale'] >= 3.0:
-                    car['scale'] = 3.0
-                    car['phase'] = 1  # Switch to shrinking
-            else:
-                # Shrinking phase
+
+            if car['type'] == 'approaching':
+                # Approaching car: grows then passes behind camera
+                if car['phase'] == 0:
+                    # Growing phase - car approaching from distance
+                    car['scale'] += car['scale_speed']
+                    if car['scale'] >= 3.0:
+                        car['scale'] = 3.0
+                        car['phase'] = 1  # Now passing behind camera
+                else:
+                    # Passing behind camera - shrinks slightly then disappears
+                    car['scale'] += car['scale_speed'] * 0.5  # Grows a tiny bit more
+                    if car['scale'] >= 3.5:
+                        self._closeup_car = None  # Passed behind camera
+
+            else:  # departing
+                # Departing car: shrinks as it drives away into distance
                 car['scale'] -= car['scale_speed']
-                if car['scale'] <= 0.5:
-                    self._closeup_car = None  # Done, remove car
+                if car['scale'] <= 0.3:
+                    self._closeup_car = None  # Too far away to see
 
     def _spawn_pedestrian(self):
         """Spawn a new pedestrian on the sidewalk with random accessories, colors, and spacing."""
