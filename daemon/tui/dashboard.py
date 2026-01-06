@@ -764,9 +764,10 @@ class MatrixRain:
                 new_splats.append(splat)
         self.splats = new_splats
 
-        # Add new drops to maintain density
-        while len(self.drops) < self._target_drops:
-            self._add_drop()
+        # Add new drops to maintain density (skip for CALM mode which has no particles)
+        if self.weather_mode != WeatherMode.CALM:
+            while len(self.drops) < self._target_drops:
+                self._add_drop()
 
     def _add_stuck_snow(self, x: int, y: int, depth: int, char: str):
         """Add a snowflake that has stuck to the screen."""
