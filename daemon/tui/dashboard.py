@@ -1528,79 +1528,83 @@ class AlleyScene:
 
     # Spring constellation: Leo (the lion) - Mar-May
     # Recognizable by the "sickle" (backwards question mark) and triangle
+    # Stars scaled 5x for visibility
     CONSTELLATION_LEO = {
         'name': 'Leo',
         'stars': [
             # Sickle (head) - backwards question mark shape
-            (0, 0, 2),   # Regulus (brightest, alpha)
-            (2, -2, 1),  # Eta Leonis
-            (4, -3, 1),  # Gamma (Algieba)
-            (6, -2, 2),  # Zeta
-            (7, 0, 1),   # Mu
-            (5, 1, 1),   # Epsilon
+            (0, 0, 2),     # Regulus (brightest, alpha)
+            (10, -10, 1),  # Eta Leonis
+            (20, -15, 1),  # Gamma (Algieba)
+            (30, -10, 2),  # Zeta
+            (35, 0, 1),    # Mu
+            (25, 5, 1),    # Epsilon
             # Body/hindquarters triangle
-            (10, 0, 2),  # Denebola (beta, tail)
-            (8, -1, 1),  # Delta
-            (6, 1, 1),   # Theta
+            (50, 0, 2),    # Denebola (beta, tail)
+            (40, -5, 1),   # Delta
+            (30, 5, 1),    # Theta
         ],
     }
 
     # Summer constellation: Scorpius (the scorpion) - Jun-Aug
     # Recognizable by the curved tail and red Antares
+    # Stars scaled 5x for visibility
     CONSTELLATION_SCORPIUS = {
         'name': 'Scorpius',
         'stars': [
             # Head/claws
-            (0, 0, 1),   # Graffias (beta)
-            (2, -1, 1),  # Dschubba (delta)
-            (4, 0, 1),   # Pi Scorpii
+            (0, 0, 1),     # Graffias (beta)
+            (10, -5, 1),   # Dschubba (delta)
+            (20, 0, 1),    # Pi Scorpii
             # Body with Antares (heart)
-            (5, 2, 2),   # Antares (alpha, red supergiant)
-            (6, 3, 1),   # Tau
+            (25, 10, 2),   # Antares (alpha, red supergiant)
+            (30, 15, 1),   # Tau
             # Curved tail
-            (7, 5, 1),   # Epsilon
-            (8, 6, 2),   # Mu
-            (10, 7, 1),  # Zeta
-            (12, 6, 1),  # Eta
-            (14, 5, 2),  # Shaula (lambda, stinger)
-            (15, 4, 1),  # Lesath (upsilon)
+            (35, 25, 1),   # Epsilon
+            (40, 30, 2),   # Mu
+            (50, 35, 1),   # Zeta
+            (60, 30, 1),   # Eta
+            (70, 25, 2),   # Shaula (lambda, stinger)
+            (75, 20, 1),   # Lesath (upsilon)
         ],
     }
 
     # Fall constellation: Pegasus (the winged horse) - Sep-Nov
     # Recognizable by the Great Square
+    # Stars scaled 5x for visibility
     CONSTELLATION_PEGASUS = {
         'name': 'Pegasus',
         'stars': [
             # The Great Square
-            (0, 0, 2),   # Markab (alpha)
-            (8, 0, 2),   # Scheat (beta)
-            (8, -6, 2),  # Algenib (gamma)
-            (0, -6, 2),  # Alpheratz (actually Andromeda alpha)
+            (0, 0, 2),     # Markab (alpha)
+            (40, 0, 2),    # Scheat (beta)
+            (40, -30, 2),  # Algenib (gamma)
+            (0, -30, 2),   # Alpheratz (actually Andromeda alpha)
             # Neck and head
-            (-3, 2, 1),  # Homam (zeta)
-            (-6, 3, 1),  # Biham (theta)
-            (-9, 2, 2),  # Enif (epsilon, nose)
+            (-15, 10, 1),  # Homam (zeta)
+            (-30, 15, 1),  # Biham (theta)
+            (-45, 10, 2),  # Enif (epsilon, nose)
         ],
     }
 
     # Winter constellation: Orion (the hunter) - Dec-Feb
     # Most recognizable - belt of 3 stars, Betelgeuse and Rigel
+    # Stars scaled 5x for visibility
     CONSTELLATION_ORION = {
         'name': 'Orion',
         'stars': [
             # Shoulders
-            (0, 0, 2),   # Betelgeuse (alpha, red)
-            (8, 0, 1),   # Bellatrix (gamma)
+            (0, 0, 2),    # Betelgeuse (alpha, red)
+            (40, 0, 1),   # Bellatrix (gamma)
             # Belt (3 stars in a row)
-            (2, 3, 2),   # Alnitak (zeta)
-            (4, 3, 2),   # Alnilam (epsilon)
-            (6, 3, 2),   # Mintaka (delta)
+            (10, 15, 2),  # Alnitak (zeta)
+            (20, 15, 2),  # Alnilam (epsilon)
+            (30, 15, 2),  # Mintaka (delta)
             # Feet
-            (0, 6, 2),   # Saiph (kappa)
-            (8, 6, 2),   # Rigel (beta, blue-white)
+            (0, 30, 2),   # Saiph (kappa)
+            (40, 30, 2),  # Rigel (beta, blue-white)
             # Sword (below belt)
-            (4, 5, 1),   # Orion Nebula area
+            (20, 25, 1),  # Orion Nebula area
         ],
     }
 
@@ -3518,7 +3522,8 @@ class AlleyScene:
             px = base_x + dx
             py = base_y + dy
 
-            if 0 <= px < self.width - 1 and 1 <= py < 15:  # Keep in sky area
+            # Expanded sky area for larger 5x constellations
+            if 0 <= px < self.width - 1 and 1 <= py < self.height // 2:  # Keep in upper half
                 try:
                     # Subtle star characters based on brightness
                     if brightness == 2:
@@ -3552,23 +3557,49 @@ class AlleyScene:
 
     def _render_dotted_fog(self, screen):
         """Render dotted fog layer (behind clouds).
-        Draws sparse fog dots in rows 3-8 with decreasing density as we go down.
+        Uses persistent fog positions that slowly drift for smooth animation.
         """
-        fog_chars = ['░', '·', '.', '∙']
-        # Rows 3-8: decreasing density as we go down
-        for row in range(3, 9):
-            # Density decreases with row: 15%, 12%, 10%, 8%, 5%, 3%
-            density = max(0.03, 0.18 - (row - 3) * 0.03)
-            for x in range(self.width - 1):
-                if random.random() < density:
-                    char = random.choice(fog_chars)
-                    try:
-                        attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
-                        screen.attron(attr)
-                        screen.addstr(row, x, char)
-                        screen.attroff(attr)
-                    except curses.error:
-                        pass
+        # Initialize persistent fog state if needed
+        if not hasattr(self, '_fog_particles') or len(self._fog_particles) == 0:
+            self._fog_particles = []
+            fog_chars = ['░', '·', '.', '∙']
+            # Create fog particles with positions and drift speeds
+            for row in range(3, 9):
+                density = max(0.03, 0.18 - (row - 3) * 0.03)
+                for x in range(self.width - 1):
+                    if random.random() < density:
+                        self._fog_particles.append({
+                            'x': float(x),
+                            'y': row,
+                            'char': random.choice(fog_chars),
+                            'drift_x': random.uniform(-0.02, 0.02),  # Very slow drift
+                        })
+            self._fog_update_counter = 0
+
+        # Only update fog positions every 10 frames for slow movement
+        self._fog_update_counter = getattr(self, '_fog_update_counter', 0) + 1
+        if self._fog_update_counter >= 10:
+            self._fog_update_counter = 0
+            for particle in self._fog_particles:
+                particle['x'] += particle['drift_x']
+                # Wrap around screen edges
+                if particle['x'] < 0:
+                    particle['x'] = self.width - 2
+                elif particle['x'] >= self.width - 1:
+                    particle['x'] = 0
+
+        # Render fog particles
+        for particle in self._fog_particles:
+            px = int(particle['x'])
+            py = particle['y']
+            if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                try:
+                    attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                    screen.attron(attr)
+                    screen.addstr(py, px, particle['char'])
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
 
     def _render_clouds(self, screen):
         """Render cloud layer."""
@@ -3739,8 +3770,9 @@ class AlleyScene:
         # Position seasonal constellation in the sky (between buildings, below clouds)
         # Use seeded random for consistent daily positioning
         random.seed(self._scene_seed)
-        self._constellation_x = random.randint(self.width // 4, self.width * 3 // 4 - 20)
-        self._constellation_y = random.randint(5, 10)  # Upper sky, below cloud cover
+        # Position for 5x larger constellations - start more left and lower to fit
+        self._constellation_x = random.randint(10, self.width // 3)
+        self._constellation_y = random.randint(12, 18)  # Lower in sky to fit larger patterns
         # Reset random to time-based for dynamic elements
         random.seed()
 
@@ -3790,6 +3822,7 @@ class AlleyScene:
 
         # Setup building window lights (a few lit windows in each building)
         # Position at center of specific windows, use street light flicker pattern
+        # Lights positioned 1 row higher than before
         self._building_window_lights = []
         # Building 1 - windows at specific positions (row 6, 12 have windows)
         b1_window_rows = [6, 12, 18]  # Rows with windows (0-indexed from building top)
@@ -3797,7 +3830,7 @@ class AlleyScene:
         for row in b1_window_rows[:2]:  # Only light top 2 rows of windows
             for col in b1_window_cols[:2]:  # Only light leftmost windows
                 wx = self._building_x + col
-                wy = max(1, self._building_y) + row + 2  # +2 for center of window
+                wy = max(1, self._building_y) + row + 1  # +1 instead of +2 (moved up 1 row)
                 if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                     self._building_window_lights.append((wx, wy))
         # Building 2 - similar setup
@@ -3806,7 +3839,7 @@ class AlleyScene:
             for row in b1_window_rows[:2]:
                 for col in b2_window_cols[:2]:
                     wx = self._building2_x + col
-                    wy = max(1, self._building2_y) + row + 2
+                    wy = max(1, self._building2_y) + row + 1  # +1 instead of +2 (moved up 1 row)
                     if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                         self._building_window_lights.append((wx, wy))
         # Initialize flicker brightness for each window light
@@ -5416,20 +5449,34 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.SAND_DIM)
 
     def _draw_crosswalk(self, x: int, curb_y: int, street_y: int):
-        """Draw vanishing street with ==== line across (no crosswalk stripes)."""
+        """Draw vanishing street with hashtag crosswalk at the bottom."""
         crosswalk_width = 32
 
-        # Draw "====" line across the street instead of crosswalk stripes
-        for cx in range(crosswalk_width):
-            px = x + cx
-            if 0 <= px < self.width - 1:
-                if street_y < self.height:
-                    self.scene[street_y][px] = ('=', Colors.RAT_YELLOW)
+        # Draw hashtag (#) crosswalk pattern at street level
+        # Pattern: horizontal bars with vertical stripes
+        hashtag_height = 4  # Height of crosswalk pattern
+        hashtag_start_y = curb_y - hashtag_height  # Start above curb
 
-        # Draw vanishing street effect above
-        # Starts at curb and ends at lower 1/5th of screen
+        for cy in range(hashtag_height):
+            py = hashtag_start_y + cy
+            if 0 <= py < self.height:
+                for cx in range(crosswalk_width):
+                    px = x + cx
+                    if 0 <= px < self.width - 1:
+                        # Horizontal bars at top and bottom of pattern
+                        if cy == 0 or cy == hashtag_height - 1:
+                            self.scene[py][px] = ('═', Colors.ALLEY_LIGHT)
+                        # Vertical bars every 4 characters
+                        elif cx % 4 == 0:
+                            self.scene[py][px] = ('║', Colors.ALLEY_LIGHT)
+                        else:
+                            # Street surface between stripes
+                            self.scene[py][px] = ('▒', Colors.ALLEY_DARK)
+
+        # Draw vanishing street effect above the crosswalk
+        # Starts above crosswalk and ends at lower 1/5th of screen
         vanish_end_y = self.height - (self.height // 5)  # Lower 1/5th of screen
-        vanish_start_y = curb_y - 1  # Just above curb
+        vanish_start_y = hashtag_start_y - 1  # Just above crosswalk
 
         # Calculate crosswalk center for vanishing point
         crosswalk_center = x + crosswalk_width // 2
@@ -6429,8 +6476,11 @@ class AlleyScene:
                                 pass
 
     def _render_building_window_lights(self, screen):
-        """Render flickering light glow from building windows (no pole, just glow)."""
-        glow_chars = ['█', '▓', '▒', '░']
+        """Render flickering light glow from building windows (no pole, just glow).
+        Single row cone with most transparent blocks at edges.
+        """
+        # Gradient from solid to transparent: █ ▓ ▒ ░
+        glow_chars = ['▓', '▒', '░']  # No solid block, start with semi-transparent
 
         for i, (light_x, light_y) in enumerate(self._building_window_lights):
             if i >= len(self._building_window_flicker):
@@ -6438,31 +6488,33 @@ class AlleyScene:
 
             brightness = self._building_window_flicker[i]
 
-            # Smaller glow than street lights (just 2 rows, narrower spread)
-            for row in range(2):
-                spread = row + 1
-                row_brightness = brightness * (1.0 - row * 0.3)
+            # Single row cone, 3 chars wide on each side
+            spread = 2  # Width on each side
+            py = light_y
 
-                for dx in range(-spread, spread + 1):
-                    px = light_x + dx
-                    py = light_y + row
+            for dx in range(-spread, spread + 1):
+                px = light_x + dx
 
-                    if 0 <= px < self.width - 1 and 0 <= py < self.height:
-                        dist_factor = abs(dx) / (spread + 1)
-                        char_idx = min(3, row + int(dist_factor * 2))
-                        glow_char = glow_chars[char_idx] if row_brightness > 0.3 else ' '
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # More transparent at edges
+                    dist = abs(dx)
+                    if dist == 0:
+                        char_idx = 0  # Center: ▓ (most solid of our set)
+                    elif dist == 1:
+                        char_idx = 1  # Mid: ▒
+                    else:
+                        char_idx = 2  # Edge: ░ (most transparent)
 
-                        if glow_char != ' ':
-                            try:
-                                if row == 0:
-                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
-                                else:
-                                    attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
-                                screen.attron(attr)
-                                screen.addstr(py, px, glow_char)
-                                screen.attroff(attr)
-                            except curses.error:
-                                pass
+                    glow_char = glow_chars[char_idx] if brightness > 0.3 else ' '
+
+                    if glow_char != ' ':
+                        try:
+                            attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_DIM
+                            screen.attron(attr)
+                            screen.addstr(py, px, glow_char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
 
     def _render_window_people(self, screen):
         """Render silhouettes of people walking by windows with animations."""
@@ -7272,9 +7324,13 @@ class DashboardClient:
         self._demo_mode = False
         self._demo_event_offset = 0
         self._use_tcp = False  # Flag for Windows TCP mode
+        self._log_file_path = None  # Path to daemon log file for offline mode
 
         # Build dynamic socket paths based on where daemon might create them
         self._socket_paths = self._build_socket_paths()
+
+        # Find log file for reading real events when offline
+        self._log_file_path = self._find_log_file()
 
         # Try to find working socket
         if not self.socket_path:
@@ -7302,8 +7358,145 @@ class DashboardClient:
                     logger.info(f"Connected to daemon via TCP on port {self.WINDOWS_PORT}")
 
         if not self._connected:
-            self._demo_mode = True
-            logger.info("Daemon not available, running in demo mode")
+            if self._log_file_path and os.path.exists(self._log_file_path):
+                self._demo_mode = False  # Not demo mode - reading real logs
+                logger.info(f"Daemon not connected, reading events from {self._log_file_path}")
+            else:
+                self._demo_mode = True
+                logger.info("Daemon not available and no log file found, running in demo mode")
+
+    def _find_log_file(self) -> Optional[str]:
+        """Find the daemon log file for reading real events offline."""
+        package_root = Path(__file__).parent.parent.parent
+
+        # Check possible log file locations
+        log_paths = [
+            package_root / 'logs' / 'boundary_chain.log',
+            package_root / 'boundary_chain.log',
+            Path('/var/log/boundary-daemon/boundary_chain.log'),
+            Path.home() / '.boundary-daemon' / 'logs' / 'boundary_chain.log',
+        ]
+
+        for log_path in log_paths:
+            if log_path.exists():
+                return str(log_path)
+
+        return None
+
+    def _read_events_from_log(self, limit: int = 20) -> List[DashboardEvent]:
+        """Read real events from daemon log file."""
+        events = []
+
+        if not self._log_file_path or not os.path.exists(self._log_file_path):
+            return events
+
+        try:
+            with open(self._log_file_path, 'r') as f:
+                lines = f.readlines()
+
+            # Read last N lines (most recent events)
+            for line in reversed(lines[-limit*2:]):  # Read more to filter
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                    # Map log entry to DashboardEvent
+                    event_type = entry.get('event_type', 'UNKNOWN').upper()
+                    details = entry.get('details', '')
+                    timestamp = entry.get('timestamp', datetime.utcnow().isoformat())
+
+                    # Map severity from metadata
+                    metadata = entry.get('metadata', {})
+                    alert_level = metadata.get('alert_level', 'info')
+                    severity_map = {
+                        'critical': 'ERROR',
+                        'error': 'ERROR',
+                        'warning': 'WARN',
+                        'warn': 'WARN',
+                        'info': 'INFO',
+                    }
+                    severity = severity_map.get(alert_level.lower(), 'INFO')
+
+                    events.append(DashboardEvent(
+                        timestamp=timestamp,
+                        event_type=event_type,
+                        details=details,
+                        severity=severity,
+                        metadata=metadata,
+                    ))
+
+                    if len(events) >= limit:
+                        break
+
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+        except Exception as e:
+            logger.warning(f"Error reading log file: {e}")
+
+        return events
+
+    def _read_status_from_log(self) -> Dict:
+        """Read status from the most recent log entries."""
+        status = {
+            'mode': 'UNKNOWN',
+            'mode_since': datetime.utcnow().isoformat(),
+            'uptime': 0,
+            'events_today': 0,
+            'violations': 0,
+            'tripwire_enabled': True,
+            'clock_monitor_enabled': True,
+            'network_attestation_enabled': True,
+            'is_frozen': False,
+        }
+
+        if not self._log_file_path or not os.path.exists(self._log_file_path):
+            return status
+
+        try:
+            with open(self._log_file_path, 'r') as f:
+                lines = f.readlines()
+
+            event_count = len(lines)
+            violation_count = 0
+
+            # Scan recent entries for mode and violations
+            for line in reversed(lines[-100:]):
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                    event_type = entry.get('event_type', '')
+
+                    if event_type == 'mode_change':
+                        metadata = entry.get('metadata', {})
+                        if 'new_mode' in metadata:
+                            # Map mode number to name
+                            mode_map = {0: 'OPEN', 1: 'TRUSTED', 2: 'RESTRICTED', 3: 'AIRGAP'}
+                            status['mode'] = mode_map.get(metadata['new_mode'], 'UNKNOWN')
+                        status['mode_since'] = entry.get('timestamp', status['mode_since'])
+
+                    elif event_type == 'daemon_start':
+                        metadata = entry.get('metadata', {})
+                        status['mode'] = metadata.get('initial_mode', status['mode'])
+
+                    elif event_type == 'violation':
+                        violation_count += 1
+
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+            status['events_today'] = event_count
+            status['violations'] = violation_count
+
+        except Exception as e:
+            logger.warning(f"Error reading status from log: {e}")
+
+        return status
 
     def _build_socket_paths(self) -> List[str]:
         """Build list of possible socket paths based on daemon behavior."""
@@ -7643,21 +7836,28 @@ class DashboardClient:
         if self._demo_mode:
             return self._demo_status()
 
-        response = self._send_request('status')
-        if response.get('success'):
-            status = response.get('status', {})
-            # Map API response to dashboard format
-            return {
-                'mode': status.get('mode', 'UNKNOWN').upper(),
-                'mode_since': datetime.utcnow().isoformat(),
-                'uptime': status.get('uptime_seconds', 0),
-                'events_today': status.get('events_today', 0),
-                'violations': status.get('tripwire_count', 0),
-                'tripwire_enabled': True,
-                'clock_monitor_enabled': status.get('online', False),
-                'network_attestation_enabled': status.get('network_state', 'unknown') != 'isolated',
-                'is_frozen': status.get('lockdown_active', False),
-            }
+        # Try live connection first
+        if self._connected:
+            response = self._send_request('status')
+            if response.get('success'):
+                status = response.get('status', {})
+                # Map API response to dashboard format
+                return {
+                    'mode': status.get('mode', 'UNKNOWN').upper(),
+                    'mode_since': datetime.utcnow().isoformat(),
+                    'uptime': status.get('uptime_seconds', 0),
+                    'events_today': status.get('events_today', 0),
+                    'violations': status.get('tripwire_count', 0),
+                    'tripwire_enabled': True,
+                    'clock_monitor_enabled': status.get('online', False),
+                    'network_attestation_enabled': status.get('network_state', 'unknown') != 'isolated',
+                    'is_frozen': status.get('lockdown_active', False),
+                }
+
+        # Fall back to reading from log file
+        if self._log_file_path:
+            return self._read_status_from_log()
+
         return self._demo_status()
 
     def get_events(self, limit: int = 20) -> List[DashboardEvent]:
@@ -7665,18 +7865,25 @@ class DashboardClient:
         if self._demo_mode:
             return self._demo_events(limit)
 
-        response = self._send_request('get_events', {'count': limit})
-        if response.get('success'):
-            events = []
-            for e in response.get('events', []):
-                events.append(DashboardEvent(
-                    timestamp=e.get('timestamp', datetime.utcnow().isoformat()),
-                    event_type=e.get('event_type', 'UNKNOWN'),
-                    details=e.get('details', ''),
-                    severity=e.get('severity', 'INFO'),
-                    metadata=e.get('metadata', {}),
-                ))
-            return events
+        # Try live connection first
+        if self._connected:
+            response = self._send_request('get_events', {'count': limit})
+            if response.get('success'):
+                events = []
+                for e in response.get('events', []):
+                    events.append(DashboardEvent(
+                        timestamp=e.get('timestamp', datetime.utcnow().isoformat()),
+                        event_type=e.get('event_type', 'UNKNOWN'),
+                        details=e.get('details', ''),
+                        severity=e.get('severity', 'INFO'),
+                        metadata=e.get('metadata', {}),
+                    ))
+                return events
+
+        # Fall back to reading from log file
+        if self._log_file_path:
+            return self._read_events_from_log(limit)
+
         return self._demo_events(limit)
 
     def get_alerts(self) -> List[DashboardAlert]:
