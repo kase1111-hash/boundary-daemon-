@@ -1199,20 +1199,72 @@ class AlleyScene:
         "   `-(_)------(_)'    ",
     ]
 
-    # Semi-truck sprites - big 18-wheeler (5 rows tall, much wider)
-    SEMI_RIGHT = [
+    # Semi-truck base sprites - big 18-wheeler (5 rows tall, much wider)
+    # Text area is 27 chars wide (rows 1-2 inside the trailer)
+    SEMI_RIGHT_BASE = [
         "                 _____________________________  ",
-        "        ___     |███████████████████████████ | ",
-        "   ____/█ █\\____|███████████████████████████ | ",
+        "        ___     |{line1:^27}| ",
+        "   ____/█ █\\____|{line2:^27}| ",
         "  | °  |__|__|  |_____________________________|",
         "  (O)-----(O)--------------(O)-----------(O)  ",
     ]
-    SEMI_LEFT = [
+    SEMI_LEFT_BASE = [
         "  _____________________________                 ",
-        " | ███████████████████████████|     ___        ",
-        " | ███████████████████████████|____/█ █\\____   ",
+        " |{line1:^27}|     ___        ",
+        " |{line2:^27}|____/█ █\\____   ",
         " |_____________________________|  |__|__|  ° | ",
         "  (O)-----------(O)--------------(O)-----(O)  ",
+    ]
+
+    # 50 unique trucking/advertising companies
+    SEMI_COMPANIES = [
+        # Logistics & Freight (10)
+        "NEXUS FREIGHT", "TITAN LOGISTICS", "SWIFT HAUL", "IRONCLAD TRANSPORT",
+        "VELOCITY CARGO", "APEX TRUCKING", "SUMMIT LOGISTICS", "TRAILBLAZER FREIGHT",
+        "HORIZON CARRIERS", "REDLINE EXPRESS",
+        # Tech & Computing (10)
+        "CYBERLINK SYSTEMS", "QUANTUM DYNAMICS", "NEON CIRCUIT", "DATASTREAM INC",
+        "PIXEL FORGE", "NEURAL NET CO", "BITWAVE TECH", "CLOUDPEAK SYSTEMS",
+        "HEXCORE INDUSTRIES", "SYNTHWAVE LABS",
+        # Food & Beverage (10)
+        "MOUNTAIN BREW CO", "SUNRISE FARMS", "GOLDEN HARVEST", "ARCTIC FREEZE",
+        "CRIMSON GRILL", "BLUE OCEAN FISH", "PRIME MEATS", "ORCHARD FRESH",
+        "SUGAR RUSH CANDY", "MOONLIGHT DAIRY",
+        # Industrial & Manufacturing (10)
+        "STEEL DYNAMICS", "FORGE MASTERS", "CONCRETE KINGS", "LUMBER GIANT",
+        "COPPER CREEK", "BOLT & IRON", "HEAVY METAL IND", "GRANITE WORKS",
+        "ALLOY SOLUTIONS", "TURBINE POWER",
+        # Retail & Consumer (10)
+        "MEGA MART", "VALUE ZONE", "QUICK STOP", "BARGAIN BARN",
+        "PRIME DELIVERY", "HOME ESSENTIALS", "EVERYDAY GOODS", "DISCOUNT DEPOT",
+        "FAMILY FIRST", "SUPER SAVER",
+    ]
+
+    # 5 text layout styles for trailer (each returns line1, line2)
+    SEMI_LAYOUTS = [
+        # Style 0: Company name centered, tagline below
+        lambda c: (c, "~ NATIONWIDE ~"),
+        # Style 1: Company name with decorative borders
+        lambda c: (f"★ {c} ★", "═══════════════════════════"),
+        # Style 2: Company name with phone number style
+        lambda c: (c, "1-800-DELIVER"),
+        # Style 3: Company name with website
+        lambda c: (c, "www.{}.com".format(c.lower().replace(' ', '')[:15])),
+        # Style 4: Company name split if long, simple
+        lambda c: (c[:14] if len(c) > 14 else c, c[14:] if len(c) > 14 else "TRUSTED SINCE 1987"),
+    ]
+
+    # 4 semi-truck trailer colors
+    SEMI_COLORS = [
+        Colors.ALLEY_LIGHT,     # White trailer
+        Colors.SHADOW_RED,      # Red trailer
+        Colors.ALLEY_BLUE,      # Blue trailer
+        Colors.RAT_YELLOW,      # Yellow trailer
+    ]
+
+    # Warning/alert messages that scroll on truck when daemon events occur
+    SEMI_WARNING_PREFIXES = [
+        "⚠ ALERT: ", "⚡ WARNING: ", "🔔 NOTICE: ", "⛔ CRITICAL: ", "📢 BROADCAST: "
     ]
 
     # Car body colors for variety
@@ -1725,6 +1777,12 @@ class AlleyScene:
         self._turtle_visible_duration = 0
         self._turtle_side = 1  # 1=right side, -1=left side
         self._turtle_state = 'hidden'  # hidden, peeking, winking, retreating
+        # Semi-truck advertising system - seeded randomness for screenshot validation
+        self._semi_seed_base = int(time.time())  # Base seed from startup time
+        self._semi_spawn_counter = 0  # Increments each semi spawn for unique seeds
+        self._semi_active_warnings: List[Dict] = []  # Active warning trucks {car_ref, message, scroll_pos}
+        self._last_event_check = 0  # Timer for checking real daemon events
+        self._known_event_ids: set = set()  # Track seen events to avoid duplicates
         # Manholes and drains with occasional steam
         self._manhole_positions: List[Tuple[int, int]] = []  # (x, y)
         self._drain_positions: List[Tuple[int, int]] = []  # (x, y)
@@ -3447,33 +3505,136 @@ class AlleyScene:
 
         return False
 
-    def _spawn_car(self):
-        """Spawn a new car, truck, or semi-truck on the street."""
-        # Pick a random body color
+    def _generate_semi_sprite(self, direction: int, warning_message: str = None) -> Tuple[List[str], int, int, int, str]:
+        """Generate a unique semi-truck sprite with advertising.
+
+        Uses seeded randomness based on system time for screenshot validation.
+        Returns: (sprite, company_idx, layout_idx, color_idx, seed_hex)
+        """
+        # Create unique seed from base time + spawn counter
+        self._semi_spawn_counter += 1
+        seed = self._semi_seed_base + self._semi_spawn_counter
+        rng = random.Random(seed)
+
+        # Select company (50 options)
+        company_idx = rng.randint(0, len(self.SEMI_COMPANIES) - 1)
+        company = self.SEMI_COMPANIES[company_idx]
+
+        # Select layout style (5 options)
+        layout_idx = rng.randint(0, len(self.SEMI_LAYOUTS) - 1)
+
+        # Select color (4 options)
+        color_idx = rng.randint(0, len(self.SEMI_COLORS) - 1)
+
+        # Generate seed hex for validation (last 8 chars of hex seed)
+        seed_hex = format(seed & 0xFFFFFFFF, '08X')
+
+        # Get text content from layout
+        if warning_message:
+            # Warning truck - show scrolling message
+            line1 = warning_message[:27]
+            line2 = warning_message[27:54] if len(warning_message) > 27 else ""
+        else:
+            # Normal advertising truck
+            line1, line2 = self.SEMI_LAYOUTS[layout_idx](company)
+
+        # Build sprite from base template
+        if direction == 1:  # Going right
+            base = self.SEMI_RIGHT_BASE
+        else:  # Going left
+            base = self.SEMI_LEFT_BASE
+
+        sprite = []
+        for row in base:
+            formatted = row.format(line1=line1[:27], line2=line2[:27])
+            sprite.append(formatted)
+
+        return sprite, company_idx, layout_idx, color_idx, seed_hex
+
+    def _get_semi_validation_string(self, car: Dict) -> str:
+        """Get the validation string for a semi-truck (for screenshot verification)."""
+        if car.get('type') != 'semi':
+            return ""
+        seed_hex = car.get('seed_hex', '????????')
+        company_idx = car.get('company_idx', 0)
+        layout_idx = car.get('layout_idx', 0)
+        color_idx = car.get('color_idx', 0)
+        return f"SEMI-{seed_hex}-C{company_idx:02d}L{layout_idx}K{color_idx}"
+
+    def _spawn_car(self, warning_message: str = None):
+        """Spawn a new car, truck, or semi-truck on the street.
+
+        Args:
+            warning_message: If provided, spawns a warning semi-truck with this message
+        """
+        # Pick a random body color for cars/trucks
         body_color = random.choice(self.CAR_COLORS)
 
         # Choose vehicle type (weighted): 60% car, 30% truck, 10% semi
-        vehicle_roll = random.random()
+        # Force semi if warning_message is provided
+        if warning_message:
+            vehicle_roll = 1.0  # Force semi
+        else:
+            vehicle_roll = random.random()
+
         if vehicle_roll < 0.6:
             vehicle_type = 'car'
             sprite_right = self.CAR_RIGHT
             sprite_left = self.CAR_LEFT
             speed_range = (0.8, 1.5)
             spawn_offset = 25
+            extra_data = {}
         elif vehicle_roll < 0.9:
             vehicle_type = 'truck'
             sprite_right = self.TRUCK_RIGHT
             sprite_left = self.TRUCK_LEFT
             speed_range = (0.6, 1.2)
             spawn_offset = 30
+            extra_data = {}
         else:
             vehicle_type = 'semi'
-            sprite_right = self.SEMI_RIGHT
-            sprite_left = self.SEMI_LEFT
             speed_range = (0.4, 0.8)
             spawn_offset = 55  # Semi is much wider
+            # Generate unique semi with advertising
+            direction = 1 if random.random() < 0.5 else -1
+            sprite, company_idx, layout_idx, color_idx, seed_hex = self._generate_semi_sprite(
+                direction, warning_message
+            )
+            # Use semi-specific color
+            body_color = self.SEMI_COLORS[color_idx]
+            extra_data = {
+                'company_idx': company_idx,
+                'layout_idx': layout_idx,
+                'color_idx': color_idx,
+                'seed_hex': seed_hex,
+                'is_warning': warning_message is not None,
+                'warning_message': warning_message,
+            }
 
-        # Randomly choose direction
+            # For semi, we already have the sprite and direction
+            if direction == 1:
+                self._cars.append({
+                    'x': float(-spawn_offset),
+                    'direction': 1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            else:
+                self._cars.append({
+                    'x': float(self.width + spawn_offset),
+                    'direction': -1,
+                    'speed': random.uniform(*speed_range),
+                    'sprite': sprite,
+                    'color': body_color,
+                    'type': vehicle_type,
+                    **extra_data,
+                })
+            return  # Semi is handled, exit early
+
+        # For car/truck, randomly choose direction
         if random.random() < 0.5:
             # Vehicle going right (spawn on left)
             self._cars.append({
@@ -3483,6 +3644,7 @@ class AlleyScene:
                 'sprite': sprite_right,
                 'color': body_color,
                 'type': vehicle_type,
+                **extra_data,
             })
         else:
             # Vehicle going left (spawn on right)
@@ -3493,6 +3655,7 @@ class AlleyScene:
                 'sprite': sprite_left,
                 'color': body_color,
                 'type': vehicle_type,
+                **extra_data,
             })
 
     def update(self):
@@ -6403,6 +6566,8 @@ class Dashboard:
                     # Update alley scene (traffic light)
                     if self.alley_scene:
                         self.alley_scene.update()
+                        # Check for new daemon events to spawn warning trucks
+                        self._check_daemon_events_for_trucks()
 
                     # Update creatures based on alert state
                     self._update_creatures()
@@ -6450,6 +6615,76 @@ class Dashboard:
     def _update_dimensions(self):
         """Update terminal dimensions."""
         self.height, self.width = self.screen.getmaxyx()
+
+    def _check_daemon_events_for_trucks(self):
+        """Check for new daemon events and spawn warning trucks for critical/important ones.
+
+        Only spawns warning trucks for REAL daemon events, not demo events.
+        Tracks seen event IDs to avoid duplicate trucks.
+        """
+        if not self.alley_scene:
+            return
+
+        # Rate limit: only check every ~2 seconds (120 frames at 60fps)
+        self.alley_scene._last_event_check += 1
+        if self.alley_scene._last_event_check < 120:
+            return
+        self.alley_scene._last_event_check = 0
+
+        # Skip if in demo mode (no real events)
+        if self.client.is_demo_mode():
+            return
+
+        try:
+            # Get recent alerts (high priority events)
+            alerts = self.client.get_alerts()
+            for alert in alerts:
+                # Create unique ID from alert properties
+                alert_id = f"alert_{alert.severity}_{alert.message[:20]}_{alert.timestamp}"
+                if alert_id in self.alley_scene._known_event_ids:
+                    continue
+
+                # Mark as seen
+                self.alley_scene._known_event_ids.add(alert_id)
+
+                # Create warning message for truck
+                prefix = random.choice(self.alley_scene.SEMI_WARNING_PREFIXES)
+                message = f"{prefix}{alert.message[:40]}"
+
+                # Spawn warning truck
+                self.alley_scene._spawn_car(warning_message=message)
+
+            # Get recent events (check for critical ones)
+            events = self.client.get_events(10)
+            for event in events:
+                # Only spawn trucks for critical/warning events
+                if event.severity not in ['critical', 'high', 'warning']:
+                    continue
+
+                # Create unique ID
+                event_id = f"event_{event.type}_{event.timestamp}"
+                if event_id in self.alley_scene._known_event_ids:
+                    continue
+
+                # Mark as seen
+                self.alley_scene._known_event_ids.add(event_id)
+
+                # Create warning message for truck
+                prefix = random.choice(self.alley_scene.SEMI_WARNING_PREFIXES)
+                message = f"{prefix}{event.type}: {event.details.get('message', '')[:30]}"
+
+                # Spawn warning truck
+                self.alley_scene._spawn_car(warning_message=message)
+
+            # Limit the size of known events set (keep last 1000)
+            if len(self.alley_scene._known_event_ids) > 1000:
+                # Remove oldest half
+                known_list = list(self.alley_scene._known_event_ids)
+                self.alley_scene._known_event_ids = set(known_list[500:])
+
+        except Exception as e:
+            # Silently ignore errors (daemon might be unavailable)
+            pass
 
     def _update_lightning(self):
         """Check and update lightning strike state."""
