@@ -62,6 +62,15 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Import audio engine for TTS car sounds
+try:
+    from daemon.audio import get_audio_engine, AudioEngine
+    AUDIO_ENGINE_AVAILABLE = True
+except ImportError:
+    AUDIO_ENGINE_AVAILABLE = False
+    get_audio_engine = None
+    AudioEngine = None
+
 
 class PanelType(Enum):
     """Types of dashboard panels."""
@@ -2053,6 +2062,9 @@ class AlleyScene:
         # Horizontal cars on the street
         self._cars: List[Dict] = []
         self._car_spawn_timer = 0
+        # Audio state for car sounds
+        self._audio_muted = False
+        self._car_sound_cooldown = 0
         # Close-up car (perspective effect - shrinks as it passes)
         self._closeup_car: Dict = None
         self._closeup_car_timer = 0
@@ -2742,6 +2754,36 @@ class AlleyScene:
             self._qte_missiles = []
             self._qte_explosions = []
         return self._qte_enabled
+
+    def toggle_mute(self) -> bool:
+        """Toggle audio mute on/off. Returns new mute state."""
+        self._audio_muted = not self._audio_muted
+        return self._audio_muted
+
+    def is_muted(self) -> bool:
+        """Check if audio is muted."""
+        return self._audio_muted
+
+    def _play_car_sound(self, vehicle_type: str):
+        """Play TTS car sound effect based on vehicle type."""
+        if self._audio_muted or not AUDIO_ENGINE_AVAILABLE:
+            return
+
+        # Cooldown to prevent sound spam
+        if self._car_sound_cooldown > 0:
+            self._car_sound_cooldown -= 1
+            return
+
+        try:
+            audio_engine = get_audio_engine()
+            # Generate scene event audio for car
+            audio_intent = audio_engine.generate_scene_event_audio('car')
+            # Log the intent (actual TTS synthesis would happen elsewhere)
+            logger.debug(f"Car sound: {audio_intent.onomatopoeia}")
+            # Set cooldown (60 frames = ~1 second at 60fps)
+            self._car_sound_cooldown = 60
+        except Exception as e:
+            logger.debug(f"Car sound error: {e}")
 
     def _update_ufo(self):
         """Update UFO cow abduction event - super rare."""
@@ -3769,9 +3811,11 @@ class AlleyScene:
         # Position seasonal constellation in the sky (between buildings, below clouds)
         # Use seeded random for consistent daily positioning
         random.seed(self._scene_seed)
-        # Position for 5x larger constellations - start more left and lower to fit
-        self._constellation_x = random.randint(10, self.width // 3)
-        self._constellation_y = random.randint(12, 18)  # Lower in sky to fit larger patterns
+        # Center constellations on screen (5x scaled, largest ~75 chars wide)
+        # Center horizontally with some variance
+        center_x = self.width // 2 - 20  # Offset for constellation width
+        self._constellation_x = center_x + random.randint(-10, 10)
+        self._constellation_y = random.randint(15, 22)  # Mid-sky position
         # Reset random to time-based for dynamic elements
         random.seed()
 
@@ -3819,28 +3863,44 @@ class AlleyScene:
             self._draw_building_side_walls(self._building2_x, max(1, self._building2_y),
                                            len(self.BUILDING2[0]), len(self.BUILDING2), 'right')
 
-        # Setup building window lights (a few lit windows in each building)
-        # Position at center of specific windows, use street light flicker pattern
-        # Lights positioned 1 row higher than before
+        # Setup building window lights - only in BIG windows, randomly placed
+        # Big windows are [========] (8 chars), small are [====] (4 chars)
         self._building_window_lights = []
-        # Building 1 - windows at specific positions (row 6, 12 have windows)
-        b1_window_rows = [6, 12, 18]  # Rows with windows (0-indexed from building top)
-        b1_window_cols = [6, 18, 34, 46]  # Column offsets for window centers
-        for row in b1_window_rows[:2]:  # Only light top 2 rows of windows
-            for col in b1_window_cols[:2]:  # Only light leftmost windows
-                wx = self._building_x + col
-                wy = max(1, self._building_y) + row + 1  # +1 instead of +2 (moved up 1 row)
+
+        # Building 1 big window columns (centers of [========] windows)
+        b1_big_window_cols = [7, 41]  # The two big window columns
+        b1_window_rows = [8, 14, 20, 26, 32]  # Rows with windows (middle of each window block)
+
+        # Randomly select 2-3 big windows to light in building 1
+        b1_lit_windows = []
+        for _ in range(random.randint(2, 3)):
+            row = random.choice(b1_window_rows)
+            col = random.choice(b1_big_window_cols)
+            if (row, col) not in b1_lit_windows:
+                b1_lit_windows.append((row, col))
+
+        for row, col in b1_lit_windows:
+            wx = self._building_x + col
+            wy = max(1, self._building_y) + row
+            if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
+                self._building_window_lights.append((wx, wy))
+
+        # Building 2 big window columns
+        if self.width > 60:
+            b2_big_window_cols = [9, 37]  # Big window columns in building 2
+            b2_lit_windows = []
+            for _ in range(random.randint(2, 3)):
+                row = random.choice(b1_window_rows)
+                col = random.choice(b2_big_window_cols)
+                if (row, col) not in b2_lit_windows:
+                    b2_lit_windows.append((row, col))
+
+            for row, col in b2_lit_windows:
+                wx = self._building2_x + col
+                wy = max(1, self._building2_y) + row
                 if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                     self._building_window_lights.append((wx, wy))
-        # Building 2 - similar setup
-        if self.width > 60:
-            b2_window_cols = [8, 22, 36]
-            for row in b1_window_rows[:2]:
-                for col in b2_window_cols[:2]:
-                    wx = self._building2_x + col
-                    wy = max(1, self._building2_y) + row + 1  # +1 instead of +2 (moved up 1 row)
-                    if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
-                        self._building_window_lights.append((wx, wy))
+
         # Initialize flicker brightness for each window light
         self._building_window_flicker = [1.0] * len(self._building_window_lights)
 
@@ -4520,6 +4580,9 @@ class AlleyScene:
             vehicle_roll = 1.0  # Force semi
         else:
             vehicle_roll = random.random()
+
+        # Play car sound effect via TTS audio engine
+        self._play_car_sound('vehicle')
 
         # Determine direction first
         direction = 1 if random.random() < 0.5 else -1
@@ -5639,8 +5702,8 @@ class AlleyScene:
         wall_width = 3
         wall_chars = ['▓', '▒', '░']  # Gradient from building edge outward
 
-        # Skip top rows (rooftop items)
-        start_row = 4
+        # Skip top rows (rooftop items) - start lower to avoid being too tall
+        start_row = 5
 
         for row in range(start_row, building_height - 2):  # Skip bottom porch rows
             py = building_y + row
@@ -8031,6 +8094,7 @@ class Dashboard:
         self._qte_enabled = False  # QTE (meteor game) toggle state - off by default
         self._qte_pending_activation = False  # Waiting for delayed QTE activation
         self._qte_activation_time = 0.0  # When to activate QTE
+        self._audio_muted = False  # Audio mute toggle state
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -8621,6 +8685,11 @@ class Dashboard:
             if self.matrix_mode and self.alley_scene:
                 enabled = self.alley_scene.toggle_qte()
                 self._qte_enabled = enabled  # Store for header display
+        elif key == ord('u') or key == ord('U'):
+            # Toggle audio mute on/off
+            if self.matrix_mode and self.alley_scene:
+                muted = self.alley_scene.toggle_mute()
+                self._audio_muted = muted  # Store for header display
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -8680,6 +8749,8 @@ class Dashboard:
             header += f" [{self._framerate_options[self._framerate_index]}ms]"
             if not self._qte_enabled:
                 header += " [QTE OFF]"
+            if self._audio_muted:
+                header += " [MUTED]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
