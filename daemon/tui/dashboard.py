@@ -9135,7 +9135,7 @@ class Dashboard:
         self._draw_siem_panel(bottom_y, panel_width, right_width, bottom_height)
 
     def _draw_status_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the status panel."""
+        """Draw the status panel with spaced out lines."""
         self._draw_box(y, x, width, height, "STATUS")
 
         row = y + 1
@@ -9145,9 +9145,9 @@ class Dashboard:
         if self.client.is_demo_mode():
             self._addstr(row, col, "Connection: ", Colors.MUTED)
             self._addstr(row, col + 12, "DEMO MODE", Colors.STATUS_ERROR, bold=True)
-            row += 1
+            row += 2  # Extra space
             self._addstr(row, col, "(No daemon)", Colors.MUTED)
-            row += 1
+            row += 2  # Extra space
         else:
             self._addstr(row, col, "Connection: ", Colors.MUTED)
             if self.client._use_tcp:
@@ -9155,14 +9155,14 @@ class Dashboard:
             else:
                 conn_text = "Socket"
             self._addstr(row, col + 12, conn_text, Colors.STATUS_OK)
-            row += 1
+            row += 2  # Extra space
 
         # Mode
         mode = self.status.get('mode', 'UNKNOWN')
         mode_color = Colors.STATUS_OK if mode in ('TRUSTED', 'AIRGAP', 'COLDROOM') else Colors.STATUS_WARN
         self._addstr(row, col, f"Mode: ", Colors.MUTED)
         self._addstr(row, col + 6, mode, mode_color, bold=True)
-        row += 1
+        row += 2  # Extra space
 
         # Tripwires
         tw_enabled = self.status.get('tripwire_enabled', False)
@@ -9170,7 +9170,7 @@ class Dashboard:
         tw_color = Colors.STATUS_OK if tw_enabled else Colors.STATUS_ERROR
         self._addstr(row, col, "Tripwires: ", Colors.MUTED)
         self._addstr(row, col + 11, tw_text, tw_color)
-        row += 1
+        row += 2  # Extra space
 
         # Clock Monitor
         cm_enabled = self.status.get('clock_monitor_enabled', False)
@@ -9178,7 +9178,7 @@ class Dashboard:
         cm_color = Colors.STATUS_OK if cm_enabled else Colors.STATUS_WARN
         self._addstr(row, col, "Clock: ", Colors.MUTED)
         self._addstr(row, col + 7, cm_text, cm_color)
-        row += 1
+        row += 2  # Extra space
 
         # Network Attestation
         na_enabled = self.status.get('network_attestation_enabled', False)
@@ -9186,12 +9186,12 @@ class Dashboard:
         na_color = Colors.STATUS_OK if na_enabled else Colors.MUTED
         self._addstr(row, col, "Network: ", Colors.MUTED)
         self._addstr(row, col + 9, na_text, na_color)
-        row += 1
+        row += 2  # Extra space
 
         # Events today
         events_count = self.status.get('events_today', 0)
         self._addstr(row, col, f"Events: {events_count:,}", Colors.MUTED)
-        row += 1
+        row += 2  # Extra space
 
         # Violations
         violations = self.status.get('violations', 0)
@@ -9316,10 +9316,20 @@ class Dashboard:
                 row += 1
 
     def _draw_siem_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the SIEM status panel with right-aligned text."""
+        """Draw the SIEM status panel with right-aligned title and text."""
         connected = self.siem_status.get('connected', False)
         title_color = Colors.STATUS_OK if connected else Colors.STATUS_ERROR
-        self._draw_box(y, x, width, height, "SIEM SHIPPING", title_color)
+        # Draw box with empty title, then add right-aligned title manually
+        self._draw_box(y, x, width, height, "")
+        # Right-align the title
+        title_str = " SIEM SHIPPING "
+        title_x = x + width - len(title_str) - 1
+        try:
+            self.screen.attron(curses.color_pair(title_color) | curses.A_BOLD)
+            self.screen.addstr(y, title_x, title_str)
+            self.screen.attroff(curses.color_pair(title_color) | curses.A_BOLD)
+        except curses.error:
+            pass
 
         row = y + 1
         # Right-align text within the box (2 char padding from right edge)
@@ -10898,7 +10908,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Boundary Daemon Dashboard")
     parser.add_argument("--refresh", "-r", type=float, default=2.0,
-                       help="Refresh interval in seconds")
+                       help="Refresh interval in seconds (e.g., 2.0, 1.0, 0.5, 0.01=10ms, 0.005=5ms)")
     parser.add_argument("--socket", "-s", type=str,
                        help="Path to daemon socket")
     # Secret Matrix mode - not shown in help
