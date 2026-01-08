@@ -1138,6 +1138,22 @@ class AlleyScene:
         "  ||  ",
     ]
 
+    # Mailbox with slot open (when person is mailing letter)
+    MAILBOX_OPEN = [
+        " ____ ",
+        "|=██=|",
+        "|MAIL|",
+        "|____|",
+        "  ||  ",
+    ]
+
+    # Person mailing letter (facing right, arm extended)
+    PERSON_MAILING = [
+        "  O_",
+        " /|─",
+        " /\\",
+    ]
+
     # Cafe storefront (well-lit, between buildings) - taller size
     # Turtle shell logo for Shell Cafe (hexagonal pattern)
     BIG_SHELL_LOGO = [
@@ -2039,6 +2055,32 @@ class AlleyScene:
         (32, 9), (32, 21), (32, 33), (32, 45),  # Fifth row
     ]
 
+    # Door positions relative to building sprite (col_offset from building_x)
+    # These are the two doors on each building
+    BUILDING_DOOR_OFFSETS = [12, 40]   # Two doors on BUILDING
+    BUILDING2_DOOR_OFFSETS = [12, 40]  # Two doors on BUILDING2
+
+    # Person hailing taxi (arm raised)
+    PERSON_HAILING_RIGHT = [
+        " O/",
+        "/| ",
+        "/\\",
+    ]
+    PERSON_HAILING_LEFT = [
+        "\\O ",
+        " |\\",
+        "/\\",
+    ]
+
+    # Open door overlay (replaces closed door section)
+    DOOR_OPEN = [
+        ".──────.",
+        "|░░░░░░|",
+        "|░░░░░░|",
+        "|░░░░░░|",
+        "|░[==]░|",
+    ]
+
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
@@ -2078,6 +2120,12 @@ class AlleyScene:
         self._ambulance_cooldown = 0
         # Lightning strike position for knockout detection
         self._last_lightning_x = -1
+        # Interaction states for pedestrians
+        self._mailbox_interaction: Dict = None  # {ped, state, timer} - person mailing letter
+        self._open_doors: List[Dict] = []  # [{building, door_idx, timer}] - currently open doors
+        self._door_positions: List[Dict] = []  # Calculated door x positions
+        self._waiting_taxi_peds: List[Dict] = []  # Peds waiting for taxi {ped, timer}
+        self._taxi_pickup: Dict = None  # {taxi, ped, state, timer} - taxi picking up person
         # Street light flicker effect
         self._street_light_positions: List[Tuple[int, int]] = []
         self._street_light_flicker = [1.0, 1.0]  # Brightness per light (0-1)
@@ -4015,6 +4063,20 @@ class AlleyScene:
         self.mailbox_y = ground_y - len(self.MAILBOX) + 1
         self._draw_sprite(self.MAILBOX, self.mailbox_x, self.mailbox_y, Colors.ALLEY_BLUE)
 
+        # Calculate door positions for pedestrian interactions
+        self._door_positions = []
+        # Building 1 doors
+        for door_offset in self.BUILDING_DOOR_OFFSETS:
+            door_x = self._building_x + door_offset
+            self._door_positions.append({'building': 1, 'x': door_x, 'y': ground_y})
+        # Building 2 doors
+        for door_offset in self.BUILDING2_DOOR_OFFSETS:
+            door_x = self._building2_x + door_offset
+            self._door_positions.append({'building': 2, 'x': door_x, 'y': ground_y})
+        # Cafe door (center bottom of cafe)
+        cafe_door_x = gap_center - 28 + 14  # Approximate door position
+        self._door_positions.append({'building': 'cafe', 'x': cafe_door_x, 'y': ground_y})
+
         # Calculate cafe position first (shifted 11 chars left)
         self.cafe_x = gap_center - len(self.CAFE[0]) // 2 - 28  # 10 more left (was -18)
         self.cafe_y = ground_y - len(self.CAFE) - 3  # Moved up 4 rows total (2 more)
@@ -4899,9 +4961,57 @@ class AlleyScene:
                 self._spawn_car()
             self._car_spawn_timer = 0
 
+        # Update open doors (close them after pedestrian enters)
+        new_open_doors = []
+        for door in self._open_doors:
+            door['timer'] += 1
+            if door['timer'] < 50:  # Keep door open for 50 frames
+                new_open_doors.append(door)
+        self._open_doors = new_open_doors
+
+        # Update taxi pickup state
+        if self._taxi_pickup:
+            self._taxi_pickup['timer'] += 1
+            if self._taxi_pickup['state'] == 'stopping':
+                # Taxi slowing down
+                taxi = self._taxi_pickup['taxi']
+                taxi['speed'] = max(0.1, taxi['speed'] - 0.1)
+                if taxi['speed'] <= 0.1:
+                    self._taxi_pickup['state'] = 'boarding'
+                    self._taxi_pickup['timer'] = 0
+            elif self._taxi_pickup['state'] == 'boarding':
+                # Person getting in (handled in pedestrian update)
+                if self._taxi_pickup['timer'] > 30:
+                    self._taxi_pickup['state'] = 'leaving'
+            elif self._taxi_pickup['state'] == 'leaving':
+                # Taxi driving away
+                taxi = self._taxi_pickup['taxi']
+                taxi['speed'] = min(1.5, taxi['speed'] + 0.1)
+                if self._taxi_pickup['timer'] > 60:
+                    # Remove ped from waiting list
+                    ped = self._taxi_pickup.get('ped')
+                    if ped in self._waiting_taxi_peds:
+                        self._waiting_taxi_peds.remove(ped)
+                    self._taxi_pickup = None
+
         # Update vehicle positions
         new_cars = []
         for car in self._cars:
+            # Check if this taxi should stop for a waiting pedestrian
+            if car.get('is_taxi') and self._waiting_taxi_peds and not self._taxi_pickup:
+                for ped in self._waiting_taxi_peds:
+                    ped_x = ped.get('x', 0)
+                    # Taxi is near the waiting pedestrian
+                    if abs(car['x'] - ped_x) < 15:
+                        # Start pickup sequence
+                        self._taxi_pickup = {
+                            'taxi': car,
+                            'ped': ped,
+                            'state': 'stopping',
+                            'timer': 0
+                        }
+                        break
+
             car['x'] += car['direction'] * car['speed']
 
             # Calculate margin based on vehicle type (semis are much wider)
@@ -5006,6 +5116,34 @@ class AlleyScene:
         skin_color = random.choice(self.SKIN_TONES)
         clothing_color = random.choice(self.CLOTHING_COLORS)
 
+        # Determine interaction behavior (50% have a destination)
+        interaction = None
+        destination_x = None
+        rand = random.random()
+        if rand < 0.15 and self._door_positions:
+            # 15% go to a door (pick a door in their direction of travel)
+            valid_doors = [d for d in self._door_positions
+                          if (direction == 1 and d['x'] > spawn_x + 20) or
+                             (direction == -1 and d['x'] < spawn_x - 20)]
+            if valid_doors:
+                door = random.choice(valid_doors)
+                interaction = 'door'
+                destination_x = door['x']
+        elif rand < 0.22 and hasattr(self, 'mailbox_x'):
+            # 7% mail a letter
+            if (direction == 1 and self.mailbox_x > spawn_x) or \
+               (direction == -1 and self.mailbox_x < spawn_x):
+                interaction = 'mailbox'
+                destination_x = self.mailbox_x - 2  # Stop next to mailbox
+        elif rand < 0.30:
+            # 8% hail a taxi
+            # Pick a spot to wait at
+            interaction = 'hail_taxi'
+            if direction == 1:
+                destination_x = random.uniform(self.width * 0.3, self.width * 0.7)
+            else:
+                destination_x = random.uniform(self.width * 0.3, self.width * 0.7)
+
         if direction == 1:
             # Pedestrian going right (spawn on left)
             self._pedestrians.append({
@@ -5020,6 +5158,10 @@ class AlleyScene:
                 'y_offset': random.choice([-1, 0, 1]),  # Wander on 2-row sidewalk
                 'target_y_offset': random.choice([-1, 0, 1]),
                 'y_wander_timer': random.randint(30, 80),
+                'interaction': interaction,
+                'destination_x': destination_x,
+                'interaction_state': None,
+                'interaction_timer': 0,
             })
         else:
             # Pedestrian going left (spawn on right)
@@ -5035,6 +5177,10 @@ class AlleyScene:
                 'y_offset': random.choice([-1, 0, 1]),  # Wander on 2-row sidewalk
                 'target_y_offset': random.choice([-1, 0, 1]),
                 'y_wander_timer': random.randint(30, 80),
+                'interaction': interaction,
+                'destination_x': destination_x,
+                'interaction_state': None,
+                'interaction_timer': 0,
             })
 
     def _update_pedestrians(self):
@@ -5099,12 +5245,90 @@ class AlleyScene:
                 # Normal walking
                 ped.pop('panicking', None)
                 ped.pop('darting', None)
+
+                # Check for interaction states
+                interaction = ped.get('interaction')
+                interaction_state = ped.get('interaction_state')
+                destination_x = ped.get('destination_x')
+
+                # Handle active interactions (pedestrian is stopped doing something)
+                if interaction_state == 'mailing':
+                    # Mailing a letter - stand still, animate
+                    ped['interaction_timer'] += 1
+                    if ped['interaction_timer'] > 60:  # Done mailing
+                        self._mailbox_interaction = None
+                        ped['interaction'] = None
+                        ped['interaction_state'] = None
+                        # Continue walking off screen
+                    else:
+                        self._mailbox_interaction = {'ped': ped, 'timer': ped['interaction_timer']}
+                        continue  # Skip movement, add to new list at end
+                elif interaction_state == 'entering_door':
+                    # Entering a door - fade out / disappear
+                    ped['interaction_timer'] += 1
+                    if ped['interaction_timer'] > 30:  # Gone
+                        # Remove door from open list after delay
+                        continue  # Don't add to new_pedestrians, ped disappears
+                    else:
+                        new_pedestrians.append(ped)
+                        continue  # Skip normal movement
+                elif interaction_state == 'hailing':
+                    # Hailing a taxi - wait for one to stop
+                    ped['interaction_timer'] += 1
+                    if ped['interaction_timer'] > 300:  # Give up after 5 seconds
+                        ped['interaction'] = None
+                        ped['interaction_state'] = None
+                    elif self._taxi_pickup and self._taxi_pickup.get('ped') == ped:
+                        # Taxi stopped for us
+                        if self._taxi_pickup['state'] == 'boarding':
+                            ped['interaction_timer'] += 1
+                            if ped['interaction_timer'] > 20:
+                                # Get in taxi and leave
+                                self._taxi_pickup['state'] = 'leaving'
+                                continue  # Remove pedestrian
+                    new_pedestrians.append(ped)
+                    continue  # Skip normal movement
+
+                # Check if approaching destination
+                if interaction and destination_x is not None and interaction_state is None:
+                    dist = abs(ped['x'] - destination_x)
+                    if dist < 3:  # Close enough to destination
+                        if interaction == 'mailbox':
+                            ped['interaction_state'] = 'mailing'
+                            ped['interaction_timer'] = 0
+                            ped['x'] = destination_x  # Snap to position
+                            new_pedestrians.append(ped)
+                            continue
+                        elif interaction == 'door':
+                            ped['interaction_state'] = 'entering_door'
+                            ped['interaction_timer'] = 0
+                            # Open the door
+                            for door in self._door_positions:
+                                if abs(door['x'] - destination_x) < 3:
+                                    self._open_doors.append({
+                                        'building': door['building'],
+                                        'x': door['x'],
+                                        'timer': 0
+                                    })
+                                    break
+                            new_pedestrians.append(ped)
+                            continue
+                        elif interaction == 'hail_taxi':
+                            ped['interaction_state'] = 'hailing'
+                            ped['interaction_timer'] = 0
+                            self._waiting_taxi_peds.append(ped)
+                            new_pedestrians.append(ped)
+                            continue
+
+                # Normal arm animation
                 ped['frame_timer'] += 1
                 if ped['frame_timer'] >= 3:  # Normal arm swing
                     ped['frame_timer'] = 0
                     ped['frame_idx'] = (ped['frame_idx'] + 1) % len(ped['frames'])
 
-            ped['x'] += ped['direction'] * ped['speed']
+            # Movement (skip if in certain states)
+            if ped.get('interaction_state') not in ['mailing', 'entering_door', 'hailing']:
+                ped['x'] += ped['direction'] * ped['speed']
 
             # Y wandering - pedestrians drift up/down on sidewalk to pass each other
             # Allow walking 4 rows closer (more negative offset) when under a building
@@ -5846,6 +6070,12 @@ class AlleyScene:
         # Render wind effects (debris, leaves, wisps)
         self._render_wind(screen)
 
+        # Render open mailbox if someone is mailing
+        self._render_mailbox_interaction(screen)
+
+        # Render open doors
+        self._render_open_doors(screen)
+
         # Render pedestrians on the sidewalk
         self._render_pedestrians(screen)
 
@@ -6017,6 +6247,68 @@ class AlleyScene:
                     screen.attroff(attr)
                 except curses.error:
                     pass
+
+    def _render_mailbox_interaction(self, screen):
+        """Render open mailbox when someone is mailing a letter."""
+        if not self._mailbox_interaction:
+            return
+
+        timer = self._mailbox_interaction.get('timer', 0)
+        # Only show open mailbox during middle of interaction
+        if 10 < timer < 50:
+            # Draw open mailbox over the regular mailbox
+            mailbox_x = getattr(self, 'mailbox_x', 0)
+            mailbox_y = getattr(self, 'mailbox_y', 0)
+            if mailbox_x > 0:
+                for row_idx, row in enumerate(self.MAILBOX_OPEN):
+                    for col_idx, char in enumerate(row):
+                        px = mailbox_x + col_idx
+                        py = mailbox_y + row_idx
+                        if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                            try:
+                                # Open slot is highlighted
+                                if char == '█':
+                                    attr = curses.color_pair(Colors.ALLEY_DARK)
+                                else:
+                                    attr = curses.color_pair(Colors.ALLEY_BLUE)
+                                screen.attron(attr)
+                                screen.addstr(py, px, char)
+                                screen.attroff(attr)
+                            except curses.error:
+                                pass
+
+    def _render_open_doors(self, screen):
+        """Render open doors when people are entering buildings."""
+        if not self._open_doors:
+            return
+
+        ground_y = self.height - 1
+        for door in self._open_doors:
+            door_x = door.get('x', 0)
+            building = door.get('building')
+
+            # Door is at ground level, 5 rows tall
+            door_y = ground_y - 4
+
+            # Render open door overlay
+            for row_idx, row in enumerate(self.DOOR_OPEN):
+                for col_idx, char in enumerate(row):
+                    px = door_x + col_idx - 3  # Center the door
+                    py = door_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        try:
+                            # Dark interior with frame
+                            if char == '░':
+                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                            elif char in '.|─[]':
+                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            else:
+                                attr = curses.color_pair(Colors.GREY_BLOCK)
+                            screen.attron(attr)
+                            screen.addstr(py, px, char)
+                            screen.attroff(attr)
+                        except curses.error:
+                            pass
 
     def _render_qte(self, screen):
         """Render the meteor QTE event - meteors, missiles, explosions, NPC."""
@@ -6334,13 +6626,37 @@ class AlleyScene:
             y_offset = ped.get('y_offset', 0)
             curb_y = base_curb_y + y_offset  # Apply wandering offset
 
-            # Get current animation frame
-            frames = ped.get('frames', [])
-            frame_idx = ped.get('frame_idx', 0)
-            if frames and frame_idx < len(frames):
-                sprite = frames[frame_idx]
+            # Check for special interaction poses
+            interaction_state = ped.get('interaction_state')
+            if interaction_state == 'hailing':
+                # Use hailing pose instead of walking
+                if ped.get('direction', 1) == 1:
+                    sprite = self.PERSON_HAILING_RIGHT
+                else:
+                    sprite = self.PERSON_HAILING_LEFT
+            elif interaction_state == 'mailing':
+                # Use mailing pose
+                sprite = self.PERSON_MAILING
+            elif interaction_state == 'entering_door':
+                # Fade out effect - skip rendering after a few frames
+                timer = ped.get('interaction_timer', 0)
+                if timer > 15:
+                    continue  # Don't render, they're inside
+                # Get current animation frame for partial render
+                frames = ped.get('frames', [])
+                frame_idx = ped.get('frame_idx', 0)
+                if frames and frame_idx < len(frames):
+                    sprite = frames[frame_idx]
+                else:
+                    continue
             else:
-                continue
+                # Get current animation frame
+                frames = ped.get('frames', [])
+                frame_idx = ped.get('frame_idx', 0)
+                if frames and frame_idx < len(frames):
+                    sprite = frames[frame_idx]
+                else:
+                    continue
 
             sprite_height = len(sprite)
             # Get colors for this pedestrian
@@ -9135,7 +9451,7 @@ class Dashboard:
         self._draw_siem_panel(bottom_y, panel_width, right_width, bottom_height)
 
     def _draw_status_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the status panel."""
+        """Draw the status panel with spaced out lines."""
         self._draw_box(y, x, width, height, "STATUS")
 
         row = y + 1
@@ -9145,9 +9461,9 @@ class Dashboard:
         if self.client.is_demo_mode():
             self._addstr(row, col, "Connection: ", Colors.MUTED)
             self._addstr(row, col + 12, "DEMO MODE", Colors.STATUS_ERROR, bold=True)
-            row += 1
+            row += 2  # Extra space
             self._addstr(row, col, "(No daemon)", Colors.MUTED)
-            row += 1
+            row += 2  # Extra space
         else:
             self._addstr(row, col, "Connection: ", Colors.MUTED)
             if self.client._use_tcp:
@@ -9155,14 +9471,14 @@ class Dashboard:
             else:
                 conn_text = "Socket"
             self._addstr(row, col + 12, conn_text, Colors.STATUS_OK)
-            row += 1
+            row += 2  # Extra space
 
         # Mode
         mode = self.status.get('mode', 'UNKNOWN')
         mode_color = Colors.STATUS_OK if mode in ('TRUSTED', 'AIRGAP', 'COLDROOM') else Colors.STATUS_WARN
         self._addstr(row, col, f"Mode: ", Colors.MUTED)
         self._addstr(row, col + 6, mode, mode_color, bold=True)
-        row += 1
+        row += 2  # Extra space
 
         # Tripwires
         tw_enabled = self.status.get('tripwire_enabled', False)
@@ -9170,7 +9486,7 @@ class Dashboard:
         tw_color = Colors.STATUS_OK if tw_enabled else Colors.STATUS_ERROR
         self._addstr(row, col, "Tripwires: ", Colors.MUTED)
         self._addstr(row, col + 11, tw_text, tw_color)
-        row += 1
+        row += 2  # Extra space
 
         # Clock Monitor
         cm_enabled = self.status.get('clock_monitor_enabled', False)
@@ -9178,7 +9494,7 @@ class Dashboard:
         cm_color = Colors.STATUS_OK if cm_enabled else Colors.STATUS_WARN
         self._addstr(row, col, "Clock: ", Colors.MUTED)
         self._addstr(row, col + 7, cm_text, cm_color)
-        row += 1
+        row += 2  # Extra space
 
         # Network Attestation
         na_enabled = self.status.get('network_attestation_enabled', False)
@@ -9186,12 +9502,12 @@ class Dashboard:
         na_color = Colors.STATUS_OK if na_enabled else Colors.MUTED
         self._addstr(row, col, "Network: ", Colors.MUTED)
         self._addstr(row, col + 9, na_text, na_color)
-        row += 1
+        row += 2  # Extra space
 
         # Events today
         events_count = self.status.get('events_today', 0)
         self._addstr(row, col, f"Events: {events_count:,}", Colors.MUTED)
-        row += 1
+        row += 2  # Extra space
 
         # Violations
         violations = self.status.get('violations', 0)
@@ -9316,10 +9632,20 @@ class Dashboard:
                 row += 1
 
     def _draw_siem_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the SIEM status panel with right-aligned text."""
+        """Draw the SIEM status panel with right-aligned title and text."""
         connected = self.siem_status.get('connected', False)
         title_color = Colors.STATUS_OK if connected else Colors.STATUS_ERROR
-        self._draw_box(y, x, width, height, "SIEM SHIPPING", title_color)
+        # Draw box with empty title, then add right-aligned title manually
+        self._draw_box(y, x, width, height, "")
+        # Right-align the title
+        title_str = " SIEM SHIPPING "
+        title_x = x + width - len(title_str) - 1
+        try:
+            self.screen.attron(curses.color_pair(title_color) | curses.A_BOLD)
+            self.screen.addstr(y, title_x, title_str)
+            self.screen.attroff(curses.color_pair(title_color) | curses.A_BOLD)
+        except curses.error:
+            pass
 
         row = y + 1
         # Right-align text within the box (2 char padding from right edge)
@@ -10898,7 +11224,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Boundary Daemon Dashboard")
     parser.add_argument("--refresh", "-r", type=float, default=2.0,
-                       help="Refresh interval in seconds")
+                       help="Refresh interval in seconds (e.g., 2.0, 1.0, 0.5, 0.01=10ms, 0.005=5ms)")
     parser.add_argument("--socket", "-s", type=str,
                        help="Path to daemon socket")
     # Secret Matrix mode - not shown in help
