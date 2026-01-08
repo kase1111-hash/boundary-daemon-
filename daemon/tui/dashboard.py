@@ -1150,12 +1150,12 @@ class AlleyScene:
         "    \\___|_|___/ /     ",
     ]
 
-    # Turtle head animation frames (peeks out from shell)
+    # Turtle head animation frames (peeks out from shell) - each frame is [head, neck]
     TURTLE_HEAD_FRAMES = [
-        "  @__@  ",   # Normal eyes
-        "  @~~@  ",   # Blink
-        "  @_~@  ",   # Right wink
-        "  ^__^  ",   # Happy
+        ["  @__@  ", "   ||   "],   # Normal eyes with neck
+        ["  @~~@  ", "   ||   "],   # Blink with neck
+        ["  @_~@  ", "   ||   "],   # Right wink with neck
+        ["  ^__^  ", "   ||   "],   # Happy with neck
     ]
 
     CAFE = [
@@ -3259,6 +3259,10 @@ class AlleyScene:
         vis_left = getattr(self, '_skyline_visible_left', 0)
         vis_right = getattr(self, '_skyline_visible_right', self.width)
 
+        # Get cafe bounds to avoid drawing windows behind cafe
+        cafe_bounds = getattr(self, '_cafe_bounds', (0, 0, 0, 0))
+        cafe_left, cafe_right, cafe_top, cafe_bottom = cafe_bounds
+
         for window in self._skyline_windows:
             if not window['animated']:
                 continue
@@ -3267,8 +3271,11 @@ class AlleyScene:
             if window['timer'] >= window['toggle_time']:
                 window['timer'] = 0
                 window['on'] = not window['on']
-                # Update the scene with new window state (only if in visible region)
+                # Update the scene with new window state (only if in visible region and not behind cafe)
                 px, py = window['x'], window['y']
+                # Skip if behind cafe
+                if cafe_left <= px <= cafe_right and cafe_top <= py <= cafe_bottom:
+                    continue
                 if vis_left <= px <= vis_right and 0 <= py < self.height:
                     if window['on']:
                         self.scene[py][px] = ('▪', Colors.RAT_YELLOW)
@@ -3824,14 +3831,19 @@ class AlleyScene:
         building1_right = self._building_x + len(self.BUILDING[0])
         self._building2_x = self.width - len(self.BUILDING2[0]) - 11 if self.width > 60 else self.width
 
-        # Calculate cafe position early for overlap avoidance
+        # Calculate cafe position early for overlap avoidance (must match line ~4001)
         gap_center = (building1_right + self._building2_x) // 2
         cafe_width = len(self.CAFE[0])
-        cafe_left = gap_center - cafe_width // 2 - 11
+        cafe_height = len(self.CAFE)
+        cafe_left = gap_center - cafe_width // 2 - 28  # Match actual cafe_x calculation
         cafe_right = cafe_left + cafe_width
+        cafe_top = ground_y - cafe_height - 3  # Match actual cafe_y calculation
+        cafe_bottom = cafe_top + cafe_height
 
         # Draw distant buildings FIRST (furthest back) - only in gap between buildings
-        self._draw_distant_buildings(gap_center, ground_y, building1_right, self._building2_x)
+        # Pass cafe bounds so cityscape windows don't show through cafe
+        self._draw_distant_buildings(gap_center, ground_y, building1_right, self._building2_x,
+                                     cafe_left, cafe_right, cafe_top, cafe_bottom)
 
         # Draw mid-range buildings (behind big buildings, avoid cafe area)
         self._draw_midrange_buildings(ground_y, cafe_left, cafe_right)
@@ -4145,7 +4157,8 @@ class AlleyScene:
                     char = '░'  # Light shade (rare)
                 self.scene[row][x] = (char, Colors.GREY_BLOCK)
 
-    def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int):
+    def _draw_distant_buildings(self, center_x: int, ground_y: int, left_boundary: int, right_boundary: int,
+                                 cafe_left: int = 0, cafe_right: int = 0, cafe_top: int = 0, cafe_bottom: int = 0):
         """Draw static cityscape backdrop in the gap between main buildings."""
         # Initialize skyline windows list
         self._skyline_windows = []
@@ -4154,6 +4167,9 @@ class AlleyScene:
         # Store visibility bounds
         self._skyline_visible_left = left_boundary + 1
         self._skyline_visible_right = right_boundary - 1
+
+        # Store cafe bounds for window filtering
+        self._cafe_bounds = (cafe_left, cafe_right, cafe_top, cafe_bottom)
 
         # Position cityscape centered in the gap
         cityscape_width = len(self.CITYSCAPE[0]) if self.CITYSCAPE else 0
@@ -4221,6 +4237,10 @@ class AlleyScene:
                 if row[col_idx:col_idx+3] == '[ ]':
                     px = cityscape_x + col_idx + 1  # Center of window
                     if left_boundary < px < right_boundary and 0 <= px < self.width - 1:
+                        # Skip windows that would be behind the cafe
+                        if (cafe_left <= px <= cafe_right and cafe_top <= py <= cafe_bottom):
+                            col_idx += 3
+                            continue
                         # Add animated window
                         rand_val = random.random()
                         if rand_val < 0.3:
@@ -6262,8 +6282,8 @@ class AlleyScene:
         # Security canary: no pedestrians if process security is down
         if not self._security_canary.get('pedestrians', True):
             return
-        # Pedestrians walk on the curb/sidewalk area (moved up 2 rows)
-        base_curb_y = self.height - 4
+        # Pedestrians walk on the curb/sidewalk area (at street level)
+        base_curb_y = self.height - 1
 
         for ped in self._pedestrians:
             x = int(ped['x'])
@@ -6308,7 +6328,7 @@ class AlleyScene:
 
     def _render_knocked_out_peds(self, screen):
         """Render knocked out pedestrians lying on the ground."""
-        curb_y = self.height - 4
+        curb_y = self.height - 1
 
         for ko_ped in self._knocked_out_peds:
             x = int(ko_ped['x'])
@@ -6340,7 +6360,7 @@ class AlleyScene:
 
         amb = self._ambulance
         x = int(amb['x'])
-        curb_y = self.height - 4
+        curb_y = self.height - 1
         y = curb_y - 3  # Ambulance is 4 rows tall
 
         # Choose sprite based on direction
@@ -6702,8 +6722,10 @@ class AlleyScene:
         else:  # Left side
             turtle_x = self.cafe_x - 1  # Left edge of shell
 
-        # Get the current turtle head frame
-        head = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
+        # Get the current turtle head frame (now a list: [head, neck])
+        frame = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
+        head = frame[0]
+        neck = frame[1] if len(frame) > 1 else ""
 
         if not (0 <= turtle_x < self.width - len(head) and 0 <= turtle_y < self.height):
             return
@@ -6712,7 +6734,11 @@ class AlleyScene:
             # Draw turtle head in green (like shell logo)
             attr = curses.color_pair(Colors.STATUS_OK) | curses.A_BOLD
             screen.attron(attr)
+            # Draw head
             screen.addstr(turtle_y, turtle_x, head)
+            # Draw neck below head
+            if neck and turtle_y + 1 < self.height:
+                screen.addstr(turtle_y + 1, turtle_x, neck)
             screen.attroff(attr)
         except curses.error:
             pass
@@ -7887,8 +7913,8 @@ class DashboardClient:
         return False
 
     def is_demo_mode(self) -> bool:
-        """Check if running in demo mode (always False - demo mode removed)."""
-        return False
+        """Check if running in demo mode (not connected to live daemon)."""
+        return not self._connected
 
     def get_status(self) -> Dict:
         """Get daemon status from connection or log file."""
@@ -7897,17 +7923,21 @@ class DashboardClient:
             response = self._send_request('status')
             if response.get('success'):
                 status = response.get('status', {})
+                # Extract nested boundary_state (daemon returns mode inside boundary_state)
+                boundary_state = status.get('boundary_state', {})
+                lockdown = status.get('lockdown', {})
+                environment = status.get('environment', {})
                 # Map API response to dashboard format
                 return {
-                    'mode': status.get('mode', 'UNKNOWN').upper(),
-                    'mode_since': datetime.utcnow().isoformat(),
-                    'uptime': status.get('uptime_seconds', 0),
-                    'events_today': status.get('events_today', 0),
-                    'violations': status.get('tripwire_count', 0),
+                    'mode': boundary_state.get('mode', 'unknown').upper(),
+                    'mode_since': boundary_state.get('last_transition', datetime.utcnow().isoformat()),
+                    'uptime': environment.get('uptime_seconds', 0) if environment else 0,
+                    'events_today': status.get('event_count', 0),
+                    'violations': status.get('tripwire_violations', 0),
                     'tripwire_enabled': True,
-                    'clock_monitor_enabled': status.get('online', False),
-                    'network_attestation_enabled': status.get('network_state', 'unknown') != 'isolated',
-                    'is_frozen': status.get('lockdown_active', False),
+                    'clock_monitor_enabled': status.get('running', False),
+                    'network_attestation_enabled': boundary_state.get('network', 'isolated') != 'isolated',
+                    'is_frozen': lockdown.get('active', False) if lockdown else False,
                 }
 
         # Fall back to reading from log file
