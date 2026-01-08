@@ -205,6 +205,8 @@ This Alpha release includes **140+ modules** across the following capability are
 | `biometric_ctl` | Biometric verification |
 | `security_scan` | Security scanning utilities |
 | `verify_signatures` | Signature verification |
+| `dashboard` | Real-time TUI monitoring dashboard |
+| `art_editor` | ASCII sprite editor for TUI customization |
 
 ---
 
@@ -464,7 +466,9 @@ boundary-daemon/
 │  │  └─ message_checker.py           # Message content checking
 │  │
 │  ├─ tui/                        # Terminal UI
-│  │  └─ dashboard.py                 # Real-time TUI dashboard
+│  │  ├─ dashboard.py                 # Real-time TUI dashboard
+│  │  ├─ art_editor.py                # ASCII sprite editor
+│  │  └─ art_editor.bat               # Windows launcher for art editor
 │  │
 │  ├─ cli/                        # CLI tools
 │  │  ├─ boundaryctl.py               # Main control CLI
@@ -1091,6 +1095,114 @@ sandboxctl kill sandbox-001                     # Kill sandbox
 sandboxctl profiles                             # List available profiles
 sandboxctl test --profile airgap                # Test sandbox capabilities
 ```
+
+## Terminal User Interface (TUI)
+
+The Boundary Daemon includes a comprehensive real-time monitoring dashboard with both standard and covert display modes.
+
+### Starting the Dashboard
+
+```bash
+# Standard dashboard (2-second refresh)
+python daemon/tui/dashboard.py
+
+# Fast refresh for real-time monitoring
+python daemon/tui/dashboard.py --refresh 0.5
+
+# Ultra-fast refresh (10ms) for detailed analysis
+python daemon/tui/dashboard.py --refresh 0.01
+
+# Obscured Security Viewport (steganographic display mode)
+python daemon/tui/dashboard.py --matrix
+```
+
+### Dashboard Features
+
+| Feature | Description |
+|---------|-------------|
+| **Live Status** | Real-time daemon mode, connection status, uptime |
+| **Event Stream** | Scrollable security event log with filtering |
+| **Alert Panel** | Active security alerts with severity indicators |
+| **Sandbox Monitor** | Active sandbox status and resource usage |
+| **SIEM Status** | SIEM shipping queue depth and connection status |
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `m` | Start mode change ceremony |
+| `c` | Clear events display |
+| `l` | Load/recall events from daemon |
+| `e` | Export events to file |
+| `r` | Refresh data |
+| `/` | Filter events |
+| `1-4` | Focus panels (status, events, alerts, sandboxes) |
+| `↑↓` | Scroll current panel |
+| `?` | Toggle help overlay |
+| `q` | Quit dashboard |
+
+### Obscured Security Viewport
+
+For environments where security monitoring must remain inconspicuous, the `--matrix` flag activates the **Obscured Security Viewport** - a steganographic display mode that presents security telemetry within an ambient visual display.
+
+```bash
+python daemon/tui/dashboard.py --matrix
+```
+
+This mode embeds critical security indicators within an animated cityscape visualization:
+
+| Visual Element | Security Indicator |
+|----------------|-------------------|
+| **Header Bar** | Daemon mode, response latency, QTE status |
+| **Building Windows** | Background process activity |
+| **Pedestrian Activity** | Network connection health |
+| **Vehicle Traffic** | Data throughput indicators |
+| **Weather Effects** | System load and alerts |
+
+Additional shortcuts in Obscured mode:
+- `w` - Cycle ambient effects (rain, snow, fog, sandstorm)
+- `:` - Command line interface
+
+### System Tray Integration (Windows)
+
+On Windows, the daemon automatically minimizes to the system tray:
+
+```bash
+# Default behavior on Windows (auto-hides to tray)
+python run_daemon.py
+
+# Disable system tray
+python run_daemon.py --no-tray
+
+# Keep console visible
+python run_daemon.py --no-auto-hide
+```
+
+Tray icon features:
+- **Right-click menu**: Mode switching, show/hide console, exit
+- **Double-click**: Show console window
+- **X button**: Minimizes to tray instead of closing
+- **Tooltip**: Shows current mode
+
+### Art Editor (Development Tool)
+
+For customizing dashboard visual elements:
+
+```bash
+# Windows
+daemon\tui\art_editor.bat
+
+# Linux/macOS
+python daemon/tui/art_editor.py
+
+# List available sprites
+python daemon/tui/art_editor.py --list
+
+# Load specific sprite for editing
+python daemon/tui/art_editor.py --load SPRITE_NAME
+```
+
+---
 
 ## Design Principles
 
