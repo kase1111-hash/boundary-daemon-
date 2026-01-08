@@ -4187,7 +4187,7 @@ class AlleyScene:
         b1_windows = [
             (4, 8, True), (17, 4, False), (24, 4, False), (37, 8, True), (50, 4, False)
         ]
-        b1_window_rows = [7, 13, 19, 25, 31]  # Rows with window tops (moved up 2 from middle)
+        b1_window_rows = [7, 13, 19, 25, 31]  # Rows with window tops
 
         # Building 2 window definitions
         b2_windows = [
@@ -4202,8 +4202,13 @@ class AlleyScene:
                 if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                     # Assign unique scene and random light state
                     scene_type = random.choice(self._window_scene_types)
-                    light_on = random.random() > 0.3  # 70% chance light is on
-                    brightness = random.uniform(0.4, 1.0) if light_on else 0.0
+                    # More varied brightness - use discrete levels
+                    light_on = random.random() > 0.25  # 75% chance light is on
+                    if light_on:
+                        # Discrete brightness levels: dim (0.3), medium (0.6), bright (1.0)
+                        brightness = random.choice([0.3, 0.5, 0.7, 0.9, 1.0])
+                    else:
+                        brightness = 0.0
                     window = {
                         'x': wx, 'y': wy, 'width': width, 'height': 3,
                         'building': 1, 'scene_type': scene_type,
@@ -4211,8 +4216,9 @@ class AlleyScene:
                         'is_big': is_big, 'scene_chars': self._generate_window_scene(scene_type, width)
                     }
                     self._all_windows.append(window)
-                    # Add to light list for glow effect (moved up 2 rows)
-                    self._building_window_lights.append((wx + width // 2, wy))
+                    # Only big windows get light glow effect (moved up 2 rows from window top)
+                    if is_big:
+                        self._building_window_lights.append((wx + width // 2, wy - 1))
 
         # Create all windows for building 2
         if self.width > 60:
@@ -4222,8 +4228,11 @@ class AlleyScene:
                     wy = max(1, self._building2_y) + row
                     if 0 < wx < self.width - 5 and 0 < wy < self.height - 5:
                         scene_type = random.choice(self._window_scene_types)
-                        light_on = random.random() > 0.3
-                        brightness = random.uniform(0.4, 1.0) if light_on else 0.0
+                        light_on = random.random() > 0.25
+                        if light_on:
+                            brightness = random.choice([0.3, 0.5, 0.7, 0.9, 1.0])
+                        else:
+                            brightness = 0.0
                         window = {
                             'x': wx, 'y': wy, 'width': width, 'height': 3,
                             'building': 2, 'scene_type': scene_type,
@@ -4231,10 +4240,15 @@ class AlleyScene:
                             'is_big': is_big, 'scene_chars': self._generate_window_scene(scene_type, width)
                         }
                         self._all_windows.append(window)
-                        self._building_window_lights.append((wx + width // 2, wy))
+                        # Only big windows get light glow
+                        if is_big:
+                            self._building_window_lights.append((wx + width // 2, wy - 1))
 
-        # Initialize flicker brightness from window states
-        self._building_window_flicker = [w['brightness'] for w in self._all_windows]
+        # Initialize flicker brightness from window states (only for windows with lights)
+        self._building_window_flicker = []
+        for w in self._all_windows:
+            if w['is_big']:
+                self._building_window_flicker.append(w['brightness'])
 
         # Draw street lights between buildings (in the gap)
         self._draw_street_lights(ground_y)
@@ -5936,29 +5950,32 @@ class AlleyScene:
         # Update building window lights with on/off and brightness variation
         self._window_light_timer += 1
 
-        for i, window in enumerate(self._all_windows):
-            if i >= len(self._building_window_flicker):
-                continue
-
+        # Update all windows (scenes visible based on light state)
+        # Flicker array only tracks big windows that have light glows
+        flicker_idx = 0
+        for window in self._all_windows:
             # Occasionally toggle lights on/off (~0.3% chance per frame = ~once per 5.5 sec)
             if random.random() < 0.003:
                 window['light_on'] = not window['light_on']
                 if window['light_on']:
-                    window['brightness'] = random.uniform(0.5, 1.0)
+                    # Use discrete brightness levels for visible variation
+                    window['brightness'] = random.choice([0.3, 0.5, 0.7, 0.9, 1.0])
                 else:
                     window['brightness'] = 0.0
 
-            # Flicker lit windows occasionally
-            if window['light_on']:
-                if random.random() < 0.03:  # 3% chance - subtle flicker
-                    self._building_window_flicker[i] = window['brightness'] * random.uniform(0.6, 0.95)
+            # Only update flicker for big windows (they have light glows)
+            if window['is_big'] and flicker_idx < len(self._building_window_flicker):
+                if window['light_on']:
+                    if random.random() < 0.03:  # 3% chance - subtle flicker
+                        self._building_window_flicker[flicker_idx] = window['brightness'] * random.uniform(0.6, 0.95)
+                    else:
+                        # Gradually return to window's brightness level
+                        target = window['brightness']
+                        if self._building_window_flicker[flicker_idx] < target:
+                            self._building_window_flicker[flicker_idx] = min(target, self._building_window_flicker[flicker_idx] + 0.05)
                 else:
-                    # Gradually return to window's brightness level
-                    target = window['brightness']
-                    if self._building_window_flicker[i] < target:
-                        self._building_window_flicker[i] = min(target, self._building_window_flicker[i] + 0.05)
-            else:
-                self._building_window_flicker[i] = 0.0
+                    self._building_window_flicker[flicker_idx] = 0.0
+                flicker_idx += 1
 
     def _update_window_people(self):
         """Update people walking by windows with walk/stare/wave animations."""
@@ -6316,18 +6333,38 @@ class AlleyScene:
                         return True
             return False
 
+        # Helper to check if position is adjacent to a roof item (for filling behind items)
+        def is_near_roof_item(row_str: str, col: int, row_idx: int, sprite: List[str]) -> bool:
+            """Check if a position is adjacent to a roof item character."""
+            roof_chars = 'O_|/\\()=[]'
+            # Check horizontally adjacent
+            for offset in [-1, 0, 1]:
+                check_col = col + offset
+                if 0 <= check_col < len(row_str):
+                    if row_str[check_col] in roof_chars:
+                        return True
+            # Check vertically adjacent
+            for row_offset in [-1, 1]:
+                check_row = row_idx + row_offset
+                if 0 <= check_row < len(sprite):
+                    if col < len(sprite[check_row]) and sprite[check_row][col] in roof_chars:
+                        return True
+            return False
+
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
                 px = x + col_idx
                 py = y + row_idx
                 if 0 <= px < self.width - 1 and 0 <= py < self.height:
-                    # Roof items rows (0-4) - add solid dark background behind everything
+                    # Roof items rows (0-4) - only fill behind actual roof items, not entire area
                     if row_idx < roof_items_end:
                         if char == ' ':
-                            # Fill empty space with solid dark to prevent tunnel bleed-through
-                            self.scene[py][px] = ('█', Colors.ALLEY_DARK)
+                            # Only fill with dark if adjacent to a roof item
+                            if is_near_roof_item(row, col_idx, row_idx, sprite):
+                                self.scene[py][px] = ('█', Colors.ALLEY_DARK)
+                            # Otherwise leave empty (transparent to sky/tunnel)
                         elif char in 'O_|/\\()=':
-                            # Roof item characters - grey with solid background
+                            # Roof item characters - grey
                             self.scene[py][px] = (char, Colors.GREY_BLOCK)
                         elif char == '-':
                             # Roof line
@@ -6376,9 +6413,9 @@ class AlleyScene:
                         self.scene[py][px] = (char, color)
                     else:
                         # Empty space - add texture based on zone
-                        # Fill window interior with dark background (prevents seeing through to distant buildings)
+                        # Fill window interior with SOLID dark background (prevents seeing through)
                         if inside_window:
-                            self.scene[py][px] = (' ', Colors.ALLEY_DARK)
+                            self.scene[py][px] = ('█', Colors.ALLEY_DARK)
                             # Store window interior position for layering
                             self._window_interior_positions.append((px, py))
                             continue
@@ -7455,11 +7492,8 @@ class AlleyScene:
 
     def _render_window_scenes(self, screen):
         """Render unique mini scenes inside each building window."""
-        for i, window in enumerate(self._all_windows):
-            if i >= len(self._building_window_flicker):
-                continue
-
-            brightness = self._building_window_flicker[i]
+        for window in self._all_windows:
+            brightness = window['brightness']
 
             # Skip completely dark windows (no scene visible)
             if brightness < 0.1:
@@ -7473,13 +7507,24 @@ class AlleyScene:
             wy = window['y']
             width = window['width']
 
-            # Choose color based on brightness (dimmer = darker interior)
-            if brightness > 0.7:
+            # Choose color based on brightness level for visible variation
+            # Bright (0.9-1.0) = bright yellow, Medium (0.6-0.8) = mid tone,
+            # Dim (0.3-0.5) = dark, Very dim (<0.3) = barely visible
+            if brightness >= 0.9:
                 color = Colors.RAT_YELLOW  # Bright warm light
-            elif brightness > 0.4:
-                color = Colors.ALLEY_MID   # Medium light
+                attr_mod = curses.A_BOLD
+            elif brightness >= 0.7:
+                color = Colors.RAT_YELLOW
+                attr_mod = 0  # Normal
+            elif brightness >= 0.5:
+                color = Colors.ALLEY_MID
+                attr_mod = 0
+            elif brightness >= 0.3:
+                color = Colors.ALLEY_MID
+                attr_mod = curses.A_DIM
             else:
-                color = Colors.ALLEY_DARK  # Dim light
+                color = Colors.ALLEY_DARK
+                attr_mod = curses.A_DIM
 
             # Render each row of the scene
             for row_idx, row_chars in enumerate(scene_chars):
@@ -7497,12 +7542,7 @@ class AlleyScene:
                     # Only render non-space characters
                     if char != ' ':
                         try:
-                            attr = curses.color_pair(color)
-                            if brightness > 0.7:
-                                attr |= curses.A_BOLD
-                            elif brightness < 0.4:
-                                attr |= curses.A_DIM
-
+                            attr = curses.color_pair(color) | attr_mod
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
