@@ -7913,8 +7913,8 @@ class DashboardClient:
         return False
 
     def is_demo_mode(self) -> bool:
-        """Check if running in demo mode (always False - demo mode removed)."""
-        return False
+        """Check if running in demo mode (not connected to live daemon)."""
+        return not self._connected
 
     def get_status(self) -> Dict:
         """Get daemon status from connection or log file."""
@@ -7923,17 +7923,21 @@ class DashboardClient:
             response = self._send_request('status')
             if response.get('success'):
                 status = response.get('status', {})
+                # Extract nested boundary_state (daemon returns mode inside boundary_state)
+                boundary_state = status.get('boundary_state', {})
+                lockdown = status.get('lockdown', {})
+                environment = status.get('environment', {})
                 # Map API response to dashboard format
                 return {
-                    'mode': status.get('mode', 'UNKNOWN').upper(),
-                    'mode_since': datetime.utcnow().isoformat(),
-                    'uptime': status.get('uptime_seconds', 0),
-                    'events_today': status.get('events_today', 0),
-                    'violations': status.get('tripwire_count', 0),
+                    'mode': boundary_state.get('mode', 'unknown').upper(),
+                    'mode_since': boundary_state.get('last_transition', datetime.utcnow().isoformat()),
+                    'uptime': environment.get('uptime_seconds', 0) if environment else 0,
+                    'events_today': status.get('event_count', 0),
+                    'violations': status.get('tripwire_violations', 0),
                     'tripwire_enabled': True,
-                    'clock_monitor_enabled': status.get('online', False),
-                    'network_attestation_enabled': status.get('network_state', 'unknown') != 'isolated',
-                    'is_frozen': status.get('lockdown_active', False),
+                    'clock_monitor_enabled': status.get('running', False),
+                    'network_attestation_enabled': boundary_state.get('network', 'isolated') != 'isolated',
+                    'is_frozen': lockdown.get('active', False) if lockdown else False,
                 }
 
         # Fall back to reading from log file
