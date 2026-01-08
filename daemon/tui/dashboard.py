@@ -1389,33 +1389,34 @@ class AlleyScene:
     ]
 
     # Cafe storefront (well-lit, between buildings) - taller size
-    # Turtle shell logo for Shell Cafe (hexagonal pattern)
+    # Turtle shell logo for Shell Cafe (hexagonal pattern with connected head area)
     BIG_SHELL_LOGO = [
         "                    ",
         "     ____________    ",
-        "   / \\ __|__ /   \    ",
-        "  |   \\/   \\/ /  \   ",
-        "  |   /\\___/\\ \   |  ",
-        "   \\ /  | |  \\ \/   ",
-        "    \\___|_|___/ /     ",
+        "   / \\ __|__ /   \\   ",
+        "  |   \\/   \\/ /   |  ",
+        "  |   /\\___/\\ \\   |  ",
+        "   \\ /  | |  \\ \\ /   ",
+        "    \\___|_|___\\/     ",
     ]
 
-    # Turtle head animation frames (peeks out from shell) - each frame is [head, neck]
+    # Turtle head animation frames (peeks out from shell) - each frame is [head_top, head_mid, neck]
+    # Proper head shape with outline connecting to neck
     TURTLE_HEAD_FRAMES = [
-        ["  @__@  ", "   ||   "],   # Normal eyes with neck
-        ["  @~~@  ", "   ||   "],   # Blink with neck
-        ["  @_~@  ", "   ||   "],   # Right wink with neck
-        ["  ^__^  ", "   ||   "],   # Happy with neck
+        [" .--.  ", "( o o )", "  )-(  "],   # Normal eyes
+        [" .--.  ", "( - - )", "  )-(  "],   # Blink
+        [" .--.  ", "( o ~ )", "  )-(  "],   # Right wink
+        [" .--.  ", "( ^ ^ )", "  )-(  "],   # Happy
     ]
 
     CAFE = [
-        "      ___________      ",
-        "    /`    |    `\\     ",
-        "   / \\ __|__ / \\ \\    ",
-        "  |   \\/   \\/   \\|    ",
-        "  |   /\\___/\\   /|    ",
-        "   \\ /  | |  \\ / /    ",
-        "    \\___|_|___\\/      ",
+        "       .-----.        ",
+        "     .'       '.      ",
+        "    / \\`-._.-'/ \\     ",
+        "   |   \\ _ _ /   |    ",
+        "   |    |_|_|    |    ",
+        "    \\   / | \\   /     ",
+        "     '-/_____\\-'      ",
         "   ___________________________   ",
         "  |     S H E L L  C A F E   |  ",
         "  |                          |  ",
@@ -1457,30 +1458,30 @@ class AlleyScene:
     # Body panels use █ (solid block) to be colored, structure uses regular chars
     # Design inspired by classic ASCII art archives
     CAR_RIGHT = [
-        "      ______          ",
-        "   __/__||__\\`._      ",
-        " (           \\     ",
-        "  =`-(_)--(_)-'      ",
+        "      _____           ",
+        "   __/  |  \\__        ",
+        "  /  \\__|__/  \\       ",
+        " |___(_)--(_)__|      ",
     ]
     CAR_LEFT = [
-        "       ______         ",
-        "     _.'__||__\\__    ",
-        "    /              )   ",
-        "     `-'(_)--(_)-=   ",
+        "       _____          ",
+        "      __/  |  \\__     ",
+        "     /  \\__|__/  \\    ",
+        "    |___(_)--(_)__|   ",
     ]
 
     # Taxi car sprites (yellow with TAXI sign on roof)
     TAXI_RIGHT = [
         "      _TAXI_          ",
-        "   __/__||__\\`._      ",
-        "  (  ███  ███  \\     ",
-        "  =`-(_)--(_)-'      ",
+        "   __/  |  \\__        ",
+        "  /  \\__|__/  \\       ",
+        " |___(_)--(_)__|      ",
     ]
     TAXI_LEFT = [
         "       _TAXI_         ",
-        "     _.'__||__\\__    ",
-        "    /  ███  ███   )   ",
-        "     `-'(_)--(_)-=   ",
+        "      __/  |  \\__     ",
+        "     /  \\__|__/  \\    ",
+        "    |___(_)--(_)__|   ",
     ]
 
     # 4 car body colors
@@ -1493,30 +1494,30 @@ class AlleyScene:
 
     # Truck sprites - delivery truck/van style (4 rows)
     TRUCK_RIGHT = [
-        "    .----------.__    ",
-        "    |██████████|[_|__ ",
-        "    |██_.--.__██.-~;| ",
-        "    `(_)------(_)-'   ",
+        "     ___________      ",
+        "    /           \\__   ",
+        "   |  ████████  |--|  ",
+        "   |__(_)----(_)__|   ",
     ]
     TRUCK_LEFT = [
-        "    __.----------.    ",
-        " __|_]|██████████|    ",
-        " |;~-.██__.--._██|    ",
-        "   `-(_)------(_)'    ",
+        "      ___________     ",
+        "   __/           \\    ",
+        "  |--|  ████████  |   ",
+        "   |__(_)----(_)__|   ",
     ]
 
     # Work truck with company logo area (template - text gets filled in)
     WORK_TRUCK_RIGHT = [
-        "    .----------.__    ",
-        "    |{logo:^10}|[_|__ ",
-        "    |{line2:^10}.-~;| ",
-        "    `(_)------(_)-'   ",
+        "     ___________      ",
+        "    /{logo:^11}\\__   ",
+        "   | {line2:^10} |--|  ",
+        "   |__(_)----(_)__|   ",
     ]
     WORK_TRUCK_LEFT = [
-        "    __.----------.    ",
-        " __|_]|{logo:^10}|    ",
-        " |;~-.{line2:^10}|    ",
-        "   `-(_)------(_)'    ",
+        "      ___________     ",
+        "   __/{logo:^11}\\    ",
+        "  |--| {line2:^10} |   ",
+        "   |__(_)----(_)__|   ",
     ]
 
     # 4 truck body colors
@@ -1558,18 +1559,18 @@ class AlleyScene:
     # Semi-truck base sprites - big 18-wheeler (5 rows tall, much wider)
     # Text area is 27 chars wide (rows 1-2 inside the trailer)
     SEMI_RIGHT_BASE = [
-        "                 _____________________________  ",
-        "        _______ |        {line1:^27}          | ",
-        "   ____/   \\   |        {line2:^27}          | ",
-        "  | °  |__|__|  |_____________________________|",
-        "   (O)-----(O)------------------------(O)(O)--  ",
+        "                  _____________________________ ",
+        "        _______  /  {line1:^27}  \\ ",
+        "   ____/   |   ||   {line2:^27}   |",
+        "  |__|__|__|__| |_____________________________|",
+        "    (O)---(O)   -------(O)------------(O)--    ",
     ]
     SEMI_LEFT_BASE = [
-        "  _____________________________                 ",
-        " |         {line1:^27}         | _______        ",
-        " |         {line2:^27}         |    /   \\____   ",
-        " |_____________________________|  |__|__|  ° | ",
-        "  --(O)(O)------------------------(O)-----(O)  ",
+        " _____________________________                  ",
+        "/  {line1:^27}  \\  _______        ",
+        "|   {line2:^27}   ||   |   \\____   ",
+        "|_____________________________| |__|__|__|__|  ",
+        "    --(O)------------(O)-------   (O)---(O)    ",
     ]
 
     # 50 unique trucking/advertising companies
@@ -2537,6 +2538,13 @@ class AlleyScene:
         self._road_effects: List[Dict] = []  # {x, y, char, color, timer, duration, type}
         self._road_effect_timer = 0
         self._road_effect_interval = 30  # Spawn new effects every ~0.5 sec at 60fps
+        # Colorful animated garden in front of Shell Cafe
+        self._garden_cache: List[List[Tuple[int, int, str, int]]] = []  # Cached frames
+        self._garden_frame_idx = 0
+        self._garden_cache_valid = False
+        self._garden_x = 0  # Set during scene generation
+        self._garden_y = 0
+        self._garden_width = 20
         # UFO abduction event - super rare
         self._ufo_active = False
         self._ufo_state = 'idle'  # idle, descend, abduct, ascend, cooldown
@@ -2744,6 +2752,96 @@ class AlleyScene:
             fw['frame'] += 1
             if fw['frame'] > 20:  # Firework fades after 20 frames
                 self._fireworks.remove(fw)
+
+    def _build_garden_cache(self):
+        """Build cached animation frames for the colorful garden."""
+        import math
+
+        # Garden parameters
+        num_frames = 60  # Animation loop frames
+        width = self._garden_width
+        height = 3  # 3 rows of garden
+
+        # Flower/plant types with colors
+        # Format: (char, color)
+        flowers = [
+            ('@', Colors.STATUS_CRITICAL),  # Red flower
+            ('*', Colors.RAT_YELLOW),        # Yellow flower
+            ('%', Colors.STATUS_OK),         # Green plant
+            ('#', Colors.RAIN_BRIGHT),       # Blue flower
+            ('&', Colors.EASTER_PINK),       # Pink flower
+            ('+', Colors.EASTER_LAVENDER),   # Purple flower
+        ]
+
+        stems = [
+            ('|', Colors.STATUS_OK),
+            ('/', Colors.STATUS_OK),
+            ('\\', Colors.STATUS_OK),
+        ]
+
+        leaves = [
+            ('~', Colors.STATUS_OK),
+            (',', Colors.STATUS_OK),
+            ("'", Colors.STATUS_OK),
+        ]
+
+        # Generate plant positions (deterministic based on width)
+        plant_positions = []
+        for i in range(0, width, 3):  # Plant every 3 chars
+            flower = flowers[i % len(flowers)]
+            stem = stems[i % len(stems)]
+            leaf = leaves[i % len(leaves)]
+            plant_positions.append({
+                'x': i,
+                'flower': flower,
+                'stem': stem,
+                'leaf': leaf,
+                'phase': (i * 0.7) % (2 * math.pi),  # Phase offset for wave
+            })
+
+        self._garden_cache = []
+
+        for frame in range(num_frames):
+            frame_data = []
+            t = frame * (2 * math.pi / num_frames)
+
+            for plant in plant_positions:
+                px = plant['x']
+                phase = plant['phase']
+
+                # Calculate sway offset (wind effect)
+                sway = math.sin(t + phase) * 0.5
+                sway_offset = int(sway + 0.5)  # -1, 0, or 1
+
+                # Top row: flowers (sway with wind)
+                flower_x = px + sway_offset
+                if 0 <= flower_x < width:
+                    frame_data.append((0, flower_x, plant['flower'][0], plant['flower'][1]))
+
+                # Middle row: stems (slight sway)
+                stem_char = plant['stem'][0]
+                # Change stem angle based on sway
+                if sway > 0.2:
+                    stem_char = '/'
+                elif sway < -0.2:
+                    stem_char = '\\'
+                else:
+                    stem_char = '|'
+                frame_data.append((1, px, stem_char, plant['stem'][1]))
+
+                # Bottom row: leaves/grass (wave pattern)
+                leaf_offset = int(math.sin(t * 2 + phase) * 0.5 + 0.5)
+                for dx in [-1, 0, 1]:
+                    lx = px + dx + leaf_offset
+                    if 0 <= lx < width:
+                        # Vary grass characters
+                        grass_chars = [',', "'", '~', '"', '.']
+                        grass_char = grass_chars[(px + dx + frame) % len(grass_chars)]
+                        frame_data.append((2, lx, grass_char, Colors.STATUS_OK))
+
+            self._garden_cache.append(frame_data)
+
+        self._garden_cache_valid = True
 
     def _init_clouds(self):
         """Initialize cloud layer with cumulus clouds and wisps."""
@@ -4370,6 +4468,13 @@ class AlleyScene:
         # Place well-lit Cafe between buildings (center of gap)
         self._draw_cafe(self.cafe_x, self.cafe_y)
 
+        # Setup colorful garden in front of Shell Cafe (in the dead space)
+        self._garden_x = self.cafe_x + 2
+        self._garden_y = ground_y - 4  # Just above ground level
+        self._garden_width = len(self.CAFE[0]) - 4  # Match cafe width minus margins
+        self._garden_cache_valid = False  # Rebuild cache for new position
+        self._build_garden_cache()
+
         # Pine tree: to the right of Shell Cafe, 4 rows higher than regular trees
         cafe_right = self.cafe_x + len(self.CAFE[0])
         pine_height = len(self.PINE_TREE)
@@ -5300,6 +5405,14 @@ class AlleyScene:
 
         # Update road/sidewalk weather effects
         self._update_road_effects()
+
+        # Update garden animation frame
+        self._update_garden()
+
+    def _update_garden(self):
+        """Advance garden animation frame."""
+        if self._garden_cache and self._garden_cache_valid:
+            self._garden_frame_idx = (self._garden_frame_idx + 1) % len(self._garden_cache)
 
     def _update_road_effects(self):
         """Update subtle weather effects on road/sidewalk."""
@@ -6534,6 +6647,9 @@ class AlleyScene:
         # Render turtle head peeking from shell
         self._render_turtle(screen)
 
+        # Render colorful animated garden in front of Shell Cafe
+        self._render_garden(screen)
+
         # Render prop plane with banner (flies in sky)
         self._render_prop_plane(screen)
 
@@ -7114,33 +7230,35 @@ class AlleyScene:
                     # Don't render cars above the 1/5th line
                     if 0 <= px < self.width - 1 and min_car_y <= py < self.height and char != ' ':
                         try:
-                            # Realistic vehicle coloring:
-                            # - Tires (_) and () are dark/black
-                            # - Bumpers (= - `) are chrome/silver
-                            # - Windows (|) are blue tinted
-                            # - Body panels (█) get the car's color
-                            # - Structure/frame uses light grey
-                            if char in '(_)':
-                                # Tires - dark black
+                            # Realistic vehicle coloring with colored outlines:
+                            # - Tires (O) are dark/black
+                            # - Outline chars (/, \, -, _, |) get car's color
+                            # - Body panels (█) get the car's color (bold)
+                            # - Parentheses around tires stay dark
+                            if char == 'O':
+                                # Tire center - dark black
+                                attr = curses.color_pair(Colors.ALLEY_DARK) | curses.A_BOLD
+                            elif char in '()':
+                                # Tire edges - dark
                                 attr = curses.color_pair(Colors.ALLEY_DARK)
-                            elif char in '=-`\'':
-                                # Bumpers and trim - chrome/silver (bright white)
-                                attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
-                            elif char == '|':
-                                # Windows - blue tinted glass
-                                attr = curses.color_pair(Colors.ALLEY_BLUE)
                             elif char == '█':
-                                # Body panels - car's color
+                                # Body panels - car's color (bold)
                                 attr = curses.color_pair(body_color) | curses.A_BOLD
                             elif char in '/\\':
-                                # Windshield angles - lighter
-                                attr = curses.color_pair(Colors.ALLEY_MID)
-                            elif char == '_':
-                                # Undercarriage/shadow - dark
-                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                                # Windshield and diagonal outlines - car's color
+                                attr = curses.color_pair(body_color)
+                            elif char in '-_':
+                                # Horizontal outlines - car's color
+                                attr = curses.color_pair(body_color)
+                            elif char == '|':
+                                # Vertical outlines and windows - car's color
+                                attr = curses.color_pair(body_color)
+                            elif char == '°':
+                                # Headlight - bright yellow
+                                attr = curses.color_pair(Colors.RAT_YELLOW) | curses.A_BOLD
                             else:
-                                # Other structure - medium grey
-                                attr = curses.color_pair(Colors.GREY_BLOCK)
+                                # Other chars (letters for TAXI etc) - car's color
+                                attr = curses.color_pair(body_color)
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
@@ -7666,35 +7784,62 @@ class AlleyScene:
 
         # Turtle peeks out at row 3-4 of CAFE (middle of turtle shell logo)
         # Shell spans roughly columns 2-22 of CAFE sprite
-        shell_row = 4
+        shell_row = 3
         turtle_y = self.cafe_y + shell_row
 
         # Position based on which side turtle peeks from
         if self._turtle_side == 1:  # Right side
-            turtle_x = self.cafe_x + 25  # Right edge of shell
+            turtle_x = self.cafe_x + 22  # Right edge of shell
         else:  # Left side
-            turtle_x = self.cafe_x - 1  # Left edge of shell
+            turtle_x = self.cafe_x - 6  # Left edge of shell
 
-        # Get the current turtle head frame (now a list: [head, neck])
+        # Get the current turtle head frame (now a list: [head_top, head_mid, neck])
         frame = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
-        head = frame[0]
-        neck = frame[1] if len(frame) > 1 else ""
+        head_top = frame[0]
+        head_mid = frame[1] if len(frame) > 1 else ""
+        neck = frame[2] if len(frame) > 2 else ""
 
-        if not (0 <= turtle_x < self.width - len(head) and 0 <= turtle_y < self.height):
+        if not (0 <= turtle_x < self.width - len(head_top) and 0 <= turtle_y < self.height):
             return
 
         try:
             # Draw turtle head in green (like shell logo)
             attr = curses.color_pair(Colors.STATUS_OK) | curses.A_BOLD
             screen.attron(attr)
-            # Draw head
-            screen.addstr(turtle_y, turtle_x, head)
-            # Draw neck below head
-            if neck and turtle_y + 1 < self.height:
-                screen.addstr(turtle_y + 1, turtle_x, neck)
+            # Draw head top (outline)
+            screen.addstr(turtle_y, turtle_x, head_top)
+            # Draw head middle (eyes)
+            if head_mid and turtle_y + 1 < self.height:
+                screen.addstr(turtle_y + 1, turtle_x, head_mid)
+            # Draw neck connecting to shell
+            if neck and turtle_y + 2 < self.height:
+                screen.addstr(turtle_y + 2, turtle_x, neck)
             screen.attroff(attr)
         except curses.error:
             pass
+
+    def _render_garden(self, screen):
+        """Render the animated colorful garden in front of Shell Cafe."""
+        if not self._garden_cache or not self._garden_cache_valid:
+            return
+
+        if not hasattr(self, '_garden_x') or not hasattr(self, '_garden_y'):
+            return
+
+        # Get current animation frame
+        frame_data = self._garden_cache[self._garden_frame_idx]
+
+        # Render each element in the frame
+        for row, rel_x, char, color in frame_data:
+            px = self._garden_x + rel_x
+            py = self._garden_y + row
+
+            if 0 <= px < self.width and 0 <= py < self.height:
+                try:
+                    attr = curses.color_pair(color) | curses.A_BOLD
+                    screen.addstr(py, px, char, attr)
+                except curses.error:
+                    pass
 
     def _render_prop_plane(self, screen):
         """Render prop plane with trailing banner message."""
