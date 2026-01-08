@@ -306,7 +306,26 @@ class BoundaryAPIServer:
         command = request.get('command')
         params = request.get('params', {})
 
-        # Authenticate request
+        # Commands that don't require authentication (read-only, safe to expose)
+        # These are used by the TUI dashboard for display purposes
+        PUBLIC_COMMANDS = {
+            'status',           # Daemon status (mode, uptime, etc.)
+            'ping',             # Health check
+            'version',          # Version info
+            'get_events',       # Event log (read-only)
+            'get_alerts',       # Active alerts (read-only)
+            'get_sandboxes',    # Sandbox status (read-only)
+            'get_siem_status',  # SIEM shipping status (read-only)
+            'create_tui_token', # Auto-create limited TUI token (one-time setup)
+        }
+
+        # Skip authentication for public commands
+        if command in PUBLIC_COMMANDS:
+            # Process without token
+            response = self._dispatch_command(command, params, None)
+            return response
+
+        # Authenticate request for all other commands
         is_authorized, token, auth_message = self.auth_middleware.authenticate_request(request)
 
         if not is_authorized:
@@ -353,6 +372,8 @@ class BoundaryAPIServer:
         # Handle token management commands
         if command == 'create_token':
             return self._handle_create_token(params, token)
+        elif command == 'create_tui_token':
+            return self._handle_create_tui_token(params)
         elif command == 'revoke_token':
             return self._handle_revoke_token(params, token)
         elif command == 'list_tokens':
@@ -481,6 +502,60 @@ class BoundaryAPIServer:
         except (ValueError, TypeError, KeyError) as e:
             # Invalid parameters or token creation errors
             log_auth_error(e, "create_token", token_name=name)
+            return {'success': False, 'error': str(e)}
+
+    def _handle_create_tui_token(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a limited TUI dashboard token (no auth required).
+
+        This allows the TUI to auto-authenticate on first connection.
+        The token has read-only capabilities and is saved for future use.
+
+        Params:
+            name: str (optional) - Token name (default: tui-dashboard)
+            client: str (optional) - Client identifier
+        """
+        try:
+            name = params.get('name', 'tui-dashboard')
+            client = params.get('client', 'unknown')
+
+            # Check if a TUI token already exists
+            existing_tokens = self.token_manager.list_tokens()
+            for tok in existing_tokens:
+                if tok.get('name', '').startswith('tui-'):
+                    # Return error - TUI token already exists
+                    # This prevents unlimited token creation
+                    return {
+                        'success': False,
+                        'error': 'TUI token already exists. Use existing token or revoke it first.',
+                        'existing_token_id': tok.get('token_id'),
+                    }
+
+            # Create a limited read-only token for TUI
+            # Only allow read operations, not mode changes or token management
+            tui_capabilities = {'read'}  # Limited capability set
+
+            raw_token, token_obj = self.token_manager.create_token(
+                name=f"tui-{name}",
+                capabilities=tui_capabilities,
+                created_by=f'tui-auto:{client}',
+                expires_in_days=30,  # Short expiry for security
+                metadata={'auto_created': True, 'client': client},
+            )
+
+            logger.info(f"Auto-created TUI token for client: {client}")
+
+            return {
+                'success': True,
+                'token': raw_token,
+                'token_id': token_obj.token_id,
+                'name': token_obj.name,
+                'capabilities': [c.name if hasattr(c, 'name') else str(c) for c in token_obj.capabilities],
+                'expires_at': token_obj.expires_at.isoformat() if token_obj.expires_at else None,
+                'message': 'TUI token created. Save this token - it will be used for future connections.',
+            }
+        except Exception as e:
+            logger.error(f"Failed to create TUI token: {e}")
             return {'success': False, 'error': str(e)}
 
     def _handle_revoke_token(self, params: Dict[str, Any], requesting_token) -> Dict[str, Any]:

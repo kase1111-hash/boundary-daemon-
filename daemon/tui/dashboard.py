@@ -7917,14 +7917,18 @@ class DashboardClient:
         return None
 
     def _resolve_token(self) -> Optional[str]:
-        """Resolve API token from environment or file."""
-        # Environment variable
+        """Resolve API token from environment, file, or bootstrap token."""
+        self._log_debug("Resolving API token...")
+
+        # 1. Environment variable (highest priority)
         token = os.environ.get('BOUNDARY_API_TOKEN')
         if token:
+            self._log_debug("Found token in BOUNDARY_API_TOKEN environment variable")
             return token.strip()
 
-        # Build token file paths based on socket location
+        # Build paths to check
         token_paths = []
+        bootstrap_paths = []
 
         # If we found a socket, look for token near it
         if self.socket_path:
@@ -7932,10 +7936,15 @@ class DashboardClient:
             parent_dir = os.path.dirname(socket_dir)
             token_paths.append(os.path.join(parent_dir, 'config', 'api_tokens.json'))
             token_paths.append(os.path.join(socket_dir, 'api_tokens.json'))
+            # Bootstrap token locations
+            bootstrap_paths.append(os.path.join(parent_dir, 'config', 'bootstrap_token.txt'))
+            bootstrap_paths.append(os.path.join(parent_dir, 'config', 'tui_token.txt'))
 
         # Package root config
         package_root = Path(__file__).parent.parent.parent
         token_paths.append(str(package_root / 'config' / 'api_tokens.json'))
+        bootstrap_paths.append(str(package_root / 'config' / 'bootstrap_token.txt'))
+        bootstrap_paths.append(str(package_root / 'config' / 'tui_token.txt'))
 
         # Standard locations
         token_paths.extend([
@@ -7944,9 +7953,32 @@ class DashboardClient:
             os.path.expanduser('~/.agent-os/api_token'),
             '/etc/boundary-daemon/api_token',
         ])
+        bootstrap_paths.extend([
+            './config/bootstrap_token.txt',
+            './config/tui_token.txt',
+            os.path.expanduser('~/.boundary-daemon/config/bootstrap_token.txt'),
+            os.path.expanduser('~/.boundary-daemon/config/tui_token.txt'),
+        ])
 
+        # 2. Check for bootstrap/TUI token files (plaintext token)
+        for path in bootstrap_paths:
+            if os.path.exists(path):
+                self._log_debug(f"Checking bootstrap/TUI token file: {path}")
+                try:
+                    with open(path, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            # Skip comments and empty lines
+                            if line and not line.startswith('#'):
+                                self._log_debug(f"Found token in {path}")
+                                return line
+                except IOError as e:
+                    self._log_debug(f"Failed to read {path}: {e}")
+
+        # 3. Check JSON token files
         for path in token_paths:
             if os.path.exists(path):
+                self._log_debug(f"Checking JSON token file: {path}")
                 try:
                     with open(path, 'r') as f:
                         content = f.read().strip()
@@ -7955,18 +7987,87 @@ class DashboardClient:
                             # Token file format: {"tokens": [{"token": "...", ...}]}
                             if isinstance(data, dict):
                                 if 'token' in data:
+                                    self._log_debug(f"Found token in {path}")
                                     return data['token']
                                 if 'tokens' in data and data['tokens']:
-                                    # Get first non-expired token
+                                    # Get first non-expired token with raw token value
                                     for tok in data['tokens']:
                                         if isinstance(tok, dict) and 'token' in tok:
+                                            self._log_debug(f"Found token in {path}")
                                             return tok['token']
                             elif isinstance(data, list) and data:
-                                return data[0].get('token')
+                                if 'token' in data[0]:
+                                    self._log_debug(f"Found token in {path}")
+                                    return data[0].get('token')
                         else:
+                            self._log_debug(f"Found token in {path}")
                             return content
                 except (IOError, json.JSONDecodeError) as e:
-                    logger.debug(f"Failed to read token from {path}: {e}")
+                    self._log_debug(f"Failed to read token from {path}: {e}")
+
+        # 4. Try to create a TUI token via daemon API (if connected without auth)
+        token = self._request_tui_token()
+        if token:
+            return token
+
+        self._log_debug("No API token found")
+        return None
+
+    def _request_tui_token(self) -> Optional[str]:
+        """Request a TUI-specific token from the daemon."""
+        self._log_debug("Attempting to request TUI token from daemon...")
+        try:
+            # Try TCP connection to request token
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3.0)
+            sock.connect((self.WINDOWS_HOST, self.WINDOWS_PORT))
+
+            # Request a TUI token (this would need daemon support)
+            request = {
+                'command': 'create_tui_token',
+                'params': {'name': 'tui-dashboard', 'client': 'dashboard'}
+            }
+            sock.sendall(json.dumps(request).encode('utf-8'))
+            data = sock.recv(65536)
+            sock.close()
+
+            response = json.loads(data.decode('utf-8'))
+            if response.get('success') and response.get('token'):
+                token = response['token']
+                self._log_debug("Received TUI token from daemon")
+                # Save token for future use
+                self._save_tui_token(token)
+                return token
+            else:
+                self._log_debug(f"Token request failed: {response.get('error', 'unknown')}")
+
+        except Exception as e:
+            self._log_debug(f"Failed to request TUI token: {e}")
+
+        return None
+
+    def _save_tui_token(self, token: str):
+        """Save TUI token to file for future use."""
+        try:
+            # Try to save in config directory
+            save_paths = [
+                Path(__file__).parent.parent.parent / 'config' / 'tui_token.txt',
+                Path.home() / '.boundary-daemon' / 'config' / 'tui_token.txt',
+            ]
+
+            for path in save_paths:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(path, 'w') as f:
+                        f.write(f"# TUI Dashboard Token - Auto-generated\n")
+                        f.write(f"# Created: {datetime.now().isoformat()}\n")
+                        f.write(f"{token}\n")
+                    self._log_debug(f"Saved TUI token to {path}")
+                    return
+                except (OSError, PermissionError):
+                    continue
+        except Exception as e:
+            self._log_debug(f"Failed to save TUI token: {e}")
         return None
 
     def _find_socket(self) -> str:
