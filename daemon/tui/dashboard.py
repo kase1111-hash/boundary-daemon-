@@ -2522,6 +2522,12 @@ class AlleyScene:
         self._open_sign_speed = 2  # Frames per phase (10x faster)
         # Calm mode flag - more debris/leaves, no particles
         self._calm_mode = False
+        # Full weather mode for road effects
+        self._weather_mode = WeatherMode.MATRIX
+        # Road/sidewalk weather effects - subtle rolling changes
+        self._road_effects: List[Dict] = []  # {x, y, char, color, timer, duration, type}
+        self._road_effect_timer = 0
+        self._road_effect_interval = 30  # Spawn new effects every ~0.5 sec at 60fps
         # UFO abduction event - super rare
         self._ufo_active = False
         self._ufo_state = 'idle'  # idle, descend, abduct, ascend, cooldown
@@ -3024,6 +3030,12 @@ class AlleyScene:
     def set_calm_mode(self, calm: bool):
         """Set calm mode - more debris/leaves, less mid-screen clutter."""
         self._calm_mode = calm
+
+    def set_weather_mode(self, mode: WeatherMode):
+        """Set the weather mode for road effects."""
+        self._weather_mode = mode
+        # Clear existing effects when weather changes
+        self._road_effects = []
 
     def toggle_qte(self) -> bool:
         """Toggle QTE (meteor game) on/off. Returns new state."""
@@ -5186,6 +5198,96 @@ class AlleyScene:
         # Update security canaries (tie visual elements to monitor health)
         self._update_security_canaries()
 
+        # Update road/sidewalk weather effects
+        self._update_road_effects()
+
+    def _update_road_effects(self):
+        """Update subtle weather effects on road/sidewalk."""
+        street_y = self.height - 3
+        curb_y = self.height - 4
+
+        # Update existing effects - decrement timers and remove expired
+        self._road_effects = [e for e in self._road_effects if e['timer'] < e['duration']]
+        for effect in self._road_effects:
+            effect['timer'] += 1
+
+        # Spawn new effects occasionally
+        self._road_effect_timer += 1
+        if self._road_effect_timer < self._road_effect_interval:
+            return
+        self._road_effect_timer = 0
+
+        # Limit total effects to keep it subtle
+        if len(self._road_effects) >= 8:
+            return
+
+        # Random chance to spawn based on weather
+        if random.random() > 0.4:  # 40% chance per interval
+            return
+
+        # Pick random position on road or sidewalk
+        x = random.randint(5, self.width - 10)
+        y = random.choice([street_y, street_y + 1, curb_y]) if street_y + 1 < self.height else random.choice([street_y, curb_y])
+
+        # Weather-specific effects
+        if self._weather_mode == WeatherMode.MATRIX:
+            # Code rifts - brief glimpses of matrix code through cracks
+            chars = ['0', '1', '|', '/', '\\', 'ｱ', 'ｲ', 'ｳ']
+            effect = {
+                'x': x, 'y': y,
+                'char': random.choice(chars),
+                'color': Colors.MATRIX_BRIGHT,
+                'timer': 0,
+                'duration': random.randint(8, 20),  # Quick flash
+                'type': 'code_rift'
+            }
+        elif self._weather_mode == WeatherMode.RAIN:
+            # Water puddles and blue spots
+            chars = ['~', '≈', '░', '▒', '.']
+            effect = {
+                'x': x, 'y': y,
+                'char': random.choice(chars),
+                'color': Colors.RAIN_DIM,
+                'timer': 0,
+                'duration': random.randint(60, 180),  # Longer lasting puddles
+                'type': 'puddle'
+            }
+        elif self._weather_mode == WeatherMode.SNOW:
+            # Blowing snow and frost patches
+            chars = ['*', '·', '.', ':', '+']
+            effect = {
+                'x': x, 'y': y,
+                'char': random.choice(chars),
+                'color': Colors.SNOW_DIM,
+                'timer': 0,
+                'duration': random.randint(40, 120),
+                'type': 'snow_patch'
+            }
+        elif self._weather_mode == WeatherMode.SAND:
+            # Dust settling and sand drifts
+            chars = ['.', ',', ':', '~', '°']
+            effect = {
+                'x': x, 'y': y,
+                'char': random.choice(chars),
+                'color': Colors.SAND_DIM,
+                'timer': 0,
+                'duration': random.randint(30, 90),
+                'type': 'dust'
+            }
+        else:  # CALM
+            # Subtle dust motes
+            chars = ['.', ',', "'"]
+            effect = {
+                'x': x, 'y': y,
+                'char': random.choice(chars),
+                'color': Colors.ALLEY_MID,
+                'timer': 0,
+                'duration': random.randint(60, 150),
+                'type': 'dust_mote'
+            }
+
+        self._road_effects.append(effect)
+
     def _update_cars(self):
         """Update car/truck/semi positions and spawn new vehicles."""
         # Spawn new vehicles occasionally
@@ -6289,6 +6391,9 @@ class AlleyScene:
         # Render sidewalk/curb on top of scene but behind all sprites
         self._render_sidewalk(screen)
 
+        # Render subtle weather effects on road/sidewalk
+        self._render_road_effects(screen)
+
         # Render street light flicker effects
         self._render_street_light_flicker(screen)
 
@@ -6375,6 +6480,41 @@ class AlleyScene:
                     attr = curses.color_pair(color)
                     screen.attron(attr)
                     screen.addstr(py, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
+    def _render_road_effects(self, screen):
+        """Render subtle weather effects on road/sidewalk."""
+        for effect in self._road_effects:
+            x, y = effect['x'], effect['y']
+            if 0 <= x < self.width - 1 and 0 <= y < self.height:
+                # Calculate fade based on timer (fade in/out)
+                progress = effect['timer'] / effect['duration']
+                # Quick fade in, longer fade out
+                if progress < 0.1:
+                    # Fade in
+                    alpha = progress / 0.1
+                elif progress > 0.7:
+                    # Fade out
+                    alpha = (1.0 - progress) / 0.3
+                else:
+                    alpha = 1.0
+
+                # Skip if too faded
+                if alpha < 0.3:
+                    continue
+
+                try:
+                    attr = curses.color_pair(effect['color'])
+                    # Bright for code rifts and new effects
+                    if effect['type'] == 'code_rift' or alpha > 0.8:
+                        attr |= curses.A_BOLD
+                    elif alpha < 0.5:
+                        attr |= curses.A_DIM
+
+                    screen.attron(attr)
+                    screen.addstr(y, x, effect['char'])
                     screen.attroff(attr)
                 except curses.error:
                     pass
@@ -9559,9 +9699,10 @@ class Dashboard:
                 new_mode = self.matrix_rain.cycle_weather()
                 # Store for header display
                 self._current_weather = new_mode
-                # Sync calm mode to alley scene
+                # Sync calm mode and full weather mode to alley scene
                 if self.alley_scene:
                     self.alley_scene.set_calm_mode(new_mode == WeatherMode.CALM)
+                    self.alley_scene.set_weather_mode(new_mode)
                     # Announce weather change via prop plane
                     weather_names = {
                         WeatherMode.MATRIX: "MATRIX MODE",
