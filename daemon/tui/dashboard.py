@@ -189,6 +189,11 @@ class Colors:
     EASTER_PINK = 50      # Pink easter egg
     EASTER_CYAN = 51      # Cyan easter egg
     EASTER_LAVENDER = 52  # Lavender easter egg
+    # 3D Tunnel backdrop colors
+    TUNNEL_FAR = 54       # Furthest depth - very dim
+    TUNNEL_MID = 55       # Mid depth
+    TUNNEL_NEAR = 56      # Near depth - brighter
+    TUNNEL_BRIGHT = 57    # Brightest tunnel highlights
 
     @staticmethod
     def init_colors(matrix_mode: bool = False):
@@ -290,6 +295,11 @@ class Colors:
         curses.init_pair(Colors.EASTER_PINK, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
         curses.init_pair(Colors.EASTER_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(Colors.EASTER_LAVENDER, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        # 3D Tunnel backdrop colors - deep blues and cyans for cosmic depth
+        curses.init_pair(Colors.TUNNEL_FAR, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(Colors.TUNNEL_MID, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.TUNNEL_NEAR, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Colors.TUNNEL_BRIGHT, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
 
 class WeatherMode(Enum):
@@ -1105,6 +1115,206 @@ class MatrixRain:
         screen.attron(attr)
         screen.addstr(y, x, char)
         screen.attroff(attr)
+
+
+class TunnelBackdrop:
+    """
+    Organic 3D tunnel effect for the sky backdrop - creates flowing, turbulent depth illusion.
+
+    Uses layered noise functions to create organic, swirling patterns that flow toward
+    a vanishing point, creating the illusion of flying through a cosmic tunnel/vortex.
+    Characters range from sparse (.) to dense (@) based on computed depth values.
+    """
+
+    # Density character gradient from sparse to dense (organic ASCII tunnel style)
+    DENSITY_CHARS = ' .,:;i1tfLCG0@#'
+
+    # Weather-specific character sets (sparse to dense)
+    WEATHER_CHARS = {
+        WeatherMode.MATRIX: ' .,:;i1tfLCG0@#',
+        WeatherMode.RAIN: ' .,~:;|/\\1tfL░▒▓',
+        WeatherMode.SNOW: ' ·.,:*+o0O@#█',
+        WeatherMode.SAND: ' .,:;~°^"oO0@',
+        WeatherMode.CALM: ' .,:;=+*#@',
+    }
+
+    # Weather-specific color palettes (4 levels: far, mid, near, bright)
+    WEATHER_COLORS = {
+        WeatherMode.MATRIX: [Colors.TUNNEL_FAR, Colors.TUNNEL_MID, Colors.TUNNEL_NEAR, Colors.MATRIX_DIM],
+        WeatherMode.RAIN: [Colors.RAIN_FADE2, Colors.RAIN_FADE1, Colors.RAIN_DIM, Colors.RAIN_BRIGHT],
+        WeatherMode.SNOW: [Colors.SNOW_FADE, Colors.SNOW_DIM, Colors.SNOW_BRIGHT, Colors.SNOW_BRIGHT],
+        WeatherMode.SAND: [Colors.SAND_FADE, Colors.SAND_DIM, Colors.SAND_BRIGHT, Colors.SAND_BRIGHT],
+        WeatherMode.CALM: [Colors.TUNNEL_FAR, Colors.TUNNEL_MID, Colors.ALLEY_MID, Colors.ALLEY_LIGHT],
+    }
+
+    def __init__(self, width: int, height: int, weather_mode: WeatherMode = WeatherMode.MATRIX):
+        self.width = width
+        self.height = height
+        self.weather_mode = weather_mode
+        self._enabled = True
+
+        # Animation state - multiple phases for organic movement
+        self._time = 0.0
+        self._speed = 0.08  # Animation speed
+
+        # Tunnel center (vanishing point)
+        self._center_x = width // 2
+        self._center_y = height // 4
+
+        # Precompute sine table for fast lookup
+        self._sin_table = []
+        import math
+        for i in range(360):
+            self._sin_table.append(math.sin(i * math.pi / 180))
+
+    def _fast_sin(self, angle: float) -> float:
+        """Fast sine lookup using precomputed table."""
+        idx = int(angle * 57.2958) % 360  # Convert radians to degrees
+        return self._sin_table[idx]
+
+    def _fast_cos(self, angle: float) -> float:
+        """Fast cosine lookup using precomputed table."""
+        idx = int((angle * 57.2958) + 90) % 360
+        return self._sin_table[idx]
+
+    def _noise(self, x: float, y: float, seed: float = 0) -> float:
+        """Simple coherent noise function for organic patterns."""
+        import math
+        # Multi-octave noise using layered sine waves
+        n = 0.0
+        n += self._fast_sin(x * 0.1 + seed) * self._fast_cos(y * 0.15 + seed * 0.7)
+        n += self._fast_sin(x * 0.23 + y * 0.17 + seed * 1.3) * 0.5
+        n += self._fast_cos(x * 0.31 - y * 0.29 + seed * 0.9) * 0.25
+        n += self._fast_sin((x + y) * 0.19 + seed * 2.1) * 0.125
+        return n
+
+    def _turbulence(self, x: float, y: float, t: float) -> float:
+        """Create turbulent, organic flow patterns."""
+        import math
+        # Layer multiple noise octaves with time-based flow
+        turb = 0.0
+
+        # Large-scale flow
+        turb += self._noise(x * 0.05 + t * 0.3, y * 0.08 + t * 0.2, t) * 0.5
+
+        # Medium detail
+        turb += self._noise(x * 0.12 + t * 0.5, y * 0.15 - t * 0.3, t * 1.7) * 0.3
+
+        # Fine detail
+        turb += self._noise(x * 0.25 - t * 0.4, y * 0.3 + t * 0.6, t * 2.3) * 0.2
+
+        return turb
+
+    def set_weather_mode(self, mode: WeatherMode):
+        """Change the weather mode."""
+        self.weather_mode = mode
+
+    def set_enabled(self, enabled: bool):
+        """Enable or disable the tunnel effect."""
+        self._enabled = enabled
+
+    def resize(self, width: int, height: int):
+        """Handle terminal resize."""
+        self.width = width
+        self.height = height
+        self._center_x = width // 2
+        self._center_y = height // 4
+
+    def update(self):
+        """Update animation state."""
+        if not self._enabled:
+            return
+        self._time += self._speed
+
+    def render(self, screen, sky_height: int = None):
+        """
+        Render the organic tunnel backdrop effect.
+
+        Args:
+            screen: Curses screen object
+            sky_height: Height of sky area to render in (defaults to 1/3 of screen)
+        """
+        if not self._enabled:
+            return
+
+        import math
+
+        if sky_height is None:
+            sky_height = self.height // 3
+
+        # Get character set and colors for current weather
+        chars = self.WEATHER_CHARS.get(self.weather_mode, self.DENSITY_CHARS)
+        colors = self.WEATHER_COLORS.get(self.weather_mode,
+                                         [Colors.TUNNEL_FAR, Colors.TUNNEL_MID,
+                                          Colors.TUNNEL_NEAR, Colors.TUNNEL_BRIGHT])
+        char_count = len(chars) - 1  # Exclude space for density mapping
+
+        t = self._time
+
+        # Render each position in the sky area
+        for y in range(1, sky_height):
+            for x in range(0, self.width - 1):
+                # Calculate position relative to tunnel center
+                dx = x - self._center_x
+                dy = (y - self._center_y) * 2.5  # Stretch vertically for perspective
+
+                # Distance from center (creates radial depth)
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist < 1:
+                    dist = 1
+
+                # Angle from center (for swirling)
+                angle = math.atan2(dy, dx)
+
+                # Create tunnel depth effect - closer to center = "deeper" into tunnel
+                # Add swirling motion based on angle and time
+                tunnel_depth = 50.0 / (dist + 5)  # Inverse distance for depth
+                swirl = angle + t * 0.5 + tunnel_depth * 0.3
+
+                # Add organic turbulence
+                turb = self._turbulence(x + swirl * 3, y + t * 2, t)
+
+                # Combine factors for final density value
+                # Radial gradient (denser toward center) + turbulence + swirl
+                density = tunnel_depth * 0.4 + turb * 0.4
+
+                # Add radial waves flowing outward
+                wave = self._fast_sin(dist * 0.15 - t * 2) * 0.3
+                density += wave
+
+                # Add spiral arms
+                spiral = self._fast_sin(angle * 3 + dist * 0.1 - t * 1.5) * 0.2
+                density += spiral
+
+                # Normalize density to 0-1 range and clamp
+                density = (density + 1) * 0.5  # Shift from [-1,1] to [0,1]
+                density = max(0, min(1, density))
+
+                # Map density to character
+                char_idx = int(density * char_count)
+                char = chars[char_idx]
+
+                # Skip spaces for efficiency
+                if char == ' ':
+                    continue
+
+                # Calculate color based on depth (further = dimmer)
+                color_idx = min(3, int(tunnel_depth * 0.8))
+                color = colors[color_idx]
+
+                try:
+                    attr = curses.color_pair(color)
+                    # Add brightness variation
+                    if density > 0.7:
+                        attr |= curses.A_BOLD
+                    elif density < 0.3:
+                        attr |= curses.A_DIM
+
+                    screen.attron(attr)
+                    screen.addstr(y, x, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
 
 
 class AlleyScene:
@@ -8740,6 +8950,7 @@ class Dashboard:
         self._qte_pending_activation = False  # Waiting for delayed QTE activation
         self._qte_activation_time = 0.0  # When to activate QTE
         self._audio_muted = False  # Audio mute toggle state
+        self._tunnel_enabled = True  # 3D tunnel backdrop toggle state - on by default
 
         # CLI mode state
         self._cli_history: List[str] = []
@@ -8892,6 +9103,7 @@ class Dashboard:
             self._update_dimensions()
             self.alley_scene = AlleyScene(self.width, self.height)
             self.matrix_rain = MatrixRain(self.width, self.height)
+            self.tunnel_backdrop = TunnelBackdrop(self.width, self.height)
             # Connect snow filter so snow only collects on roofs/sills, not building faces
             self.matrix_rain.set_snow_filter(self.alley_scene.is_valid_snow_position)
             # Connect roof/sill checker so snow on roofs/sills lasts 10x longer
@@ -8958,12 +9170,18 @@ class Dashboard:
                                           len(self.alley_scene.CAFE[0]), len(self.alley_scene.CAFE), 8)
                             self.matrix_rain.set_quick_melt_zones(sidewalk_y, mailbox_bounds, street_y, traffic_light_bounds, cafe_bounds)
                         self.matrix_rain.resize(self.width, self.height)
+                        if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                            self.tunnel_backdrop.resize(self.width, self.height)
                         if self.alley_rat:
                             self.alley_rat.resize(self.width, self.height)
                             self.alley_rat.set_hiding_spots(self.alley_scene)
                         if self.lurking_shadow:
                             self.lurking_shadow.resize(self.width, self.height)
                     self.matrix_rain.update()
+
+                    # Update tunnel backdrop animation
+                    if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                        self.tunnel_backdrop.update()
 
                     # Update alley scene (traffic light)
                     if self.alley_scene:
@@ -9012,6 +9230,8 @@ class Dashboard:
                 # Update glow positions for snow melting
                 if self.alley_scene:
                     self.matrix_rain.set_glow_positions(self.alley_scene._street_light_positions)
+            if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                self.tunnel_backdrop.resize(self.width, self.height)
             if self.alley_rat:
                 self.alley_rat.resize(self.width, self.height)
                 self.alley_rat.set_hiding_spots(self.alley_scene)
@@ -9329,6 +9549,14 @@ class Dashboard:
                     self.alley_scene.queue_plane_announcement(
                         f"★ WEATHER: {weather_names.get(new_mode, 'UNKNOWN')} ★"
                     )
+                # Sync weather mode to tunnel backdrop
+                if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                    self.tunnel_backdrop.set_weather_mode(new_mode)
+        elif key == ord('t') or key == ord('T'):
+            # Toggle tunnel backdrop effect (only in matrix mode)
+            if self.matrix_mode and hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                self._tunnel_enabled = not getattr(self, '_tunnel_enabled', True)
+                self.tunnel_backdrop.set_enabled(self._tunnel_enabled)
         elif key == ord('f') or key == ord('F'):
             # Cycle framerate (only in matrix mode)
             if self.matrix_mode:
@@ -9364,7 +9592,11 @@ class Dashboard:
         """Draw the dashboard."""
         self.screen.clear()
 
-        # Render moon first (furthest back - behind everything)
+        # Render 3D tunnel backdrop first (absolute furthest back - cosmic sky effect)
+        if self.matrix_mode and hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+            self.tunnel_backdrop.render(self.screen)
+
+        # Render moon (behind everything except tunnel)
         if self.matrix_mode and self.matrix_rain:
             self._render_moon(self.screen)
 
@@ -9403,6 +9635,8 @@ class Dashboard:
         if self.matrix_mode:
             header += f" [{self._current_weather.display_name}]"
             header += f" [{self._framerate_options[self._framerate_index]}ms]"
+            if not self._tunnel_enabled:
+                header += " [TUNNEL OFF]"
             if not self._qte_enabled:
                 header += " [QTE OFF]"
             if self._audio_muted:
@@ -9680,7 +9914,7 @@ class Dashboard:
         """Draw the footer bar."""
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
-            shortcuts = "[:]CLI [w]Weather [m]Mode [c]Clear [l]Load [e]Export [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [t]Tunnel [m]Mode [c]Clear [l]Load [e]Export [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [c]Clear [l]Load [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -9729,7 +9963,8 @@ class Dashboard:
         # Add weather info if in matrix mode
         if self.matrix_mode:
             help_text.insert(8, "  w    Cycle weather (Matrix/Rain/Snow/Sand/Fog)")
-            help_text.insert(9, "")
+            help_text.insert(9, "  t    Toggle 3D tunnel sky backdrop")
+            help_text.insert(10, "")
 
         help_text.append("Press any key to close")
 
