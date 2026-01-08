@@ -1117,7 +1117,7 @@ class AlleyScene:
         " _____ ",
         "|#####|",
         "|#####|",
-        "|     |",
+        "|#####|",
         "|=====|",
     ]
 
@@ -1159,9 +1159,10 @@ class AlleyScene:
     ]
 
     CAFE = [
-        
-        "     _____________    ",
-        "  /   \\/   \\/   \\    ",
+        "      ___________      ",
+        "    /`    |    `\\     ",
+        "   / \\ __|__ / \\ \\    ",
+        "  |   \\/   \\/   \\|    ",
         "  |   /\\___/\\   /|    ",
         "   \\ /  | |  \\ / /    ",
         "    \\___|_|___\\/      ",
@@ -1208,7 +1209,7 @@ class AlleyScene:
     CAR_RIGHT = [
         "      ______          ",
         "   __/__||__\\`._      ",
-        " (           \   \     ",
+        " (           \\     ",
         "  =`-(_)--(_)-'      ",
     ]
     CAR_LEFT = [
@@ -1504,9 +1505,9 @@ class AlleyScene:
 
     # Easter egg patterns (simple colored eggs)
     EASTER_EGG = [
-        " /\ ",
+        " /\\ ",
         "(  )",
-        " \/ ",
+        " \\/ ",
     ]
 
     # Firework burst patterns
@@ -1658,7 +1659,7 @@ class AlleyScene:
     NPC_CALLER = [
         " O/ ",
         "/|  ",
-        "/ \ ",
+        "/ \\ ",
     ]
 
     # QTE key mappings: key -> (column_index, row_index)
@@ -1671,28 +1672,28 @@ class AlleyScene:
     # Pedestrian sprites with leg animation (4 frames for walking cycle)
     PERSON_RIGHT_FRAMES = [
         [" O ", "/| ", " | ", "/| "],   # Right arm back, right leg forward
-        [" O ", " |\", " | ", "|| "],   # Left arm back, legs together
-        [" O ", "/| ", " | ", "|\ "],   # Right arm back, left leg back
-        [" O ", " |\", " | ", "|| "],   # Left arm back, legs together
+        [" O ", " |\\", " | ", "|| "],   # Left arm back, legs together
+        [" O ", "/| ", " | ", "|\\ "],   # Right arm back, left leg back
+        [" O ", " |\\", " | ", "|| "],   # Left arm back, legs together
     ]
     PERSON_LEFT_FRAMES = [
-        [" O ", " |\", " | ", " |\"],  # Left arm back, left leg forward
+        [" O ", " |\\", " | ", " |\\"],  # Left arm back, left leg forward
         [" O ", "/| ", " | ", " ||"],   # Right arm back, legs together
-        [" O ", " |\", " | ", " /|"],  # Left arm back, right leg back
+        [" O ", " |\\", " | ", " /|"],  # Left arm back, right leg back
         [" O ", "/| ", " | ", " ||"],   # Right arm back, legs together
     ]
 
     # Person with hat (~, on head) - with leg animation
     PERSON_HAT_RIGHT_FRAMES = [
         [" ~ ", " O ", "/| ", "/| "],   # Hat, right leg forward
-        [" , ", " O ", " |\", "|| "],   # Hat, legs together
-        [" ~ ", " O ", "/| ", "|\ "],   # Hat, left leg back
-        [" , ", " O ", " |\", "|| "],   # Hat, legs together
+        [" , ", " O ", " |\\", "|| "],   # Hat, legs together
+        [" ~ ", " O ", "/| ", "|\\ "],   # Hat, left leg back
+        [" , ", " O ", " |\\", "|| "],   # Hat, legs together
     ]
     PERSON_HAT_LEFT_FRAMES = [
-        [" ~ ", " O ", " |\", " |\"],  # Hat, left leg forward
+        [" ~ ", " O ", " |\\", " |\\"],  # Hat, left leg forward
         [" , ", " O ", "/| ", " ||"],   # Hat, legs together
-        [" ~ ", " O ", " |\", " /|"],  # Hat, right leg back
+        [" ~ ", " O ", " |\\", " /|"],  # Hat, right leg back
         [" , ", " O ", "/| ", " ||"],   # Hat, legs together
     ]
 
@@ -1700,28 +1701,28 @@ class AlleyScene:
     PERSON_BRIEFCASE_RIGHT_FRAMES = [
         [" O ", "/|#", " | ", "/| "],   # Briefcase, right leg forward
         [" O ", " |#", " | ", "|| "],   # Briefcase, legs together
-        [" O ", "/|#", " | ", "|\ "],   # Briefcase, left leg back
+        [" O ", "/|#", " | ", "|\\ "],   # Briefcase, left leg back
         [" O ", " |#", " | ", "|| "],   # Briefcase, legs together
     ]
     PERSON_BRIEFCASE_LEFT_FRAMES = [
-        [" O ", "#|\", " | ", " |\"],  # Briefcase, left leg forward
+        [" O ", "#|\\", " | ", " |\\"],  # Briefcase, left leg forward
         [" O ", "#| ", " | ", " ||"],   # Briefcase, legs together
-        [" O ", "#|\", " | ", " /|"],  # Briefcase, right leg back
+        [" O ", "#|\\", " | ", " /|"],  # Briefcase, right leg back
         [" O ", "#| ", " | ", " ||"],   # Briefcase, legs together
     ]
 
     # Person with skirt (A-line shape) - with leg animation
     PERSON_SKIRT_RIGHT_FRAMES = [
-        [" O ", "/| ", "/A\", "> |"],   # Skirt, right knee forward
-        [" O ", " |\", "/A\", "| |"],   # Skirt, legs together
-        [" O ", "/| ", "/A\", "| >"],   # Skirt, left knee forward (still facing right)
-        [" O ", " |\", "/A\", "| |"],   # Skirt, legs together
+        [" O ", "/| ", "/A\\", "> |"],   # Skirt, right knee forward
+        [" O ", " |\\", "/A\\", "| |"],   # Skirt, legs together
+        [" O ", "/| ", "/A\\", "| >"],   # Skirt, left knee forward (still facing right)
+        [" O ", " |\\", "/A\\", "| |"],   # Skirt, legs together
     ]
     PERSON_SKIRT_LEFT_FRAMES = [
-        [" O ", " |\", "/A\", "| <"],  # Skirt, left knee forward
-        [" O ", "/| ", "/A\", "| |"],  # Skirt, legs together
-        [" O ", " |\", "/A\", "< |"],  # Skirt, right knee forward (still facing left)
-        [" O ", "/| ", "/A\", "| |"],  # Skirt, legs together
+        [" O ", " |\\", "/A\\", "| <"],  # Skirt, left knee forward
+        [" O ", "/| ", "/A\\", "| |"],  # Skirt, legs together
+        [" O ", " |\\", "/A\\", "< |"],  # Skirt, right knee forward (still facing left)
+        [" O ", "/| ", "/A\\", "| |"],  # Skirt, legs together
     ]
 
     # All person types for random selection
@@ -1785,91 +1786,91 @@ class AlleyScene:
 
     # Woman in red - blonde hair, red dress (walking right)
     WOMAN_RED_RIGHT_FRAMES = [
-        ["~o", "/|\", "/A\", "> |"],   # Walking frame 1
-        ["~o", "\|/", "/A\", "| |"],   # Walking frame 2
-        ["~o", "/|\", "/A\", "| <"],   # Walking frame 3
-        ["~o", "\|/", "/A\", "| |"],   # Walking frame 4
+        ["~o~", "/|\\", "/A\\", "> |"],   # Walking frame 1
+        ["~o~", "\\|/", "/A\\", "| |"],   # Walking frame 2
+        ["~o~", "/|\\", "/A\\", "| <"],   # Walking frame 3
+        ["~o~", "\\|/", "/A\\", "| |"],   # Walking frame 4
     ]
 
     # Woman in red - walking left
     WOMAN_RED_LEFT_FRAMES = [
-        ["o~", "\|/", "/A\", "| <"],   # Walking frame 1
-        ["o~", "/|\", "/A\", "| |"],   # Walking frame 2
-        ["o~", "\|/", "/A\", "> |"],   # Walking frame 3
-        ["o~", "/|\", "/A\", "| |"],   # Walking frame 4
+        ["~o~", "\\|/", "/A\\", "| <"],   # Walking frame 1
+        ["~o~", "/|\\", "/A\\", "| |"],   # Walking frame 2
+        ["~o~", "\\|/", "/A\\", "> |"],   # Walking frame 3
+        ["~o~", "/|\\", "/A\\", "| |"],   # Walking frame 4
     ]
 
     # Woman in red - waving (stationary, arm raised)
     WOMAN_RED_WAVE_FRAMES = [
-        ["~o", "\|/", "/A\", "| |"],   # Wave down
-        ["o~", "\|_", "/A\", "| |"],   # Wave mid
-        ["~o", "\|^", "/A\", "| |"],   # Wave up
-        ["o~", "\|_", "/A\", "| |"],   # Wave mid
+        ["~o~", "\\|/", "/A\\", "| |"],   # Wave down
+        ["~o~", "\\|_", "/A\\", "| |"],   # Wave mid
+        ["~o~", "\\|^", "/A\\", "| |"],   # Wave up
+        ["~o~", "\\|_", "/A\\", "| |"],   # Wave mid
     ]
 
     # Agent Smith - suit and sunglasses (walking/running right)
     AGENT_SMITH_RIGHT_FRAMES = [
-        ["[=]", "/|\", "[H]", "/ \"],   # Running frame 1
-        ["[=]", "\|/", "[H]", " | "],    # Running frame 2
-        ["[=]", "/|\", "[H]", "\ /"],   # Running frame 3
-        ["[=]", "\|/", "[H]", " | "],    # Running frame 4
+        ["[=]", "/|\\", "[H]", "/ \\"],   # Running frame 1
+        ["[=]", "\\|/", "[H]", " | "],    # Running frame 2
+        ["[=]", "/|\\", "[H]", "\\ /"],   # Running frame 3
+        ["[=]", "\\|/", "[H]", " | "],    # Running frame 4
     ]
 
     # Agent Smith - suit and sunglasses (walking/running left)
     AGENT_SMITH_LEFT_FRAMES = [
-        ["[=]", "\|/", "[H]", "/ \"],   # Running frame 1
-        ["[=]", "/|\", "[H]", " | "],    # Running frame 2
-        ["[=]", "\|/", "[H]", "\ /"],   # Running frame 3
-        ["[=]", "/|\", "[H]", " | "],    # Running frame 4
+        ["[=]", "\\|/", "[H]", "/ \\"],   # Running frame 1
+        ["[=]", "/|\\", "[H]", " | "],    # Running frame 2
+        ["[=]", "\\|/", "[H]", "\\ /"],   # Running frame 3
+        ["[=]", "/|\\", "[H]", " | "],    # Running frame 4
     ]
 
     # Neo - long coat, sunglasses (walking right)
     NEO_RIGHT_FRAMES = [
-        ["(O)", "/|\", "#", "/ \"],   # Walking frame 1
-        ["(O)", "\|/", "#", " | "],    # Walking frame 2
-        ["(O)", "/|\", "#", "\ /"],   # Walking frame 3
-        ["(O)", "\|/", "#", " | "],    # Walking frame 4
+        ["(O)", "/|\\", "###", "/ \\"],   # Walking frame 1
+        ["(O)", "\\|/", "###", " | "],    # Walking frame 2
+        ["(O)", "/|\\", "###", "\\ /"],   # Walking frame 3
+        ["(O)", "\\|/", "###", " | "],    # Walking frame 4
     ]
 
     # Neo - long coat, sunglasses (walking left / running away)
     NEO_LEFT_FRAMES = [
-        ["(O)", "\|/", "#", "/ \"],   # Running frame 1
-        ["(O)", "/|\", "#", " | "],    # Running frame 2
-        ["(O)", "\|/", "#", "\ /"],   # Running frame 3
-        ["(O)", "/|\", "#", " | "],    # Running frame 4
+        ["(O)", "\\|/", "###", "/ \\"],   # Running frame 1
+        ["(O)", "/|\\", "###", " | "],    # Running frame 2
+        ["(O)", "\\|/", "###", "\\ /"],   # Running frame 3
+        ["(O)", "/|\\", "###", " | "],    # Running frame 4
     ]
 
     # Morpheus - bald, long coat (walking right)
     MORPHEUS_RIGHT_FRAMES = [
-        ["(0)", "/|\", "%", "/ \"],   # Walking frame 1
-        ["(0)", "\|/", "%", " | "],    # Walking frame 2
-        ["(0)", "/|\", "%", "\ /"],   # Walking frame 3
-        ["(0)", "\|/", "%", " | "],    # Walking frame 4
+        ["(0)", "/|\\", "%%%", "/ \\"],   # Walking frame 1
+        ["(0)", "\\|/", "%%%", " | "],    # Walking frame 2
+        ["(0)", "/|\\", "%%%", "\\ /"],   # Walking frame 3
+        ["(0)", "\\|/", "%%%", " | "],    # Walking frame 4
     ]
 
     # Morpheus - bald, long coat (walking left / running away)
     MORPHEUS_LEFT_FRAMES = [
-        ["(0)", "\|/", "%", "/ \"],   # Running frame 1
-        ["(0)", "/|\", "%", " | "],    # Running frame 2
-        ["(0)", "\|/", "%", "\ /"],   # Running frame 3
-        ["(0)", "/|\", "%", " | "],    # Running frame 4
+        ["(0)", "\\|/", "%%%", "/ \\"],   # Running frame 1
+        ["(0)", "/|\\", "%%%", " | "],    # Running frame 2
+        ["(0)", "\\|/", "%%%", "\\ /"],   # Running frame 3
+        ["(0)", "/|\\", "%%%", " | "],    # Running frame 4
     ]
 
     # Transform effect frames (woman to agent glitch)
     TRANSFORM_FRAMES = [
-        ["~o~", "/|\", "/A\", "| |"],   # Woman
-        ["#", "#", "#", "#"],     # Glitch 1
-        ["[=]", "???", "[H]", "?"],     # Partial transform
-        ["#", "#", "#", "#"],     # Glitch 2
-        ["[=]", "\|/", "[H]", " | "],    # Agent Smith
+        ["~o~", "/|\\", "/A\\", "| |"],   # Woman
+        ["###", "###", "###", "###"],     # Glitch 1
+        ["[=]", "???", "[H]", "???"],     # Partial transform
+        ["###", "###", "###", "###"],     # Glitch 2
+        ["[=]", "\\|/", "[H]", " | "],    # Agent Smith
     ]
 
     # UFO for abduction event
     UFO_SPRITE = [
         "    ___    ",
-        "  _/    \_ ",
-        "/  o       \",
-        "\__________/",
+        " __/   \\__ ",
+        "/  o   o  \\",
+        "\\____*____/",
     ]
 
     # Tractor beam (extends below UFO)
@@ -1884,7 +1885,7 @@ class AlleyScene:
     COW_SPRITE = [
         " ^__^",
         " (oo)",
-        "/----\",
+        "/----\\",
         "||  ||",
     ]
 
@@ -1892,6 +1893,8 @@ class AlleyScene:
     STREET_LIGHT = [
         " ___ ",
         "[___]",
+        "  |  ",
+        "  |  ",
         "  |  ",
         "  |  ",
         "  |  ",
