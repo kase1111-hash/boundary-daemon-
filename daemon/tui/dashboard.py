@@ -830,15 +830,16 @@ class MatrixRain:
         is_roof_sill = self._roof_sill_checker and self._roof_sill_checker(x, y)
 
         if is_roof_sill:
-            # Roof/sill snow: lasts 10x longer (1600-4800), no limit
-            self._roof_sill_snow.append({
-                'x': x,
-                'y': y,
-                'depth': depth,
-                'char': char,
-                'life': random.randint(1600, 4800),  # 10x longer melt time
-                'max_life': 4800,
-            })
+            # Roof/sill snow: lasts 10x longer (1600-4800), limit to 400
+            if len(self._roof_sill_snow) < 400:
+                self._roof_sill_snow.append({
+                    'x': x,
+                    'y': y,
+                    'depth': depth,
+                    'char': char,
+                    'life': random.randint(1600, 4800),  # 10x longer melt time
+                    'max_life': 4800,
+                })
         else:
             # Regular stuck snow: limit to 800
             if len(self._stuck_snow) < 800:
@@ -1293,6 +1294,8 @@ class TunnelBackdrop:
             self.height = height
             self._center_x = width // 2
             self._center_y = height // 3
+            # Clear old cache immediately to free memory before rebuild
+            self._frame_cache = []
             self._cache_valid = False  # Invalidate cache
 
     def update(self):

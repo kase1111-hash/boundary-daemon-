@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .event_logger import EventLogger, EventType, BoundaryEvent
@@ -281,8 +282,9 @@ class MemoryBackend(LogBackend):
 
     def __init__(self, config: BackendConfig):
         super().__init__(config)
-        self._buffer: List[Tuple[BoundaryEvent, LogPriority, datetime]] = []
         self._max_size = config.buffer_size
+        # Use deque with maxlen for O(1) automatic eviction of oldest entries
+        self._buffer: deque = deque(maxlen=self._max_size)
         self._persist_path = Path(config.path) if config.path else None
 
         # Load persisted events if available
@@ -340,10 +342,7 @@ class MemoryBackend(LogBackend):
         """Add event to memory buffer."""
         try:
             with self._lock:
-                # Remove oldest if at capacity
-                while len(self._buffer) >= self._max_size:
-                    self._buffer.pop(0)
-
+                # deque with maxlen automatically evicts oldest entries (O(1))
                 self._buffer.append((event, priority, datetime.utcnow()))
 
                 # Persist periodically
