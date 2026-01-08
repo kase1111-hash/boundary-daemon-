@@ -10607,7 +10607,8 @@ class Dashboard:
     def _get_weather_text_color(self, base_color: int) -> int:
         """Get weather-blended text color.
 
-        Blends the base color with weather-appropriate tint.
+        Blends the base color with weather-appropriate tint for better
+        visual coherence with the current weather mode scene.
         """
         if not self.matrix_mode:
             return base_color
@@ -10618,16 +10619,19 @@ class Dashboard:
         if base_color in (Colors.STATUS_OK, Colors.STATUS_WARN, Colors.STATUS_ERROR):
             return base_color
 
-        # Blend normal/muted text with weather colors
+        # Colors that should be blended with weather theme
+        blendable_colors = (Colors.NORMAL, Colors.MUTED, Colors.HEADER, Colors.ACCENT)
+
+        # Blend text with weather-appropriate colors
         if weather == WeatherMode.RAIN:
-            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
-                return Colors.TEXT_RAIN
+            if base_color in blendable_colors:
+                return Colors.TEXT_RAIN  # Cyan/blue tint
         elif weather == WeatherMode.SNOW:
-            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
-                return Colors.TEXT_SNOW
+            if base_color in blendable_colors:
+                return Colors.TEXT_SNOW  # White/bright
         elif weather == WeatherMode.SAND:
-            if base_color in (Colors.NORMAL, Colors.MUTED, Colors.HEADER):
-                return Colors.TEXT_SAND
+            if base_color in blendable_colors:
+                return Colors.TEXT_SAND  # Yellow/tan tint
         # Matrix and Calm stay green (default)
         return base_color
 

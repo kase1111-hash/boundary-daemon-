@@ -19,6 +19,8 @@ from typing import Callable, Optional, TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .boundary_daemon import BoundaryDaemon, BoundaryMode
 
+from .policy_engine import Operator
+
 logger = logging.getLogger(__name__)
 
 # Check for required dependencies
@@ -326,7 +328,7 @@ class TrayIcon:
         """Get current mode name for display."""
         if self.daemon:
             try:
-                mode = self.daemon.get_current_mode()
+                mode = self.daemon.policy_engine.get_current_mode()
                 return mode.name
             except Exception:
                 pass
@@ -340,8 +342,14 @@ class TrayIcon:
             def action(icon, item):
                 if self.daemon:
                     try:
-                        self.daemon.set_mode(mode)
-                        self._update_icon()
+                        # Use the proper request_mode_change method with HUMAN operator
+                        success, message = self.daemon.request_mode_change(
+                            mode, Operator.HUMAN, "Changed via system tray"
+                        )
+                        if success:
+                            self._update_icon()
+                        else:
+                            logger.warning(f"Mode change denied: {message}")
                     except Exception as e:
                         logger.error(f"Failed to set mode: {e}")
             return action
@@ -350,7 +358,8 @@ class TrayIcon:
             def check(item):
                 if self.daemon:
                     try:
-                        return self.daemon.get_current_mode() == mode
+                        # Get mode from policy engine
+                        return self.daemon.policy_engine.get_current_mode() == mode
                     except Exception:
                         pass
                 return False
