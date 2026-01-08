@@ -7452,43 +7452,190 @@ class DashboardClient:
         self._connected = False
         self._use_tcp = False  # Flag for Windows TCP mode
         self._log_file_path = None  # Path to daemon log file for offline mode
+        self._connection_debug_log = []  # Store debug messages
+
+        # Set up debug log file
+        self._debug_log_path = self._setup_debug_log()
+
+        self._log_debug("=" * 60)
+        self._log_debug(f"TUI Connection Debug - {datetime.now().isoformat()}")
+        self._log_debug(f"Platform: {sys.platform}")
+        self._log_debug(f"Python version: {sys.version}")
+        self._log_debug("=" * 60)
 
         # Build dynamic socket paths based on where daemon might create them
         self._socket_paths = self._build_socket_paths()
+        self._log_debug(f"Socket paths to try: {self._socket_paths}")
 
         # Find log file for reading real events when offline
         self._log_file_path = self._find_log_file()
+        self._log_debug(f"Daemon log file: {self._log_file_path}")
 
         # Try to find working socket
         if not self.socket_path:
             self.socket_path = self._find_socket()
+        self._log_debug(f"Selected socket path: {self.socket_path}")
 
         # Resolve token after finding socket (token might be near socket)
         self._token = self._resolve_token()
+        self._log_debug(f"API token found: {'Yes' if self._token else 'No'}")
 
         # On Windows, try TCP first (more reliable than Unix sockets)
         if sys.platform == 'win32':
+            self._log_debug("Windows detected - trying TCP connection first")
+            self._log_debug(f"Attempting TCP connection to {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
+
             if self._try_tcp_connection():
                 self._connected = True
                 self._use_tcp = True
+                self._log_debug("SUCCESS: Connected via TCP")
                 logger.info(f"Connected to daemon via TCP on port {self.WINDOWS_PORT}")
             else:
+                self._log_debug("TCP connection failed, trying Unix socket fallback")
                 # Fallback to socket test (unlikely to work on Windows)
                 self._connected = self._test_connection()
+                self._log_debug(f"Unix socket fallback result: {self._connected}")
         else:
+            self._log_debug("Unix platform - trying socket connection first")
             # On Unix, try socket first, then TCP as fallback
             self._connected = self._test_connection()
+            self._log_debug(f"Unix socket connection result: {self._connected}")
+
             if not self._connected:
+                self._log_debug(f"Socket failed, trying TCP fallback to {self.WINDOWS_HOST}:{self.WINDOWS_PORT}")
                 if self._try_tcp_connection():
                     self._connected = True
                     self._use_tcp = True
+                    self._log_debug("SUCCESS: Connected via TCP fallback")
                     logger.info(f"Connected to daemon via TCP on port {self.WINDOWS_PORT}")
 
         if not self._connected:
+            self._log_debug("FAILED: Could not connect to daemon")
+            self._log_debug("Checking for offline log file...")
             if self._log_file_path and os.path.exists(self._log_file_path):
+                self._log_debug(f"Found log file for offline mode: {self._log_file_path}")
                 logger.info(f"Daemon not connected, reading events from {self._log_file_path}")
             else:
+                self._log_debug("No log file found - running in demo mode")
                 logger.info("Daemon not available, no log file found")
+
+            # Additional diagnostics
+            self._run_connection_diagnostics()
+        else:
+            self._log_debug(f"SUCCESS: Connected (use_tcp={self._use_tcp})")
+
+        # Write all debug info to log file
+        self._flush_debug_log()
+
+    def _setup_debug_log(self) -> str:
+        """Set up debug log file path."""
+        # Try several locations
+        log_locations = [
+            Path(__file__).parent.parent.parent / 'logs' / 'tui_connection_debug.log',
+            Path.home() / '.boundary-daemon' / 'logs' / 'tui_connection_debug.log',
+            Path('./tui_connection_debug.log'),
+        ]
+
+        for log_path in log_locations:
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                # Test we can write to it
+                with open(log_path, 'a') as f:
+                    f.write('')
+                return str(log_path)
+            except (OSError, PermissionError):
+                continue
+
+        # Fallback to current directory
+        return './tui_connection_debug.log'
+
+    def _log_debug(self, message: str):
+        """Add a debug message to the log buffer."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        self._connection_debug_log.append(f"[{timestamp}] {message}")
+
+    def _flush_debug_log(self):
+        """Write all buffered debug messages to log file."""
+        try:
+            with open(self._debug_log_path, 'a') as f:
+                f.write('\n'.join(self._connection_debug_log) + '\n\n')
+            self._connection_debug_log = []
+        except Exception as e:
+            logger.warning(f"Could not write debug log to {self._debug_log_path}: {e}")
+
+    def _run_connection_diagnostics(self):
+        """Run detailed connection diagnostics."""
+        self._log_debug("\n--- Connection Diagnostics ---")
+
+        # Check if port 19847 is in use
+        self._log_debug(f"Checking if port {self.WINDOWS_PORT} is listening...")
+        try:
+            import psutil
+            listening = False
+            for conn in psutil.net_connections(kind='tcp'):
+                if conn.laddr.port == self.WINDOWS_PORT:
+                    self._log_debug(f"  Port {self.WINDOWS_PORT}: status={conn.status}, pid={conn.pid}")
+                    if conn.status == 'LISTEN':
+                        listening = True
+                        try:
+                            proc = psutil.Process(conn.pid)
+                            self._log_debug(f"  Listening process: {proc.name()} (PID {conn.pid})")
+                            self._log_debug(f"  Process cmdline: {' '.join(proc.cmdline())}")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                            self._log_debug(f"  Could not get process info: {e}")
+            if not listening:
+                self._log_debug(f"  Port {self.WINDOWS_PORT} is NOT listening - daemon may not be running")
+        except ImportError:
+            self._log_debug("  psutil not available - cannot check port status")
+        except Exception as e:
+            self._log_debug(f"  Error checking port: {e}")
+
+        # Check socket file existence
+        self._log_debug("\nChecking socket paths:")
+        for path in self._socket_paths:
+            exists = os.path.exists(path)
+            self._log_debug(f"  {path}: {'EXISTS' if exists else 'not found'}")
+
+        # Check for daemon process
+        self._log_debug("\nSearching for daemon process:")
+        try:
+            import psutil
+            found_daemon = False
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    name = (proc.info.get('name') or '').lower()
+                    cmdline = ' '.join(proc.info.get('cmdline') or []).lower()
+                    if 'boundary' in name or 'boundary' in cmdline:
+                        found_daemon = True
+                        self._log_debug(f"  Found: PID={proc.info['pid']} name={proc.info['name']}")
+                        self._log_debug(f"    cmdline: {cmdline[:100]}...")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            if not found_daemon:
+                self._log_debug("  No daemon process found - daemon is probably not running")
+        except ImportError:
+            self._log_debug("  psutil not available")
+        except Exception as e:
+            self._log_debug(f"  Error: {e}")
+
+        # Try direct TCP connection with detailed error
+        self._log_debug(f"\nTrying direct TCP connection to {self.WINDOWS_HOST}:{self.WINDOWS_PORT}:")
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3.0)
+            sock.connect((self.WINDOWS_HOST, self.WINDOWS_PORT))
+            self._log_debug("  TCP connect succeeded!")
+            sock.close()
+        except ConnectionRefusedError:
+            self._log_debug("  ConnectionRefusedError - daemon not listening on this port")
+        except socket.timeout:
+            self._log_debug("  Timeout - no response from daemon")
+        except OSError as e:
+            self._log_debug(f"  OSError: {e}")
+        except Exception as e:
+            self._log_debug(f"  Error: {type(e).__name__}: {e}")
+
+        self._log_debug("\n--- End Diagnostics ---\n")
 
     def _find_log_file(self) -> Optional[str]:
         """Find the daemon log file for reading real events offline."""
