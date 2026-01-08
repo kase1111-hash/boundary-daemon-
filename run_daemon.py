@@ -61,8 +61,10 @@ def main():
     parser.add_argument('--log-dir', default='./logs', help='Directory for log files')
     parser.add_argument('--skip-integrity-check', action='store_true',
                         help='Skip integrity verification (DANGEROUS - dev only)')
-    parser.add_argument('--tray', action='store_true',
-                        help='Enable system tray icon (minimizes to tray on Windows)')
+    parser.add_argument('--tray', action='store_true', default=(os.name == 'nt'),
+                        help='Enable system tray icon (default on Windows)')
+    parser.add_argument('--no-tray', action='store_true',
+                        help='Disable system tray icon')
     parser.add_argument('--no-auto-hide', action='store_true',
                         help='Do not auto-hide console when using --tray')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -126,8 +128,9 @@ def main():
 
         daemon.start()
 
-        # Set up system tray if requested
-        if args.tray:
+        # Set up system tray if requested (default on Windows)
+        use_tray = args.tray and not args.no_tray
+        if use_tray:
             try:
                 from daemon.tray import create_tray_icon
 
@@ -143,7 +146,10 @@ def main():
                 )
 
                 if tray_icon:
-                    print("System tray icon active - right-click for menu")
+                    print("System tray icon active - right-click tray icon for menu")
+                    print("  - Closing (X) or minimizing hides to system tray")
+                    print("  - Double-click tray icon to show console")
+                    print("  - Use 'Exit' in tray menu to quit")
                     if not args.no_auto_hide:
                         print("Console will minimize to tray in 1 second...")
                 else:
