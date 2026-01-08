@@ -14,7 +14,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .boundary_daemon import BoundaryDaemon, BoundaryMode
@@ -55,16 +55,25 @@ else:
 
 
 class WindowsConsoleManager:
-    """Manages Windows console window visibility."""
+    """Manages Windows console window visibility and intercepts close/minimize."""
 
     SW_HIDE = 0
     SW_SHOW = 5
     SW_MINIMIZE = 6
     SW_RESTORE = 9
 
+    # Console control signals
+    CTRL_C_EVENT = 0
+    CTRL_BREAK_EVENT = 1
+    CTRL_CLOSE_EVENT = 2
+    CTRL_LOGOFF_EVENT = 5
+    CTRL_SHUTDOWN_EVENT = 6
+
     def __init__(self):
         self._hwnd = None
         self._visible = True
+        self._close_callback = None
+        self._handler_set = False
         if IS_WINDOWS and HAS_CTYPES:
             self._kernel32 = ctypes.windll.kernel32
             self._user32 = ctypes.windll.user32
@@ -121,6 +130,87 @@ class WindowsConsoleManager:
             return self.hide()
         else:
             return self.show()
+
+    def set_close_handler(self, callback: Callable) -> bool:
+        """
+        Set a handler for console close events.
+        When X button is clicked, callback is called and window hides instead of closing.
+
+        Args:
+            callback: Function to call on close event
+
+        Returns:
+            True if handler was set successfully
+        """
+        if not self.is_available or self._handler_set:
+            return False
+
+        self._close_callback = callback
+
+        # Define the handler function type
+        HANDLER_TYPE = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
+
+        def console_handler(ctrl_type):
+            """Handle console control events."""
+            if ctrl_type == self.CTRL_CLOSE_EVENT:
+                # User clicked X - hide to tray instead of closing
+                self.hide()
+                if self._close_callback:
+                    self._close_callback()
+                return True  # Handled - don't close
+            elif ctrl_type in (self.CTRL_C_EVENT, self.CTRL_BREAK_EVENT):
+                # Ctrl+C or Ctrl+Break - let them through for graceful shutdown
+                return False
+            elif ctrl_type in (self.CTRL_LOGOFF_EVENT, self.CTRL_SHUTDOWN_EVENT):
+                # System logoff/shutdown - allow it
+                return False
+            return False
+
+        # Store reference to prevent garbage collection
+        self._handler = HANDLER_TYPE(console_handler)
+
+        try:
+            # Set the console control handler
+            result = self._kernel32.SetConsoleCtrlHandler(self._handler, True)
+            if result:
+                self._handler_set = True
+                logger.debug("Console close handler installed")
+                return True
+            else:
+                logger.debug("Failed to set console control handler")
+                return False
+        except Exception as e:
+            logger.debug(f"Error setting console handler: {e}")
+            return False
+
+    def disable_close_button(self) -> bool:
+        """
+        Disable the close button on the console window.
+        User must use tray menu to exit.
+
+        Returns:
+            True if successful
+        """
+        if not self.is_available:
+            return False
+
+        try:
+            # Get system menu handle
+            GWL_STYLE = -16
+            WS_SYSMENU = 0x80000
+
+            # Remove close button from system menu
+            SC_CLOSE = 0xF060
+            MF_BYCOMMAND = 0x00000000
+            MF_GRAYED = 0x00000001
+
+            hmenu = self._user32.GetSystemMenu(self._hwnd, False)
+            if hmenu:
+                self._user32.EnableMenuItem(hmenu, SC_CLOSE, MF_BYCOMMAND | MF_GRAYED)
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to disable close button: {e}")
+        return False
 
 
 class TrayIcon:
@@ -334,6 +424,10 @@ class TrayIcon:
         if self._console.is_available:
             self._console.show()
 
+    def _on_console_close(self):
+        """Called when user clicks X button on console - minimize to tray."""
+        logger.info("Console minimized to system tray (right-click tray icon to exit)")
+
     def _run_icon(self):
         """Run the tray icon (called in separate thread)."""
         try:
@@ -346,6 +440,10 @@ class TrayIcon:
 
             # Set up default action (double-click)
             self._icon.default_action = self._on_icon_clicked
+
+            # Set up close button handler (X button hides to tray)
+            if self._console.is_available:
+                self._console.set_close_handler(self._on_console_close)
 
             # Auto-hide console if requested
             if self._auto_hide and self._console.is_available:
