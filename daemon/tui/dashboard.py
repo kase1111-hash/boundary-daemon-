@@ -3920,10 +3920,16 @@ class AlleyScene:
         self._draw_street_lights(ground_y)
 
         # Draw curb/sidewalk - store positions for front-layer rendering
+        # Exclude area between traffic light pole and Claude St sign pole (fill with bars)
         self._sidewalk_positions = []
+        # Traffic light is at box_x + len(BOX[0]) + 96, street sign will be calculated later
+        # We'll update this after street sign position is known
+        traffic_light_pole_x = self.box_x + len(self.BOX[0]) + 96 if hasattr(self, 'box_x') else self.width - 20
         for x in range(self.width - 1):
             # Store sidewalk position for rendering on top of scene (but behind sprites)
             self._sidewalk_positions.append((x, curb_y, '▄', Colors.ALLEY_MID))
+        # Store traffic light x for later sidewalk exclusion update
+        self._traffic_light_pole_x = traffic_light_pole_x
 
         # Draw street surface (two rows)
         for x in range(self.width - 1):
@@ -3991,17 +3997,17 @@ class AlleyScene:
 
         # Note: Pine tree is placed after cafe is drawn (below)
 
-        # Place dumpster to the LEFT of building 1 (above curb)
+        # Place dumpster to the LEFT of building 1 (moved up 4 rows)
         self.dumpster_x = 2
-        self.dumpster_y = ground_y - len(self.DUMPSTER) + 1
+        self.dumpster_y = ground_y - len(self.DUMPSTER) + 1 - 4  # Moved up 4 rows
         self._draw_sprite(self.DUMPSTER, self.dumpster_x, self.dumpster_y, Colors.ALLEY_MID)
 
-        # Place box in front of left building
+        # Place box in front of left building (moved up 4 rows)
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
         self.box_x = self._building_x + 5  # In front of left building
-        self.box_y = ground_y - len(self.BOX) + 1
+        self.box_y = ground_y - len(self.BOX) + 1 - 4  # Moved up 4 rows
         self._draw_box_with_label(self.box_x, self.box_y)
 
         # Place blue mailbox near building 1 (shifted 2 chars left)
@@ -4061,7 +4067,22 @@ class AlleyScene:
         # Draw street sign near crosswalk (shifted 12 chars right)
         sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2 + 16
         sign_y = ground_y - len(self.STREET_SIGN) + 1
+        self._street_sign_x = sign_x  # Store for sidewalk exclusion
         self._draw_street_sign(sign_x, sign_y)
+
+        # Update sidewalk to exclude area between traffic light and Claude St poles
+        # Fill with vertical bars instead
+        if hasattr(self, '_traffic_light_pole_x') and hasattr(self, '_street_sign_x'):
+            exclude_start = min(self._traffic_light_pole_x, self._street_sign_x) + 2
+            exclude_end = max(self._traffic_light_pole_x, self._street_sign_x) - 1
+            updated_sidewalk = []
+            for (x, y, char, color) in self._sidewalk_positions:
+                if exclude_start <= x <= exclude_end:
+                    # Replace sidewalk with vertical bars in this area
+                    updated_sidewalk.append((x, y, '|', Colors.ALLEY_DARK))
+                else:
+                    updated_sidewalk.append((x, y, char, color))
+            self._sidewalk_positions = updated_sidewalk
 
         # Add building street numbers
         self._draw_building_numbers(ground_y)
@@ -6266,11 +6287,33 @@ class AlleyScene:
                     # Don't render cars above the 1/5th line
                     if 0 <= px < self.width - 1 and min_car_y <= py < self.height and char != ' ':
                         try:
-                            # Body panels (█) get the car's color, structure is white/bright
-                            if char == '█':
-                                attr = curses.color_pair(body_color) | curses.A_BOLD
-                            else:
+                            # Realistic vehicle coloring:
+                            # - Tires (_) and () are dark/black
+                            # - Bumpers (= - `) are chrome/silver
+                            # - Windows (|) are blue tinted
+                            # - Body panels (█) get the car's color
+                            # - Structure/frame uses light grey
+                            if char in '(_)':
+                                # Tires - dark black
+                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                            elif char in '=-`\'':
+                                # Bumpers and trim - chrome/silver (bright white)
                                 attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                            elif char == '|':
+                                # Windows - blue tinted glass
+                                attr = curses.color_pair(Colors.ALLEY_BLUE)
+                            elif char == '█':
+                                # Body panels - car's color
+                                attr = curses.color_pair(body_color) | curses.A_BOLD
+                            elif char in '/\\':
+                                # Windshield angles - lighter
+                                attr = curses.color_pair(Colors.ALLEY_MID)
+                            elif char == '_':
+                                # Undercarriage/shadow - dark
+                                attr = curses.color_pair(Colors.ALLEY_DARK)
+                            else:
+                                # Other structure - medium grey
+                                attr = curses.color_pair(Colors.GREY_BLOCK)
                             screen.attron(attr)
                             screen.addstr(py, px, char)
                             screen.attroff(attr)
