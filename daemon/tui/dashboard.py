@@ -1119,33 +1119,26 @@ class MatrixRain:
 
 class TunnelBackdrop:
     """
-    3D tunnel effect for the sky backdrop - creates depth illusion with concentric patterns.
+    Organic 3D tunnel effect for the sky backdrop - creates flowing, turbulent depth illusion.
 
-    Inspired by classic ASCII art tunnel animations, this creates a cosmic/vortex effect
-    in the sky area behind the cityscape. The effect is subtle to enhance atmosphere
-    without overwhelming the scene.
+    Uses layered noise functions to create organic, swirling patterns that flow toward
+    a vanishing point, creating the illusion of flying through a cosmic tunnel/vortex.
+    Characters range from sparse (.) to dense (@) based on computed depth values.
     """
 
-    # Depth character sets - ordered from far (sparse) to near (dense)
-    # Using different characters for depth perception
-    DEPTH_CHARS = [
-        ' .·',           # Layer 0: Furthest - very sparse dots
-        ' .·:',          # Layer 1: Sparse dots and colons
-        ' .:;+',         # Layer 2: Adding structure
-        '.:;+=*',        # Layer 3: More visible
-        '.;+*#@',        # Layer 4: Dense, near
-    ]
+    # Density character gradient from sparse to dense (organic ASCII tunnel style)
+    DENSITY_CHARS = ' .,:;i1tfLCG0@#'
 
-    # Weather-specific character overrides
+    # Weather-specific character sets (sparse to dense)
     WEATHER_CHARS = {
-        WeatherMode.MATRIX: [' .·', ' .·:', ' .:;+', '.:;+=*', '.;+*#@'],
-        WeatherMode.RAIN: [' ~', ' ~≈', ' ~≈:', '~≈:░', '≈:░▒'],
-        WeatherMode.SNOW: [' ·', ' ·*', ' ·*+', '·*+❄', '*+❄✦'],
-        WeatherMode.SAND: [' .', ' .,', ' .,:~', '.,:~°', ',:~°▪'],
-        WeatherMode.CALM: [' ', ' ·', ' ·.', '·.:~', '.:~≈'],
+        WeatherMode.MATRIX: ' .,:;i1tfLCG0@#',
+        WeatherMode.RAIN: ' .,~:;|/\\1tfL░▒▓',
+        WeatherMode.SNOW: ' ·.,:*+o0O@#█',
+        WeatherMode.SAND: ' .,:;~°^"oO0@',
+        WeatherMode.CALM: ' .,:;=+*#@',
     }
 
-    # Weather-specific color mappings
+    # Weather-specific color palettes (4 levels: far, mid, near, bright)
     WEATHER_COLORS = {
         WeatherMode.MATRIX: [Colors.TUNNEL_FAR, Colors.TUNNEL_MID, Colors.TUNNEL_NEAR, Colors.MATRIX_DIM],
         WeatherMode.RAIN: [Colors.RAIN_FADE2, Colors.RAIN_FADE1, Colors.RAIN_DIM, Colors.RAIN_BRIGHT],
@@ -1160,19 +1153,57 @@ class TunnelBackdrop:
         self.weather_mode = weather_mode
         self._enabled = True
 
-        # Animation state
-        self._phase = 0.0  # Current animation phase (0.0 to 2*pi)
-        self._speed = 0.15  # Animation speed (radians per frame)
-        self._pulse_phase = 0.0  # Secondary pulse for breathing effect
-        self._pulse_speed = 0.05
+        # Animation state - multiple phases for organic movement
+        self._time = 0.0
+        self._speed = 0.08  # Animation speed
 
-        # Tunnel center (in upper portion of screen for sky effect)
+        # Tunnel center (vanishing point)
         self._center_x = width // 2
-        self._center_y = height // 5  # Upper portion for sky
+        self._center_y = height // 4
 
-        # Ring configuration
-        self._max_rings = 12  # Number of concentric rings
-        self._ring_spacing = max(3, width // 25)  # Space between rings
+        # Precompute sine table for fast lookup
+        self._sin_table = []
+        import math
+        for i in range(360):
+            self._sin_table.append(math.sin(i * math.pi / 180))
+
+    def _fast_sin(self, angle: float) -> float:
+        """Fast sine lookup using precomputed table."""
+        idx = int(angle * 57.2958) % 360  # Convert radians to degrees
+        return self._sin_table[idx]
+
+    def _fast_cos(self, angle: float) -> float:
+        """Fast cosine lookup using precomputed table."""
+        idx = int((angle * 57.2958) + 90) % 360
+        return self._sin_table[idx]
+
+    def _noise(self, x: float, y: float, seed: float = 0) -> float:
+        """Simple coherent noise function for organic patterns."""
+        import math
+        # Multi-octave noise using layered sine waves
+        n = 0.0
+        n += self._fast_sin(x * 0.1 + seed) * self._fast_cos(y * 0.15 + seed * 0.7)
+        n += self._fast_sin(x * 0.23 + y * 0.17 + seed * 1.3) * 0.5
+        n += self._fast_cos(x * 0.31 - y * 0.29 + seed * 0.9) * 0.25
+        n += self._fast_sin((x + y) * 0.19 + seed * 2.1) * 0.125
+        return n
+
+    def _turbulence(self, x: float, y: float, t: float) -> float:
+        """Create turbulent, organic flow patterns."""
+        import math
+        # Layer multiple noise octaves with time-based flow
+        turb = 0.0
+
+        # Large-scale flow
+        turb += self._noise(x * 0.05 + t * 0.3, y * 0.08 + t * 0.2, t) * 0.5
+
+        # Medium detail
+        turb += self._noise(x * 0.12 + t * 0.5, y * 0.15 - t * 0.3, t * 1.7) * 0.3
+
+        # Fine detail
+        turb += self._noise(x * 0.25 - t * 0.4, y * 0.3 + t * 0.6, t * 2.3) * 0.2
+
+        return turb
 
     def set_weather_mode(self, mode: WeatherMode):
         """Change the weather mode."""
@@ -1187,63 +1218,17 @@ class TunnelBackdrop:
         self.width = width
         self.height = height
         self._center_x = width // 2
-        self._center_y = height // 5
-        self._ring_spacing = max(3, width // 25)
+        self._center_y = height // 4
 
     def update(self):
         """Update animation state."""
         if not self._enabled:
             return
-
-        # Advance animation phases
-        self._phase += self._speed
-        if self._phase > 6.283185:  # 2 * pi
-            self._phase -= 6.283185
-
-        self._pulse_phase += self._pulse_speed
-        if self._pulse_phase > 6.283185:
-            self._pulse_phase -= 6.283185
-
-    def _get_ring_depth(self, ring_idx: int) -> int:
-        """Calculate depth layer (0-4) for a ring based on animation phase."""
-        # Rings closer to center are "nearer" (higher depth)
-        # Animation makes rings appear to move toward/away from viewer
-        import math
-
-        # Base depth from ring position (inner = near, outer = far)
-        base_depth = 4 - min(4, ring_idx * 4 // self._max_rings)
-
-        # Add wave effect - rings pulse in depth
-        wave = math.sin(self._phase + ring_idx * 0.5)
-        depth_mod = int(wave * 1.5)
-
-        return max(0, min(4, base_depth + depth_mod))
-
-    def _get_char_for_position(self, x: int, y: int, ring_idx: int, depth: int) -> str:
-        """Get the character to display at a position based on depth and ring."""
-        import math
-
-        # Get character set for current weather mode
-        chars = self.WEATHER_CHARS.get(self.weather_mode, self.DEPTH_CHARS)
-        char_set = chars[depth] if depth < len(chars) else chars[-1]
-
-        if not char_set or char_set.isspace():
-            return ' '
-
-        # Use position to pick character within set (creates texture)
-        idx = (x * 7 + y * 11 + ring_idx) % len(char_set)
-        return char_set[idx]
-
-    def _get_color_for_depth(self, depth: int) -> int:
-        """Get the color for a given depth layer."""
-        colors = self.WEATHER_COLORS.get(self.weather_mode,
-                                         [Colors.TUNNEL_FAR, Colors.TUNNEL_MID,
-                                          Colors.TUNNEL_NEAR, Colors.TUNNEL_BRIGHT])
-        return colors[min(depth, len(colors) - 1)]
+        self._time += self._speed
 
     def render(self, screen, sky_height: int = None):
         """
-        Render the tunnel backdrop effect.
+        Render the organic tunnel backdrop effect.
 
         Args:
             screen: Curses screen object
@@ -1257,97 +1242,79 @@ class TunnelBackdrop:
         if sky_height is None:
             sky_height = self.height // 3
 
-        # Breathing effect - subtle expansion/contraction
-        pulse = 1.0 + 0.1 * math.sin(self._pulse_phase)
+        # Get character set and colors for current weather
+        chars = self.WEATHER_CHARS.get(self.weather_mode, self.DENSITY_CHARS)
+        colors = self.WEATHER_COLORS.get(self.weather_mode,
+                                         [Colors.TUNNEL_FAR, Colors.TUNNEL_MID,
+                                          Colors.TUNNEL_NEAR, Colors.TUNNEL_BRIGHT])
+        char_count = len(chars) - 1  # Exclude space for density mapping
 
-        # Render concentric rings from outside to inside
-        for ring_idx in range(self._max_rings - 1, -1, -1):
-            # Calculate ring radius with pulse
-            base_radius = (ring_idx + 1) * self._ring_spacing * pulse
+        t = self._time
 
-            # Get depth for this ring
-            depth = self._get_ring_depth(ring_idx)
-            color = self._get_color_for_depth(depth)
+        # Render each position in the sky area
+        for y in range(1, sky_height):
+            for x in range(0, self.width - 1):
+                # Calculate position relative to tunnel center
+                dx = x - self._center_x
+                dy = (y - self._center_y) * 2.5  # Stretch vertically for perspective
 
-            # Determine ring density (how many points to draw)
-            # Inner rings need fewer points, outer rings need more
-            circumference = 2 * math.pi * base_radius
-            num_points = max(8, int(circumference * 0.3))
+                # Distance from center (creates radial depth)
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist < 1:
+                    dist = 1
 
-            # Draw ring with angular offset for rotation effect
-            angular_offset = self._phase * 0.2 * (ring_idx % 2 * 2 - 1)  # Alternate directions
+                # Angle from center (for swirling)
+                angle = math.atan2(dy, dx)
 
-            for i in range(num_points):
-                angle = (2 * math.pi * i / num_points) + angular_offset
+                # Create tunnel depth effect - closer to center = "deeper" into tunnel
+                # Add swirling motion based on angle and time
+                tunnel_depth = 50.0 / (dist + 5)  # Inverse distance for depth
+                swirl = angle + t * 0.5 + tunnel_depth * 0.3
 
-                # Elliptical distortion for 3D perspective
-                x = int(self._center_x + base_radius * math.cos(angle) * 1.8)  # Wider
-                y = int(self._center_y + base_radius * math.sin(angle) * 0.6)  # Compressed vertically
+                # Add organic turbulence
+                turb = self._turbulence(x + swirl * 3, y + t * 2, t)
 
-                # Skip if outside screen bounds or below sky
-                if x < 0 or x >= self.width - 1 or y < 1 or y >= sky_height:
-                    continue
+                # Combine factors for final density value
+                # Radial gradient (denser toward center) + turbulence + swirl
+                density = tunnel_depth * 0.4 + turb * 0.4
 
-                # Get character for this position
-                char = self._get_char_for_position(x, y, ring_idx, depth)
+                # Add radial waves flowing outward
+                wave = self._fast_sin(dist * 0.15 - t * 2) * 0.3
+                density += wave
 
+                # Add spiral arms
+                spiral = self._fast_sin(angle * 3 + dist * 0.1 - t * 1.5) * 0.2
+                density += spiral
+
+                # Normalize density to 0-1 range and clamp
+                density = (density + 1) * 0.5  # Shift from [-1,1] to [0,1]
+                density = max(0, min(1, density))
+
+                # Map density to character
+                char_idx = int(density * char_count)
+                char = chars[char_idx]
+
+                # Skip spaces for efficiency
                 if char == ' ':
                     continue
 
+                # Calculate color based on depth (further = dimmer)
+                color_idx = min(3, int(tunnel_depth * 0.8))
+                color = colors[color_idx]
+
                 try:
-                    # Dim attribute for far rings
                     attr = curses.color_pair(color)
-                    if depth < 2:
-                        attr |= curses.A_DIM
-                    elif depth >= 4:
+                    # Add brightness variation
+                    if density > 0.7:
                         attr |= curses.A_BOLD
+                    elif density < 0.3:
+                        attr |= curses.A_DIM
 
                     screen.attron(attr)
                     screen.addstr(y, x, char)
                     screen.attroff(attr)
                 except curses.error:
-                    pass  # Ignore write errors at screen edges
-
-        # Add some scattered stars/particles between rings for atmosphere
-        self._render_ambient_particles(screen, sky_height)
-
-    def _render_ambient_particles(self, screen, sky_height: int):
-        """Render scattered ambient particles in the sky for extra depth."""
-        import math
-
-        # Use phase to animate particle positions
-        particle_count = max(5, self.width // 15)
-
-        for i in range(particle_count):
-            # Pseudo-random but deterministic positions based on index and phase
-            x = int((i * 97 + self._phase * 3) % self.width)
-            y = int((i * 53 + self._pulse_phase * 2) % sky_height)
-
-            if y < 1:
-                continue
-
-            # Vary particle character based on position
-            chars = '.·:*'
-            char = chars[i % len(chars)]
-
-            # Twinkle effect
-            brightness = math.sin(self._phase * 2 + i * 0.7)
-            if brightness < 0.3:
-                continue
-
-            try:
-                color = Colors.TUNNEL_FAR if brightness < 0.6 else Colors.TUNNEL_MID
-                attr = curses.color_pair(color)
-                if brightness > 0.8:
-                    attr |= curses.A_BOLD
-                else:
-                    attr |= curses.A_DIM
-
-                screen.attron(attr)
-                screen.addstr(y, x, char)
-                screen.attroff(attr)
-            except curses.error:
-                pass
+                    pass
 
 
 class AlleyScene:
