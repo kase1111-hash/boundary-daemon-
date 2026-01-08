@@ -11,5 +11,12 @@ cryptography>=41.0.0
 # Detection engines
 yara-python>=4.3.0
 
+# System tray (optional, for desktop notifications)
+pystray>=0.19.0
+Pillow>=10.0.0
+
+# YAML parsing (optional, for Sigma rule support)
+PyYAML>=6.0
+
 # No other dependencies required
 # Minimal attack surface by design

@@ -2765,7 +2765,7 @@ class AlleyScene:
         # Flower/plant types with colors
         # Format: (char, color)
         flowers = [
-            ('@', Colors.STATUS_CRITICAL),  # Red flower
+            ('@', Colors.SHADOW_RED),  # Red flower
             ('*', Colors.RAT_YELLOW),        # Yellow flower
             ('%', Colors.STATUS_OK),         # Green plant
             ('#', Colors.RAIN_BRIGHT),       # Blue flower
