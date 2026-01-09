@@ -2,9 +2,25 @@
 
 ## Version: v1.0.0-beta
 
-**The Trust Policy & Audit Layer for Agent OS**
+**The Cognitive Trust Layer for Autonomous Systems**
 
 > *"If the Memory Vault is the safe, the Boundary Daemon is the armed guard + walls + air-gap switches."*
+
+Boundary Daemon is the enforcement and governance substrate for multi-agent AI systems. It defines, enforces, and audits trust boundaries between cognitive modules, ensuring safe propagation of reasoning, memory, and learning.
+
+### Why It Matters
+
+Modern AI ecosystems rely on orchestration frameworks (LangGraph, AutoGen, CrewAI), yet none enforce formal cognitive boundaries. Boundary Daemon introduces real-time trust governance — the missing kernel for agent safety and accountability.
+
+| Capability | Description | Market Comparison |
+|------------|-------------|-------------------|
+| Cognitive Containment | Restricts reasoning/learning to defined trust zones | Not in LangChain/AutoGen |
+| Dynamic Trust Graph | Adaptive trust modeling using signed evidence | Manual approval only elsewhere |
+| Kernel-Level Enforcement | System-level daemon validates cognition transfers | Not in any open-source orchestrator |
+| Semantic Policy Engine | Natural-language rules define permissible intent | Next-generation approach |
+| Cluster-Aware Enforcement | Syncs trust policy across distributed agents | Missing in peer orchestrators |
+
+**The Boundary Daemon is the world's first cognitive firewall — enforcing how, when, and where autonomous systems are allowed to think.**
 
 ---
 
