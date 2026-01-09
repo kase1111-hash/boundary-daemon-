@@ -447,6 +447,16 @@ python -m PyInstaller ^
     --hidden-import=daemon.blockchain.validator_protection ^
     --hidden-import=daemon.blockchain.rpc_protection ^
     --hidden-import=daemon.dreaming ^
+    --hidden-import=daemon.audio ^
+    --hidden-import=daemon.audio.audio_engine ^
+    --hidden-import=daemon.audio.tts_engine ^
+    --hidden-import=daemon.audio.stt_engine ^
+    --hidden-import=pyttsx3 ^
+    --hidden-import=pyttsx3.drivers ^
+    --hidden-import=pyttsx3.drivers.sapi5 ^
+    --hidden-import=pyttsx3.drivers.nsss ^
+    --hidden-import=pyttsx3.drivers.espeak ^
+    --collect-submodules=pyttsx3 ^
     --collect-submodules=nacl ^
     --collect-submodules=cffi ^
     --collect-submodules=cryptography ^

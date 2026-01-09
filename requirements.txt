@@ -18,5 +18,8 @@ Pillow>=10.0.0
 # YAML parsing (optional, for Sigma rule support)
 PyYAML>=6.0
 
+# Text-to-speech for audio feedback and LLM response narration
+pyttsx3>=2.90
+
 # No other dependencies required
 # Minimal attack surface by design
