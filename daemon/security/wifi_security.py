@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
@@ -199,6 +199,9 @@ class WiFiSecurityMonitor:
                 if alert not in self.status.active_alerts:
                     self.status.active_alerts.append(alert)
                     self.status.total_alerts += 1
+                    # Limit active_alerts to prevent memory leak
+                    if len(self.status.active_alerts) > 100:
+                        self.status.active_alerts = self.status.active_alerts[-100:]
 
         return alerts
 
@@ -292,9 +295,12 @@ class WiFiSecurityMonitor:
             self._deauth_events.append(event)
             self.status.deauth_events.append(event)
 
-            # Clean old events
+            # Clean old events from both lists to prevent memory leaks
             cutoff = now - timedelta(seconds=self.config.deauth_window_seconds)
             self._deauth_events = [e for e in self._deauth_events if e.timestamp > cutoff]
+            # Also prune status.deauth_events - keep only last 1000 events
+            if len(self.status.deauth_events) > 1000:
+                self.status.deauth_events = self.status.deauth_events[-1000:]
 
             # Check for deauth flood
             if self.config.enable_deauth_detection:
@@ -312,6 +318,9 @@ class WiFiSecurityMonitor:
                 if alert not in self.status.active_alerts:
                     self.status.active_alerts.append(alert)
                     self.status.total_alerts += 1
+                    # Limit active_alerts to prevent memory leak
+                    if len(self.status.active_alerts) > 100:
+                        self.status.active_alerts = self.status.active_alerts[-100:]
 
         return alerts
 
@@ -403,6 +412,9 @@ class WiFiSecurityMonitor:
                     alerts.append(alert)
                     self.status.active_alerts.append(alert)
                     self.status.total_alerts += 1
+                    # Limit active_alerts to prevent memory leak
+                    if len(self.status.active_alerts) > 100:
+                        self.status.active_alerts = self.status.active_alerts[-100:]
 
         return alerts
 

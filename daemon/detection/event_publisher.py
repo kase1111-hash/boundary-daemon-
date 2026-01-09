@@ -27,10 +27,11 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable, Set
+from typing import Dict, List, Optional, Any, Callable, Set, Deque
 
 logger = logging.getLogger(__name__)
 
@@ -211,8 +212,9 @@ class EventPublisher:
         self._mitre_detector = None
         self._ioc_manager = None
 
-        # Event correlation
-        self._recent_events: List[SecurityEvent] = []
+        # Event correlation - use deque for efficient O(1) append with bounded size
+        # 1000 events is sufficient for 5-minute correlation window
+        self._recent_events: Deque[SecurityEvent] = deque(maxlen=1000)
         self._max_correlation_window = 300  # 5 minutes
 
         # Statistics
@@ -437,16 +439,12 @@ class EventPublisher:
                 logger.error(f"Error processing event: {e}")
 
     def _add_to_correlation_window(self, event: SecurityEvent) -> None:
-        """Add event to correlation window and prune old events."""
-        now = time.time()
-        cutoff = now - self._max_correlation_window
+        """Add event to correlation window.
 
-        # Parse timestamps and prune old events
-        self._recent_events = [
-            e for e in self._recent_events
-            if self._parse_timestamp(e.timestamp) > cutoff
-        ]
-
+        Using deque(maxlen=1000) provides automatic size limiting.
+        Old events outside the time window are filtered during correlation.
+        """
+        # deque with maxlen handles size limit automatically - O(1) append
         self._recent_events.append(event)
 
     def _parse_timestamp(self, ts: str) -> float:
@@ -615,9 +613,15 @@ class EventPublisher:
     def _find_correlated_events(self, event: SecurityEvent) -> List[SecurityEvent]:
         """Find events that might be correlated with this one."""
         correlated = []
+        now = time.time()
+        cutoff = now - self._max_correlation_window
 
         for recent in self._recent_events:
             if recent.event_id == event.event_id:
+                continue
+
+            # Filter by time window
+            if self._parse_timestamp(recent.timestamp) <= cutoff:
                 continue
 
             # Same source within window

@@ -391,10 +391,12 @@ class ThreatMesh:
         self._peers: Dict[str, MeshPeer] = {}
         self._peer_lock = threading.RLock()
 
-        # Event handlers
-        self._on_threat_received: List[Callable[[ThreatSignature], None]] = []
-        self._on_peer_joined: List[Callable[[MeshPeer], None]] = []
-        self._on_peer_revoked: List[Callable[[MeshPeer], None]] = []
+        # Event handlers - use dict for O(1) unregister to prevent memory leaks
+        self._on_threat_received: Dict[int, Callable[[ThreatSignature], None]] = {}
+        self._on_peer_joined: Dict[int, Callable[[MeshPeer], None]] = {}
+        self._on_peer_revoked: Dict[int, Callable[[MeshPeer], None]] = {}
+        self._next_handler_id = 0
+        self._handler_lock = threading.RLock()
 
         # Statistics
         self._stats = {
@@ -934,8 +936,10 @@ class ThreatMesh:
                     if peer:
                         peer.signatures_received += 1
 
-                # Notify handlers
-                for handler in self._on_threat_received:
+                # Notify handlers - copy values to avoid modification during iteration
+                with self._handler_lock:
+                    handlers = list(self._on_threat_received.values())
+                for handler in handlers:
                     try:
                         handler(signature)
                     except Exception as e:
@@ -984,7 +988,10 @@ class ThreatMesh:
 
         logger.info(f"Added peer: {peer_id} ({organization_name})")
 
-        for handler in self._on_peer_joined:
+        # Notify handlers - copy values to avoid modification during iteration
+        with self._handler_lock:
+            handlers = list(self._on_peer_joined.values())
+        for handler in handlers:
             try:
                 handler(peer)
             except Exception as e:
@@ -1033,7 +1040,10 @@ class ThreatMesh:
             peer.revoked = True
             logger.warning(f"Revoked peer {peer_id}: {reason}")
 
-            for handler in self._on_peer_revoked:
+            # Notify handlers - copy values to avoid modification during iteration
+            with self._handler_lock:
+                handlers = list(self._on_peer_revoked.values())
+            for handler in handlers:
                 try:
                     handler(peer)
                 except Exception as e:
@@ -1090,17 +1100,86 @@ class ThreatMesh:
         stats.update(self._stats)
         return stats
 
-    def on_threat_received(self, handler: Callable[[ThreatSignature], None]) -> None:
-        """Register a handler for received threats."""
-        self._on_threat_received.append(handler)
+    def on_threat_received(self, handler: Callable[[ThreatSignature], None]) -> int:
+        """Register a handler for received threats.
 
-    def on_peer_joined(self, handler: Callable[[MeshPeer], None]) -> None:
-        """Register a handler for new peers."""
-        self._on_peer_joined.append(handler)
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_threat_received[handler_id] = handler
+            return handler_id
 
-    def on_peer_revoked(self, handler: Callable[[MeshPeer], None]) -> None:
-        """Register a handler for revoked peers."""
-        self._on_peer_revoked.append(handler)
+    def unregister_threat_handler(self, handler_id: int) -> bool:
+        """Unregister a threat received handler.
+
+        Args:
+            handler_id: The ID returned from on_threat_received
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_threat_received:
+                del self._on_threat_received[handler_id]
+                return True
+            return False
+
+    def on_peer_joined(self, handler: Callable[[MeshPeer], None]) -> int:
+        """Register a handler for new peers.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_peer_joined[handler_id] = handler
+            return handler_id
+
+    def unregister_peer_joined_handler(self, handler_id: int) -> bool:
+        """Unregister a peer joined handler.
+
+        Args:
+            handler_id: The ID returned from on_peer_joined
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_peer_joined:
+                del self._on_peer_joined[handler_id]
+                return True
+            return False
+
+    def on_peer_revoked(self, handler: Callable[[MeshPeer], None]) -> int:
+        """Register a handler for revoked peers.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_peer_revoked[handler_id] = handler
+            return handler_id
+
+    def unregister_peer_revoked_handler(self, handler_id: int) -> bool:
+        """Unregister a peer revoked handler.
+
+        Args:
+            handler_id: The ID returned from on_peer_revoked
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_peer_revoked:
+                del self._on_peer_revoked[handler_id]
+                return True
+            return False
 
     def export_local_signatures(self) -> List[Dict[str, Any]]:
         """Export all local signatures for backup."""

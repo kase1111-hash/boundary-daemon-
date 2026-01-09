@@ -209,9 +209,11 @@ class ModeAdvisor:
         self._recommendations: List[ModeRecommendation] = []
         self._recommendation_lock = threading.RLock()
 
-        # Event handlers
-        self._on_recommendation: List[Callable[[ModeRecommendation], None]] = []
-        self._on_auto_escalate: List[Callable[[ModeRecommendation], None]] = []
+        # Event handlers - use dict for O(1) unregister to prevent memory leaks
+        self._on_recommendation: Dict[int, Callable[[ModeRecommendation], None]] = {}
+        self._on_auto_escalate: Dict[int, Callable[[ModeRecommendation], None]] = {}
+        self._next_handler_id = 0
+        self._handler_lock = threading.RLock()
 
         # Background evaluation
         self._eval_thread: Optional[threading.Thread] = None
@@ -661,8 +663,10 @@ class ModeAdvisor:
             f"score: {recommendation.confidence_score:.2f})"
         )
 
-        # Notify handlers
-        for handler in self._on_recommendation:
+        # Notify handlers - copy values to avoid modification during iteration
+        with self._handler_lock:
+            handlers = list(self._on_recommendation.values())
+        for handler in handlers:
             try:
                 handler(recommendation)
             except Exception as e:
@@ -673,19 +677,67 @@ class ModeAdvisor:
             logger.warning(
                 f"Auto-escalation triggered for recommendation {recommendation.recommendation_id}"
             )
-            for handler in self._on_auto_escalate:
+            with self._handler_lock:
+                escalate_handlers = list(self._on_auto_escalate.values())
+            for handler in escalate_handlers:
                 try:
                     handler(recommendation)
                 except Exception as e:
                     logger.error(f"Auto-escalate handler error: {e}")
 
-    def on_recommendation(self, handler: Callable[[ModeRecommendation], None]) -> None:
-        """Register a handler for new recommendations."""
-        self._on_recommendation.append(handler)
+    def on_recommendation(self, handler: Callable[[ModeRecommendation], None]) -> int:
+        """Register a handler for new recommendations.
 
-    def on_auto_escalate(self, handler: Callable[[ModeRecommendation], None]) -> None:
-        """Register a handler for auto-escalation events."""
-        self._on_auto_escalate.append(handler)
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_recommendation[handler_id] = handler
+            return handler_id
+
+    def unregister_recommendation_handler(self, handler_id: int) -> bool:
+        """Unregister a recommendation handler.
+
+        Args:
+            handler_id: The ID returned from on_recommendation
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_recommendation:
+                del self._on_recommendation[handler_id]
+                return True
+            return False
+
+    def on_auto_escalate(self, handler: Callable[[ModeRecommendation], None]) -> int:
+        """Register a handler for auto-escalation events.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_auto_escalate[handler_id] = handler
+            return handler_id
+
+    def unregister_auto_escalate_handler(self, handler_id: int) -> bool:
+        """Unregister an auto-escalate handler.
+
+        Args:
+            handler_id: The ID returned from on_auto_escalate
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_auto_escalate:
+                del self._on_auto_escalate[handler_id]
+                return True
+            return False
 
     def add_rule(self, rule: AdvisorRule) -> None:
         """Add a custom advisory rule."""
