@@ -17,7 +17,7 @@ import time
 import threading
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Callable, Any, Set
+from typing import Optional, Dict, List, Callable, Any
 from datetime import datetime
 from enum import Enum
 from collections import deque
@@ -765,7 +765,6 @@ class ResourceMonitor:
 
         # 6. Connection state ratio anomaly (detect imbalanced states)
         if current_count > 10:  # Only check if we have enough connections
-            listen_count = states.get('LISTEN', 0)
             syn_sent = states.get('SYN_SENT', 0)
             syn_recv = states.get('SYN_RECV', 0)
 

@@ -47,15 +47,13 @@ Architecture:
     └─────────────────────────────────────────────────────────────────┘
 """
 
-import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple, Any, Callable
-import os
+from typing import Dict, List, Optional, Tuple, Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -851,16 +849,16 @@ class ModeAdvisor:
             Formatted explanation string
         """
         lines = [
-            f"MODE RECOMMENDATION",
-            f"=" * 50,
-            f"",
+            "MODE RECOMMENDATION",
+            "=" * 50,
+            "",
             f"Current Mode:     {recommendation.current_mode.upper()}",
             f"Recommended Mode: {recommendation.recommended_mode.upper()}",
-            f"",
+            "",
             f"Confidence: {recommendation.confidence.value.upper()} "
             f"({recommendation.confidence_score * 100:.1f}%)",
-            f"",
-            f"TRIGGERED RULES:",
+            "",
+            "TRIGGERED RULES:",
         ]
 
         for rule_id in recommendation.triggered_rules:
@@ -870,16 +868,16 @@ class ModeAdvisor:
                 lines.append(f"           {rule.description}")
 
         lines.extend([
-            f"",
-            f"REASONS:",
+            "",
+            "REASONS:",
         ])
         for reason in recommendation.reasons:
             lines.append(f"  • {reason}")
 
         if recommendation.indicators:
             lines.extend([
-                f"",
-                f"ACTIVE THREAT INDICATORS:",
+                "",
+                "ACTIVE THREAT INDICATORS:",
             ])
             for ind in recommendation.indicators:
                 lines.append(
@@ -888,13 +886,13 @@ class ModeAdvisor:
                 )
 
         lines.extend([
-            f"",
-            f"ACTION REQUIRED:",
+            "",
+            "ACTION REQUIRED:",
         ])
         if recommendation.auto_escalate:
             lines.append(
-                f"  Ceremony will be automatically initiated due to "
-                f"HIGH confidence."
+                "  Ceremony will be automatically initiated due to "
+                "HIGH confidence."
             )
         else:
             lines.append(
@@ -903,7 +901,7 @@ class ModeAdvisor:
             )
 
         lines.extend([
-            f"",
+            "",
             f"Generated: {recommendation.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
             f"Expires:   {recommendation.expires_at.strftime('%Y-%m-%d %H:%M:%S')}",
         ])

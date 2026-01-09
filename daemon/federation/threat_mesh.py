@@ -47,14 +47,13 @@ import ssl
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any, Callable
 import logging
 
 try:
     from nacl.signing import SigningKey, VerifyKey
-    from nacl.public import PrivateKey, PublicKey, Box
     from nacl.encoding import HexEncoder
     from nacl.exceptions import BadSignatureError
     NACL_AVAILABLE = True
@@ -543,7 +542,8 @@ class ThreatMesh:
             context = ssl.create_default_context()
 
             with urllib.request.urlopen(req, timeout=30, context=context) as response:
-                response_data = json.loads(response.read().decode())
+                # Read response (acknowledgment) - contents not needed
+                _ = response.read()
 
                 # Update peer stats
                 with self._lock:

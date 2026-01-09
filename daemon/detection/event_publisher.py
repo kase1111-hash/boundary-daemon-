@@ -31,7 +31,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable, Set, Deque
+from typing import Dict, List, Optional, Any, Callable, Deque
 
 logger = logging.getLogger(__name__)
 

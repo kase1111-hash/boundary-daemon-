@@ -10,16 +10,14 @@ Detects WiFi-based attacks including:
 """
 
 import threading
-import time
 import subprocess
 import re
-import os
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from enum import Enum
 from datetime import datetime, timedelta
-from collections import defaultdict, deque
+from collections import defaultdict
 
 # Platform detection
 IS_WINDOWS = sys.platform == 'win32'
@@ -513,7 +511,7 @@ class WiFiSecurityMonitor:
                     self.status.is_monitoring = True
                     self.status.last_scan = datetime.now()
 
-            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
                 # Scanning not available - continue with manual analysis
                 pass
 
