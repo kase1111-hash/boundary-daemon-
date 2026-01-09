@@ -279,12 +279,14 @@ class ContainmentProtocol:
         self.require_human_for_terminate = require_human_for_terminate
         self.forensics_path = forensics_path
 
-        # Event handlers
-        self._on_containment_action: List[Callable[[ContainmentAction], None]] = []
-        self._on_anomaly_detected: List[Callable[[AgentProfile, AnomalyType, Dict], None]] = []
+        # Event handlers - use dict for O(1) unregister to prevent memory leaks
+        self._on_containment_action: Dict[int, Callable[[ContainmentAction], None]] = {}
+        self._on_anomaly_detected: Dict[int, Callable[[AgentProfile, AnomalyType, Dict], None]] = {}
+        self._next_handler_id = 0
+        self._handler_lock = threading.RLock()
 
-        # Containment actions history
-        self._actions: List[ContainmentAction] = []
+        # Containment actions history - bounded to prevent memory leaks
+        self._actions: Deque[ContainmentAction] = deque(maxlen=1000)
         self._action_lock = threading.RLock()
 
         logger.info("ContainmentProtocol initialized")
@@ -524,8 +526,10 @@ class ContainmentProtocol:
         with self._action_lock:
             self._actions.append(action)
 
-        # Notify handlers
-        for handler in self._on_containment_action:
+        # Notify handlers - copy values to avoid modification during iteration
+        with self._handler_lock:
+            handlers = list(self._on_containment_action.values())
+        for handler in handlers:
             try:
                 handler(action)
             except Exception as e:
@@ -662,16 +666,62 @@ class ContainmentProtocol:
     def on_containment_action(
         self,
         handler: Callable[[ContainmentAction], None],
-    ) -> None:
-        """Register a handler for containment actions."""
-        self._on_containment_action.append(handler)
+    ) -> int:
+        """Register a handler for containment actions.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_containment_action[handler_id] = handler
+            return handler_id
+
+    def unregister_containment_handler(self, handler_id: int) -> bool:
+        """Unregister a containment action handler.
+
+        Args:
+            handler_id: The ID returned from on_containment_action
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_containment_action:
+                del self._on_containment_action[handler_id]
+                return True
+            return False
 
     def on_anomaly_detected(
         self,
         handler: Callable[[AgentProfile, AnomalyType, Dict], None],
-    ) -> None:
-        """Register a handler for anomaly detection."""
-        self._on_anomaly_detected.append(handler)
+    ) -> int:
+        """Register a handler for anomaly detection.
+
+        Returns:
+            Handler ID that can be used to unregister the handler
+        """
+        with self._handler_lock:
+            handler_id = self._next_handler_id
+            self._next_handler_id += 1
+            self._on_anomaly_detected[handler_id] = handler
+            return handler_id
+
+    def unregister_anomaly_handler(self, handler_id: int) -> bool:
+        """Unregister an anomaly detection handler.
+
+        Args:
+            handler_id: The ID returned from on_anomaly_detected
+
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        with self._handler_lock:
+            if handler_id in self._on_anomaly_detected:
+                del self._on_anomaly_detected[handler_id]
+                return True
+            return False
 
     def get_actions_for_agent(self, agent_id: str) -> List[ContainmentAction]:
         """Get all containment actions for an agent."""
@@ -903,8 +953,10 @@ class AgentProfiler:
                 max_anomaly = max(anomalies, key=lambda x: x[1])
                 anomaly_type, severity, description = max_anomaly
 
-                # Notify handlers
-                for handler in self.protocol._on_anomaly_detected:
+                # Notify handlers - copy values to avoid modification during iteration
+                with self.protocol._handler_lock:
+                    handlers = list(self.protocol._on_anomaly_detected.values())
+                for handler in handlers:
                     try:
                         handler(profile, anomaly_type, {
                             'severity': severity,

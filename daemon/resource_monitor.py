@@ -17,7 +17,7 @@ import time
 import threading
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Callable, Any, Set
+from typing import Optional, Dict, List, Callable, Any
 from datetime import datetime
 from enum import Enum
 from collections import deque
@@ -229,10 +229,9 @@ class ResourceMonitor:
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
-        # History storage
+        # History storage - use deque for efficient O(1) append with bounded size
         self._history: deque = deque(maxlen=self.config.history_size)
-        self._alerts: List[ResourceAlert] = []
-        self._alert_history_size = 100
+        self._alerts: deque = deque(maxlen=100)  # Bounded to prevent memory leak
 
         # Alert cooldown tracking (prevent spam)
         self._last_alert_time: Dict[str, float] = {}
@@ -766,7 +765,6 @@ class ResourceMonitor:
 
         # 6. Connection state ratio anomaly (detect imbalanced states)
         if current_count > 10:  # Only check if we have enough connections
-            listen_count = states.get('LISTEN', 0)
             syn_sent = states.get('SYN_SENT', 0)
             syn_recv = states.get('SYN_RECV', 0)
 
@@ -877,11 +875,9 @@ class ResourceMonitor:
             metadata=metadata or {},
         )
 
-        # Store in history
+        # Store in history - deque handles size limit automatically
         with self._lock:
             self._alerts.append(alert)
-            if len(self._alerts) > self._alert_history_size:
-                self._alerts = self._alerts[-self._alert_history_size:]
 
         # Log the alert
         log_level = {
@@ -972,12 +968,12 @@ class ResourceMonitor:
                    resource_type: Optional[ResourceType] = None) -> List[ResourceAlert]:
         """Get recent alerts, optionally filtered by resource type"""
         with self._lock:
-            alerts = self._alerts
+            alerts = list(self._alerts)  # Convert deque to list
             if resource_type:
                 alerts = [a for a in alerts if a.resource_type == resource_type]
             if limit:
                 return alerts[-limit:]
-            return list(alerts)
+            return alerts
 
     def get_summary_stats(self) -> Dict:
         """Get summary statistics"""
