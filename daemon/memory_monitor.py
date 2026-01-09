@@ -790,26 +790,80 @@ class MemoryMonitor:
         growth_rate = self._calculate_growth_rate(samples)
         growth_rate_mb_per_hour = growth_rate * 3600 / (1024 * 1024)
 
+        # Calculate additional context for descriptive messages
+        start_rss_mb = samples[0].rss / (1024 * 1024)
+        end_rss_mb = samples[-1].rss / (1024 * 1024)
+        growth_mb = end_rss_mb - start_rss_mb
+        window_minutes = (samples[-1].timestamp - samples[0].timestamp) / 60
+        gc_object_growth = samples[-1].gc_objects - samples[0].gc_objects
+
+        # Build descriptive metadata
+        leak_metadata = {
+            'leak_indicator': '',  # Will be set below
+            'start_rss_mb': round(start_rss_mb, 2),
+            'end_rss_mb': round(end_rss_mb, 2),
+            'growth_mb': round(growth_mb, 2),
+            'growth_rate_mb_per_hour': round(growth_rate_mb_per_hour, 2),
+            'window_minutes': round(window_minutes, 2),
+            'gc_object_growth': gc_object_growth,
+            'current_gc_objects': samples[-1].gc_objects,
+            'gc_garbage_count': samples[-1].gc_garbage,
+        }
+
+        # Get top allocation sites if debug mode is enabled
+        top_sites_info = ""
+        if self._debugger and self._debugger.is_enabled:
+            report = self._debugger.compare_to_baseline()
+            if report and report.growth_sites:
+                top_sites = report.growth_sites[:3]
+                leak_metadata['top_growth_sites'] = top_sites
+                sites_str = ", ".join([f"{s['location']} (+{s['size_diff_mb']:.1f}MB)" for s in top_sites])
+                top_sites_info = f" Top suspects: {sites_str}."
+
         # Check growth rate thresholds
         if growth_rate_mb_per_hour >= self.config.growth_rate_critical_mb_per_hour:
             self._leak_indicator = LeakIndicator.LIKELY
+            leak_metadata['leak_indicator'] = self._leak_indicator.value
+
+            message = (
+                f"LIKELY MEMORY LEAK DETECTED: Memory growing at {growth_rate_mb_per_hour:.1f} MB/hour. "
+                f"RSS increased from {start_rss_mb:.1f}MB to {end_rss_mb:.1f}MB (+{growth_mb:.1f}MB) "
+                f"over {window_minutes:.1f} minutes. "
+                f"GC tracking {samples[-1].gc_objects:,} objects ({gc_object_growth:+,} since window start)."
+                f"{top_sites_info}"
+            )
+            if not top_sites_info:
+                message += " Enable debug mode (enable_debug_mode()) for allocation site tracking."
+
             self._raise_alert(
                 MemoryAlertLevel.CRITICAL,
                 "memory_leak_likely",
-                f"Likely memory leak: growing at {growth_rate_mb_per_hour:.1f} MB/hour",
+                message,
                 growth_rate_mb_per_hour,
                 self.config.growth_rate_critical_mb_per_hour,
-                metadata={'leak_indicator': self._leak_indicator.value},
+                metadata=leak_metadata,
             )
         elif growth_rate_mb_per_hour >= self.config.growth_rate_warning_mb_per_hour:
             self._leak_indicator = LeakIndicator.POSSIBLE
+            leak_metadata['leak_indicator'] = self._leak_indicator.value
+
+            message = (
+                f"POSSIBLE MEMORY LEAK: Memory growing at {growth_rate_mb_per_hour:.1f} MB/hour. "
+                f"RSS: {start_rss_mb:.1f}MB → {end_rss_mb:.1f}MB (+{growth_mb:.1f}MB) "
+                f"over {window_minutes:.1f} min. "
+                f"Objects: {samples[-1].gc_objects:,} ({gc_object_growth:+,})."
+                f"{top_sites_info}"
+            )
+            if not top_sites_info:
+                message += " Run enable_debug_mode() to identify leak source."
+
             self._raise_alert(
                 MemoryAlertLevel.WARNING,
                 "memory_leak_possible",
-                f"Possible memory leak: growing at {growth_rate_mb_per_hour:.1f} MB/hour",
+                message,
                 growth_rate_mb_per_hour,
                 self.config.growth_rate_warning_mb_per_hour,
-                metadata={'leak_indicator': self._leak_indicator.value},
+                metadata=leak_metadata,
             )
         else:
             self._leak_indicator = LeakIndicator.NONE
@@ -865,17 +919,73 @@ class MemoryMonitor:
             # If middle sample is between start and end, growth is sustained
             if baseline_rss < mid_rss < current_rss:
                 self._leak_indicator = LeakIndicator.CONFIRMED
+
+                # Calculate detailed metrics
+                baseline_rss_mb = baseline_rss / (1024 * 1024)
+                current_rss_mb = current_rss / (1024 * 1024)
+                mid_rss_mb = mid_rss / (1024 * 1024)
+                growth_mb = current_rss_mb - baseline_rss_mb
+                monitoring_duration_min = (samples[-1].timestamp - samples[0].timestamp) / 60
+                growth_rate_mb_per_hour = (growth_mb / monitoring_duration_min) * 60 if monitoring_duration_min > 0 else 0
+
+                # Get GC stats for context
+                gc_objects_start = samples[0].gc_objects
+                gc_objects_current = samples[-1].gc_objects
+                gc_object_growth = gc_objects_current - gc_objects_start
+
+                # Build detailed metadata
+                leak_metadata = {
+                    'baseline_rss_mb': round(baseline_rss_mb, 2),
+                    'mid_rss_mb': round(mid_rss_mb, 2),
+                    'current_rss_mb': round(current_rss_mb, 2),
+                    'growth_mb': round(growth_mb, 2),
+                    'growth_percent': round(growth_percent, 2),
+                    'growth_rate_mb_per_hour': round(growth_rate_mb_per_hour, 2),
+                    'monitoring_duration_min': round(monitoring_duration_min, 2),
+                    'gc_objects_start': gc_objects_start,
+                    'gc_objects_current': gc_objects_current,
+                    'gc_object_growth': gc_object_growth,
+                    'gc_garbage_count': samples[-1].gc_garbage,
+                    'leak_indicator': self._leak_indicator.value,
+                }
+
+                # Get top allocation sites if debug mode is enabled
+                top_sites_info = ""
+                if self._debugger and self._debugger.is_enabled:
+                    report = self._debugger.compare_to_baseline()
+                    if report and report.growth_sites:
+                        top_sites = report.growth_sites[:5]
+                        leak_metadata['top_growth_sites'] = top_sites
+                        leak_metadata['new_allocation_sites'] = report.new_sites[:3] if report.new_sites else []
+
+                        sites_list = []
+                        for i, site in enumerate(top_sites[:3], 1):
+                            sites_list.append(f"#{i} {site['location']} (+{site['size_diff_mb']:.2f}MB, {site['count_diff']:+} allocs)")
+                        top_sites_info = " LEAK SOURCES IDENTIFIED: " + "; ".join(sites_list) + "."
+
+                # Build comprehensive message
+                message = (
+                    f"CONFIRMED MEMORY LEAK: Sustained {growth_percent:.1f}% memory growth detected. "
+                    f"RSS baseline: {baseline_rss_mb:.1f}MB → midpoint: {mid_rss_mb:.1f}MB → current: {current_rss_mb:.1f}MB "
+                    f"(+{growth_mb:.1f}MB total over {monitoring_duration_min:.0f} min, ~{growth_rate_mb_per_hour:.1f}MB/hour). "
+                    f"GC objects grew from {gc_objects_start:,} to {gc_objects_current:,} ({gc_object_growth:+,})."
+                )
+
+                if samples[-1].gc_garbage > 0:
+                    message += f" WARNING: {samples[-1].gc_garbage} uncollectable objects in gc.garbage (reference cycles)."
+
+                if top_sites_info:
+                    message += top_sites_info
+                else:
+                    message += " To pinpoint leak source, call enable_debug_mode() and monitor for allocation site details."
+
                 self._raise_alert(
                     MemoryAlertLevel.CRITICAL,
                     "memory_leak_confirmed",
-                    f"Confirmed memory leak: {growth_percent:.1f}% growth over monitoring period",
+                    message,
                     growth_percent,
                     self.config.leak_growth_threshold_percent,
-                    metadata={
-                        'baseline_rss_mb': baseline_rss / (1024 * 1024),
-                        'current_rss_mb': current_rss / (1024 * 1024),
-                        'leak_indicator': self._leak_indicator.value,
-                    },
+                    metadata=leak_metadata,
                 )
 
     def _raise_alert(
