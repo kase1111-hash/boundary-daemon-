@@ -9370,12 +9370,21 @@ class DashboardClient:
             return sandboxes
         return []
 
-    def get_siem_status(self) -> Dict:
-        """Get SIEM shipping status."""
+    def get_siem_status(self) -> Tuple[Dict, Dict]:
+        """Get SIEM shipping and ingestion status.
+
+        Returns:
+            (siem_status, ingestion_status) - Both shipping and ingestion stats
+        """
         response = self._send_request('get_siem_status')
         if response.get('success'):
-            return response.get('siem_status', {})
-        return {'events_shipped_today': 0, 'last_ship_time': None, 'queue_size': 0}
+            siem = response.get('siem_status', {})
+            ingestion = response.get('ingestion', {})
+            return siem, ingestion
+        return (
+            {'events_shipped_today': 0, 'last_ship_time': None, 'queue_size': 0},
+            {'active': False, 'events_served_today': 0, 'requests_today': 0}
+        )
 
     def set_mode(self, mode: str, reason: str = '') -> Tuple[bool, str]:
         """Request mode change."""
@@ -9454,6 +9463,7 @@ class Dashboard:
         self.alerts: List[DashboardAlert] = []
         self.sandboxes: List[SandboxStatus] = []
         self.siem_status: Dict = {}
+        self.ingestion_status: Dict = {}  # SIEM clients pulling events
 
         # Layout
         self.height = 0
@@ -10016,7 +10026,7 @@ class Dashboard:
             self.events = self.client.get_events(20)
             self.alerts = self.client.get_alerts()
             self.sandboxes = self.client.get_sandboxes()
-            self.siem_status = self.client.get_siem_status()
+            self.siem_status, self.ingestion_status = self.client.get_siem_status()
         except Exception as e:
             logger.error(f"Failed to refresh data: {e}")
 
@@ -10399,13 +10409,20 @@ class Dashboard:
                 row += 1
 
     def _draw_siem_panel(self, y: int, x: int, width: int, height: int):
-        """Draw the SIEM status panel with right-aligned title and text."""
+        """Draw the SIEM status panel with shipping and ingestion stats."""
         connected = self.siem_status.get('connected', False)
-        title_color = Colors.STATUS_OK if connected else Colors.STATUS_ERROR
+        ingestion_active = self.ingestion_status.get('active', False)
+
+        # Determine panel status color based on any activity
+        if connected or ingestion_active:
+            title_color = Colors.STATUS_OK
+        else:
+            title_color = Colors.STATUS_ERROR
+
         # Draw box with empty title, then add right-aligned title manually
         self._draw_box(y, x, width, height, "")
         # Right-align the title
-        title_str = " SIEM SHIPPING "
+        title_str = " SIEM "
         title_x = x + width - len(title_str) - 1
         try:
             self.screen.attron(curses.color_pair(title_color) | curses.A_BOLD)
@@ -10418,30 +10435,33 @@ class Dashboard:
         # Right-align text within the box (2 char padding from right edge)
         right_edge = x + width - 2
 
-        # Connection status
-        status_text = "✓ Connected" if connected else "✗ Disconnected"
-        status_color = Colors.STATUS_OK if connected else Colors.STATUS_ERROR
-        line = f"Status: {status_text}"
+        # --- Ingestion stats (SIEM pulling from daemon) ---
+        ingestion_text = "✓ Active" if ingestion_active else "○ Idle"
+        ingestion_color = Colors.STATUS_OK if ingestion_active else Colors.MUTED
+        line = f"Ingestion: {ingestion_text}"
+        self._addstr(row, right_edge - len(line), line, ingestion_color)
+        row += 1
+
+        # Events served to SIEM clients
+        served = self.ingestion_status.get('events_served_today', 0)
+        requests = self.ingestion_status.get('requests_today', 0)
+        line = f"Served: {served:,} ({requests} req)"
+        self._addstr(row, right_edge - len(line), line, Colors.MUTED)
+        row += 1
+
+        # --- Shipping stats (daemon pushing to SIEM) ---
+        status_text = "✓ Shipping" if connected else "○ Not configured"
+        status_color = Colors.STATUS_OK if connected else Colors.MUTED
+        line = f"Shipping: {status_text}"
         self._addstr(row, right_edge - len(line), line, status_color)
         row += 1
 
-        # Backend
-        backend = self.siem_status.get('backend', 'unknown')
-        line = f"Backend: {backend}"
-        self._addstr(row, right_edge - len(line), line, Colors.MUTED)
-        row += 1
-
-        # Queue depth
-        queue = self.siem_status.get('queue_depth', 0)
-        queue_color = Colors.STATUS_OK if queue < 100 else Colors.STATUS_WARN
-        line = f"Queue: {queue} events"
-        self._addstr(row, right_edge - len(line), line, queue_color)
-        row += 1
-
-        # Events shipped
-        shipped = self.siem_status.get('events_shipped_today', 0)
-        line = f"Shipped today: {shipped:,}"
-        self._addstr(row, right_edge - len(line), line, Colors.MUTED)
+        # Events shipped (only show if connected)
+        if connected:
+            shipped = self.siem_status.get('events_shipped_today', 0)
+            queue = self.siem_status.get('queue_depth', 0)
+            line = f"Shipped: {shipped:,} (Q:{queue})"
+            self._addstr(row, right_edge - len(line), line, Colors.MUTED)
 
     def _draw_footer(self):
         """Draw the footer bar."""
