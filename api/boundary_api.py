@@ -98,6 +98,18 @@ class BoundaryAPIServer:
         self._server_thread: Optional[threading.Thread] = None
         self._socket: Optional[socket.socket] = None
 
+        # Ingestion stats tracking (for SIEM clients pulling events)
+        self._ingestion_stats = {
+            'total_requests': 0,
+            'total_events_served': 0,
+            'last_request_time': None,
+            'last_client': None,
+            'requests_today': 0,
+            'events_today': 0,
+            'today_date': None,
+        }
+        self._ingestion_lock = threading.Lock()
+
         # Telemetry integration for API latency monitoring (Plan 11)
         self._telemetry_manager: Optional['TelemetryManager'] = telemetry_manager
 
@@ -771,7 +783,7 @@ class BoundaryAPIServer:
             log_security_error(e, "set_mode", requested_mode=mode_str)
             return {'success': False, 'error': str(e)}
 
-    def _handle_get_events(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_get_events(self, params: Dict[str, Any], client_info: str = None) -> Dict[str, Any]:
         """
         Get recent events.
 
@@ -795,6 +807,9 @@ class BoundaryAPIServer:
             # Convert events to dicts
             events_data = [event.to_dict() for event in events]
 
+            # Track ingestion stats for SIEM panel
+            self._track_ingestion(len(events_data), client_info)
+
             return {
                 'success': True,
                 'events': events_data,
@@ -806,6 +821,27 @@ class BoundaryAPIServer:
         except (AttributeError, IOError, OSError) as e:
             # Event logger not available or file access error
             return {'success': False, 'error': str(e)}
+
+    def _track_ingestion(self, event_count: int, client_info: str = None):
+        """Track event ingestion statistics for SIEM clients."""
+        from datetime import datetime, date
+        with self._ingestion_lock:
+            today = date.today().isoformat()
+
+            # Reset daily counters if new day
+            if self._ingestion_stats['today_date'] != today:
+                self._ingestion_stats['today_date'] = today
+                self._ingestion_stats['requests_today'] = 0
+                self._ingestion_stats['events_today'] = 0
+
+            # Update stats
+            self._ingestion_stats['total_requests'] += 1
+            self._ingestion_stats['total_events_served'] += event_count
+            self._ingestion_stats['requests_today'] += 1
+            self._ingestion_stats['events_today'] += event_count
+            self._ingestion_stats['last_request_time'] = datetime.utcnow().isoformat() + 'Z'
+            if client_info:
+                self._ingestion_stats['last_client'] = client_info
 
     def _handle_verify_log(self) -> Dict[str, Any]:
         """Verify event log integrity"""
@@ -1400,9 +1436,20 @@ class BoundaryAPIServer:
             return {'success': False, 'error': str(e)}
 
     def _handle_get_siem_status(self) -> Dict[str, Any]:
-        """Get SIEM integration status."""
+        """Get SIEM integration status including ingestion stats."""
         try:
-            # Try to get SIEM integration status
+            # Get ingestion stats (events pulled by SIEM clients)
+            with self._ingestion_lock:
+                ingestion = {
+                    'active': self._ingestion_stats['requests_today'] > 0,
+                    'requests_today': self._ingestion_stats['requests_today'],
+                    'events_served_today': self._ingestion_stats['events_today'],
+                    'last_request': self._ingestion_stats['last_request_time'],
+                    'total_requests': self._ingestion_stats['total_requests'],
+                    'total_events_served': self._ingestion_stats['total_events_served'],
+                }
+
+            # Try to get SIEM integration status (outbound shipping)
             try:
                 from daemon.security.siem_integration import get_siem
                 siem = get_siem()
@@ -1417,12 +1464,14 @@ class BoundaryAPIServer:
                             'events_shipped_today': stats.get('events_sent', 0),
                             'last_ship_time': stats.get('last_send_time', ''),
                             'errors_today': stats.get('send_failures', 0),
-                        }
+                        },
+                        'ingestion': ingestion,
                     }
             except ImportError:
                 pass
 
-            # Return disconnected status if SIEM not available
+            # Return disconnected status if SIEM shipping not available
+            # But still show ingestion stats if SIEM clients are pulling events
             return {
                 'success': True,
                 'siem_status': {
@@ -1432,7 +1481,8 @@ class BoundaryAPIServer:
                     'events_shipped_today': 0,
                     'last_ship_time': '',
                     'errors_today': 0,
-                }
+                },
+                'ingestion': ingestion,
             }
         except Exception as e:
             return {'success': False, 'error': str(e)}
