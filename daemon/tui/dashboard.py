@@ -2515,6 +2515,9 @@ class AlleyScene:
         self._background_stars: List[Dict] = []
         self._init_background_stars()
 
+        # Master frame counter for update throttling (performance optimization)
+        self._frame_count = 0
+
         # Scene seeding - deterministic random based on date for consistency
         # Same date = same scene layout (for screenshot validation)
         today = datetime.now()
@@ -4169,6 +4172,9 @@ class AlleyScene:
         # Security canary: no clouds if resource monitor is down
         if not self._security_canary.get('clouds', True):
             return
+        # Early exit if no clouds
+        if not self._clouds:
+            return
         for cloud in self._clouds:
             if cloud['type'] in ['main', 'cumulus']:
                 # Render multi-line cloud (main or cumulus)
@@ -5519,10 +5525,19 @@ class AlleyScene:
             })
 
     def update(self):
-        """Update traffic light state, cars, pedestrians, street light flicker, and window people."""
-        self._traffic_frame += 1
+        """Update traffic light state, cars, pedestrians, street light flicker, and window people.
 
-        # State machine for traffic lights (with all-red transition)
+        Performance optimized: Uses frame counters to throttle slow updates.
+        - Every frame (fast): cars, pedestrians, traffic lights, QTE
+        - Every 2 frames: closeup car, wind, steam, damage overlays
+        - Every 3 frames: clouds, window people, cafe people
+        - Every 5 frames: road effects, street lights, skyline windows
+        - Every 10 frames: security canaries, holidays, UFO, prop plane
+        """
+        self._traffic_frame += 1
+        self._frame_count += 1
+
+        # State machine for traffic lights (with all-red transition) - EVERY FRAME
         self._state_duration += 1
 
         if self._traffic_state == 'NS_GREEN':
@@ -5530,11 +5545,11 @@ class AlleyScene:
                 self._traffic_state = 'NS_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'NS_YELLOW':
-            if self._state_duration >= 40:  # Increased yellow duration for visibility
+            if self._state_duration >= 40:
                 self._traffic_state = 'ALL_RED_TO_EW'
                 self._state_duration = 0
         elif self._traffic_state == 'ALL_RED_TO_EW':
-            if self._state_duration >= 15:  # Brief all-red pause
+            if self._state_duration >= 15:
                 self._traffic_state = 'EW_GREEN'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_GREEN':
@@ -5542,82 +5557,58 @@ class AlleyScene:
                 self._traffic_state = 'EW_YELLOW'
                 self._state_duration = 0
         elif self._traffic_state == 'EW_YELLOW':
-            if self._state_duration >= 40:  # Increased yellow duration for visibility
+            if self._state_duration >= 40:
                 self._traffic_state = 'ALL_RED_TO_NS'
                 self._state_duration = 0
         elif self._traffic_state == 'ALL_RED_TO_NS':
-            if self._state_duration >= 15:  # Brief all-red pause
+            if self._state_duration >= 15:
                 self._traffic_state = 'NS_GREEN'
                 self._state_duration = 0
 
-        # Update cars
+        # === EVERY FRAME (critical animations) ===
         self._update_cars()
-
-        # Update close-up car (perspective effect)
-        self._update_closeup_car()
-
-        # Update pedestrians
         self._update_pedestrians()
+        self._update_qte()  # QTE needs fast response
+        self._update_woman_red()  # Special event needs smooth animation
 
-        # Update knocked out pedestrians and ambulance
-        self._update_knocked_out_and_ambulance()
+        # === EVERY 2 FRAMES ===
+        if self._frame_count % 2 == 0:
+            self._update_closeup_car()
+            self._update_wind()
+            self._update_steam()
+            self._update_damage_overlays()
+            self._update_turtle()
+            self._update_open_sign()
 
-        # Update street light flicker
-        self._update_street_light_flicker()
+        # === EVERY 3 FRAMES ===
+        if self._frame_count % 3 == 0:
+            self._update_clouds()
+            self._update_window_people()
+            self._update_cafe_people()
+            self._update_knocked_out_and_ambulance()
 
-        # Update window people
-        self._update_window_people()
+        # === EVERY 5 FRAMES ===
+        if self._frame_count % 5 == 0:
+            self._update_road_effects()
+            self._update_street_light_flicker()
+            self._update_skyline_windows()
 
-        # Update cafe people in Shell Cafe
-        self._update_cafe_people()
+        # === EVERY 10 FRAMES (slow updates) ===
+        if self._frame_count % 10 == 0:
+            self._update_security_canaries()
+            self._update_ufo()
+            self._update_prop_plane()
+            # Holiday events (only during their active periods)
+            if self._christmas_mode:
+                self._update_christmas_lights()
+            if self._halloween_mode:
+                self._update_halloween()
+            if hasattr(self, '_fireworks_mode') and self._fireworks_mode:
+                self._update_fireworks()
 
-        # Update turtle head animation
-        self._update_turtle()
-
-        # Update prop plane with banner
-        self._update_prop_plane()
-
-        # Update clouds
-        self._update_clouds()
-
-        # Update steam effects from manholes/drains
-        self._update_steam()
-
-        # Update woman in red event
-        self._update_woman_red()
-
-        # Update windy weather effects
-        self._update_wind()
-
-        # Update meteor QTE event
-        self._update_qte()
-
-        # Update UFO abduction event
-        self._update_ufo()
-
-        # Update skyline window lights
-        self._update_skyline_windows()
-
-        # Update OPEN sign animation
-        self._update_open_sign()
-
-        # Update meteor damage overlays
-        self._update_damage_overlays()
-
-        # Update Christmas lights (secret event Dec 20-31)
-        self._update_christmas_lights()
-
-        # Update Halloween pumpkin glow (secret event Oct 24-31)
-        self._update_halloween()
-
-        # Update 4th of July fireworks (secret event Jul 1-7)
-        self._update_fireworks()
-
-        # Update security canaries (tie visual elements to monitor health)
-        self._update_security_canaries()
-
-        # Update road/sidewalk weather effects
-        self._update_road_effects()
+        # Wrap frame counter to prevent overflow
+        if self._frame_count >= 1000:
+            self._frame_count = 0
 
         # Update garden animation frame
         self._update_garden()
@@ -7019,6 +7010,8 @@ class AlleyScene:
 
     def _render_steam(self, screen):
         """Render steam rising from manholes and drains."""
+        if not self._steam_effects:
+            return
         for steam in self._steam_effects:
             frame = self.STEAM_FRAMES[steam['frame']]
             base_x = steam['x']
@@ -7041,6 +7034,8 @@ class AlleyScene:
 
     def _render_damage_overlays(self, screen):
         """Render meteor damage overlays on the scene - fades from red to gray."""
+        if not self._damage_overlays:
+            return
         for overlay in self._damage_overlays:
             px = overlay['x']
             py = overlay['y']
@@ -7074,6 +7069,9 @@ class AlleyScene:
 
     def _render_wind(self, screen):
         """Render wind effects - debris, leaves, and wisps."""
+        # Early exit if no wind effects
+        if not self._debris and not self._wind_wisps and not self._leaves:
+            return
         # Render debris (newspapers, trash, leaves on ground)
         for d in self._debris:
             px = int(d['x'])
@@ -7431,6 +7429,9 @@ class AlleyScene:
         # Security canary: no vehicles if log watchdog is down
         if not self._security_canary.get('vehicles', True):
             return
+        # Early exit if no cars
+        if not self._cars:
+            return
         # Vehicles are 4-5 rows tall, bottom row at street level
         street_y = self.height - 1
         # Vehicles can't render above the 1/5th line
@@ -7490,6 +7491,9 @@ class AlleyScene:
         """Render pedestrians on the sidewalk. Tied to process_security health."""
         # Security canary: no pedestrians if process security is down
         if not self._security_canary.get('pedestrians', True):
+            return
+        # Early exit if no pedestrians
+        if not self._pedestrians:
             return
         # Pedestrians walk on the curb/sidewalk area (at street level)
         base_curb_y = self.height - 1
