@@ -1784,6 +1784,38 @@ class AlleyScene:
     ]
 
     # ==========================================
+    # SMALL PARK ELEMENTS
+    # ==========================================
+
+    # Park bench (side view)
+    PARK_BENCH = [
+        " _______ ",
+        "|_______|",
+        " |     | ",
+    ]
+
+    # Small park lamp
+    PARK_LAMP = [
+        " (O) ",
+        "  |  ",
+        "  |  ",
+        " _|_ ",
+    ]
+
+    # Small bush/shrub
+    SMALL_BUSH = [
+        " @@@ ",
+        "@@@@@",
+        " @@@ ",
+    ]
+
+    # Flower bed
+    FLOWER_BED = [
+        "*.*.*",
+        "ooooo",
+    ]
+
+    # ==========================================
     # SEASONAL CONSTELLATIONS - Security Canary
     # Stars tied to memory monitor health
     # ==========================================
@@ -2333,6 +2365,10 @@ class AlleyScene:
         self._building_y = 0
         self._building2_x = 0
         self._building2_y = 0
+        # Park position (between vanishing road and right building)
+        self._park_x = 0
+        self._park_y = 0
+        self._park_width = 0
         # Store building bottom for rat constraints
         self._building_bottom_y = height - 3
         # Traffic light state
@@ -4595,6 +4631,13 @@ class AlleyScene:
         self._crosswalk_width = 32  # Store for car occlusion
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
+        # Draw small park between vanishing road and right building
+        park_left = self._crosswalk_x + self._crosswalk_width + 5  # After crosswalk
+        park_right = self._building2_x - 5 if self._building2_x > 0 else self.width - 20
+        park_width = park_right - park_left
+        if park_width >= 20:  # Only draw if enough space
+            self._draw_park(park_left, curb_y, park_width)
+
         # Draw street sign near crosswalk (shifted 12 chars right)
         sign_x = self._crosswalk_x + self._crosswalk_width // 2 - len(self.STREET_SIGN[0]) // 2 + 16
         sign_y = ground_y - len(self.STREET_SIGN) + 1
@@ -4995,6 +5038,98 @@ class AlleyScene:
                         self.scene[py][px] = (char, Colors.ALLEY_MID)
                     else:
                         self.scene[py][px] = (char, Colors.MATRIX_DIM)
+
+    def _draw_park(self, x: int, y: int, width: int):
+        """Draw a small park with grass, bench, lamp, bushes and flowers."""
+        if width < 20:
+            return  # Too narrow for park
+
+        # Store park position for pedestrian avoidance
+        self._park_x = x
+        self._park_y = y
+        self._park_width = width
+
+        # Draw grass base (green textured ground)
+        grass_height = 4
+        for row in range(grass_height):
+            for col in range(width):
+                px = x + col
+                py = y - row
+                if 0 <= px < self.width - 1 and 0 <= py < self.height:
+                    # Varied grass texture
+                    if (col + row) % 3 == 0:
+                        self.scene[py][px] = ('░', Colors.MATRIX_DIM)
+                    elif (col + row) % 5 == 0:
+                        self.scene[py][px] = ('▒', Colors.STATUS_OK)
+                    else:
+                        self.scene[py][px] = ('░', Colors.STATUS_OK)
+
+        # Draw a small fence at the front of the park
+        fence_y = y
+        for col in range(width):
+            px = x + col
+            if 0 <= px < self.width - 1 and 0 <= fence_y < self.height:
+                if col == 0 or col == width - 1:
+                    self.scene[fence_y][px] = ('|', Colors.ALLEY_MID)
+                elif col % 4 == 0:
+                    self.scene[fence_y][px] = ('|', Colors.ALLEY_MID)
+                else:
+                    self.scene[fence_y][px] = ('-', Colors.ALLEY_MID)
+
+        # Draw park bench (in the middle)
+        bench_x = x + width // 2 - len(self.PARK_BENCH[0]) // 2
+        bench_y = y - 3
+        for row_idx, row in enumerate(self.PARK_BENCH):
+            for col_idx, char in enumerate(row):
+                px = bench_x + col_idx
+                py = bench_y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    self.scene[py][px] = (char, Colors.ALLEY_MID)
+
+        # Draw park lamp (on the left side)
+        lamp_x = x + 3
+        lamp_y = y - len(self.PARK_LAMP)
+        for row_idx, row in enumerate(self.PARK_LAMP):
+            for col_idx, char in enumerate(row):
+                px = lamp_x + col_idx
+                py = lamp_y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    if char == 'O':
+                        # Lamp glow - warm yellow
+                        self.scene[py][px] = (char, Colors.RAT_YELLOW)
+                    elif char in '()':
+                        self.scene[py][px] = (char, Colors.ALLEY_LIGHT)
+                    else:
+                        self.scene[py][px] = (char, Colors.ALLEY_MID)
+
+        # Draw bushes (on either side)
+        bush1_x = x + 1
+        bush2_x = x + width - len(self.SMALL_BUSH[0]) - 1
+        bush_y = y - len(self.SMALL_BUSH)
+        for bush_x in [bush1_x, bush2_x]:
+            for row_idx, row in enumerate(self.SMALL_BUSH):
+                for col_idx, char in enumerate(row):
+                    px = bush_x + col_idx
+                    py = bush_y + row_idx
+                    if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                        self.scene[py][px] = (char, Colors.MATRIX_DIM)
+
+        # Draw flower bed (in front of bench)
+        flower_x = x + width // 2 - len(self.FLOWER_BED[0]) // 2
+        flower_y = y - 1
+        for row_idx, row in enumerate(self.FLOWER_BED):
+            for col_idx, char in enumerate(row):
+                px = flower_x + col_idx
+                py = flower_y + row_idx
+                if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
+                    if char == '*':
+                        # Flowers - random colors (red, yellow, pink)
+                        colors = [Colors.STATUS_ERROR, Colors.RAT_YELLOW, Colors.SHADOW_RED]
+                        self.scene[py][px] = (char, random.choice(colors))
+                    elif char == '.':
+                        self.scene[py][px] = (char, Colors.STATUS_OK)  # Stems
+                    else:
+                        self.scene[py][px] = (char, Colors.MATRIX_DIM)  # Soil
 
     def _draw_cafe(self, x: int, y: int):
         """Draw a well-lit cafe storefront filled with warm color."""
@@ -5825,14 +5960,14 @@ class AlleyScene:
 
         # Spawn new pedestrians frequently (more pedestrians now)
         self._pedestrian_spawn_timer += 1
-        spawn_interval = random.randint(5, 15)  # Spawn faster for more people
+        spawn_interval = random.randint(3, 10)  # Spawn faster for more people
         if self._pedestrian_spawn_timer >= spawn_interval:
             if woman_red_active:
-                max_peds = 3  # Very few during Matrix scene
+                max_peds = 6  # Few during Matrix scene
             elif meteor_active:
-                max_peds = 6  # Fewer during meteor (they're running away)
+                max_peds = 12  # Fewer during meteor (they're running away)
             else:
-                max_peds = 25  # Increased from 18 to 25 pedestrians
+                max_peds = 50  # Doubled from 25 to 50 pedestrians
             if len(self._pedestrians) < max_peds:
                 self._spawn_pedestrian()
             self._pedestrian_spawn_timer = 0
