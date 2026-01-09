@@ -36,6 +36,7 @@ import socket
 import sys
 import threading
 import time
+from collections import deque
 
 # Handle curses import for Windows compatibility
 # Defer error to runtime to allow PyInstaller to analyze the module
@@ -6151,6 +6152,9 @@ class AlleyScene:
 
         self._pedestrians = remaining
         self._knocked_out_peds.extend(knocked_out)
+        # Limit knocked out peds to prevent memory growth (ambulance cleans up normally)
+        if len(self._knocked_out_peds) > 10:
+            self._knocked_out_peds = self._knocked_out_peds[-10:]
 
     def _update_knocked_out_and_ambulance(self):
         """Update knocked out pedestrians and ambulance revival system."""
@@ -8892,6 +8896,9 @@ class DashboardClient:
         """Add a debug message to the log buffer."""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
         self._connection_debug_log.append(f"[{timestamp}] {message}")
+        # Limit debug log buffer to prevent memory growth (flushed to file periodically)
+        if len(self._connection_debug_log) > 500:
+            self._connection_debug_log = self._connection_debug_log[-500:]
 
     def _flush_debug_log(self):
         """Write all buffered debug messages to log file."""
@@ -9775,14 +9782,14 @@ class Dashboard:
         self._audio_muted = False  # Audio mute toggle state
         self._tunnel_enabled = True  # 3D tunnel backdrop toggle state - on by default
 
-        # CLI mode state
-        self._cli_history: List[str] = []
+        # CLI mode state (bounded to prevent memory leaks)
+        self._cli_history: deque = deque(maxlen=100)  # Command history limited to 100 entries
         self._cli_history_index = 0
-        self._cli_results: List[str] = []
+        self._cli_results: List[str] = []  # Results display (trimmed on extend)
         self._cli_results_scroll = 0
         self._cli_last_activity = 0.0  # Last activity timestamp
         self._cli_timeout = 300.0  # 5 minutes inactivity timeout
-        self._cli_chat_history: List[Dict[str, str]] = []  # Ollama chat history
+        self._cli_chat_history: deque = deque(maxlen=50)  # Ollama chat history limited to 50 exchanges
 
         # Ollama client for CLI chat
         self._ollama_client = None
@@ -11988,6 +11995,9 @@ Provide a clear, actionable analysis."""
                         # Send to Ollama
                         response_lines = self._send_to_ollama(text)
                         self._cli_results.extend(response_lines)
+                        # Trim results to prevent memory growth (keep last 1000 lines)
+                        if len(self._cli_results) > 1000:
+                            self._cli_results = self._cli_results[-1000:]
 
                     cmd_text = ""
                     self._cli_results_scroll = max(0, len(self._cli_results) - (self.height - 6))
