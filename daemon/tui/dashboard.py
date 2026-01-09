@@ -4638,10 +4638,10 @@ class AlleyScene:
         self._draw_crosswalk(self._crosswalk_x, curb_y, street_y)
 
         # Draw small park between vanishing road and right building
-        park_left = self._crosswalk_x + self._crosswalk_width + 5  # After crosswalk
-        park_right = self._building2_x - 5 if self._building2_x > 0 else self.width - 20
+        park_left = self._crosswalk_x + self._crosswalk_width + 2  # After crosswalk (reduced gap)
+        park_right = self._building2_x - 2 if self._building2_x > 0 else self.width - 15
         park_width = park_right - park_left
-        if park_width >= 20:  # Only draw if enough space
+        if park_width >= 15:  # Reduced minimum from 20 to 15
             self._draw_park(park_left, curb_y, park_width)
 
         # Draw street sign near crosswalk (shifted 12 chars right)
@@ -5047,7 +5047,7 @@ class AlleyScene:
 
     def _draw_park(self, x: int, y: int, width: int):
         """Draw a small park with grass, bench, lamp, bushes and flowers."""
-        if width < 20:
+        if width < 15:
             return  # Too narrow for park
 
         # Store park position for pedestrian avoidance
@@ -5603,7 +5603,7 @@ class AlleyScene:
                 self._update_christmas_lights()
             if self._halloween_mode:
                 self._update_halloween()
-            if hasattr(self, '_fireworks_mode') and self._fireworks_mode:
+            if self._july4th_mode:
                 self._update_fireworks()
 
         # Wrap frame counter to prevent overflow
