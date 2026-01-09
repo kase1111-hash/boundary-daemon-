@@ -456,7 +456,9 @@ python -m PyInstaller ^
     --hidden-import=pyttsx3.drivers.sapi5 ^
     --hidden-import=pyttsx3.drivers.nsss ^
     --hidden-import=pyttsx3.drivers.espeak ^
+    --hidden-import=yaml ^
     --collect-submodules=pyttsx3 ^
+    --collect-submodules=yaml ^
     --collect-submodules=nacl ^
     --collect-submodules=cffi ^
     --collect-submodules=cryptography ^

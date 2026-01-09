@@ -224,17 +224,25 @@ class SpriteLibrary:
 class ArtEditor:
     """Main ASCII art editor application."""
 
-    # Color definitions (matching dashboard.py Colors class)
-    COLORS = [
-        ("Default", curses.COLOR_WHITE, curses.COLOR_BLACK),
-        ("Red", curses.COLOR_RED, curses.COLOR_BLACK),
-        ("Green", curses.COLOR_GREEN, curses.COLOR_BLACK),
-        ("Yellow", curses.COLOR_YELLOW, curses.COLOR_BLACK),
-        ("Blue", curses.COLOR_BLUE, curses.COLOR_BLACK),
-        ("Magenta", curses.COLOR_MAGENTA, curses.COLOR_BLACK),
-        ("Cyan", curses.COLOR_CYAN, curses.COLOR_BLACK),
-        ("White Bold", curses.COLOR_WHITE, curses.COLOR_BLACK),
-    ]
+    # Color definitions - initialized lazily to avoid accessing curses at class level
+    # when curses is not available (Windows without windows-curses)
+    COLORS = None
+
+    @classmethod
+    def _get_colors(cls):
+        """Get color definitions, initializing lazily if needed."""
+        if cls.COLORS is None and curses is not None:
+            cls.COLORS = [
+                ("Default", curses.COLOR_WHITE, curses.COLOR_BLACK),
+                ("Red", curses.COLOR_RED, curses.COLOR_BLACK),
+                ("Green", curses.COLOR_GREEN, curses.COLOR_BLACK),
+                ("Yellow", curses.COLOR_YELLOW, curses.COLOR_BLACK),
+                ("Blue", curses.COLOR_BLUE, curses.COLOR_BLACK),
+                ("Magenta", curses.COLOR_MAGENTA, curses.COLOR_BLACK),
+                ("Cyan", curses.COLOR_CYAN, curses.COLOR_BLACK),
+                ("White Bold", curses.COLOR_WHITE, curses.COLOR_BLACK),
+            ]
+        return cls.COLORS or []
 
     def __init__(self, initial_width: int = 30, initial_height: int = 10,
                  sprite_name: str = "NEW_SPRITE"):
@@ -264,7 +272,7 @@ class ArtEditor:
         curses.start_color()
         curses.use_default_colors()
 
-        for i, (name, fg, bg) in enumerate(self.COLORS):
+        for i, (name, fg, bg) in enumerate(self._get_colors()):
             try:
                 curses.init_pair(i + 1, fg, bg)
             except curses.error:
@@ -354,7 +362,7 @@ class ArtEditor:
 
         # Header
         header = f" ART EDITOR - {self.canvas.name} ({self.canvas.width}x{self.canvas.height}) "
-        header += f"| Color: {self.COLORS[self.current_color][0]} "
+        header += f"| Color: {self._get_colors()[self.current_color][0]} "
         header += f"| Mode: {self.drawing_mode.upper()} "
         header = header.ljust(width - 1)
 
@@ -433,7 +441,7 @@ class ArtEditor:
         if palette_y < height - 1:
             try:
                 self.screen.addstr(palette_y, self.canvas_offset_x, "Colors: ")
-                for i, (name, _, _) in enumerate(self.COLORS):
+                for i, (name, _, _) in enumerate(self._get_colors()):
                     marker = "█" if i == self.current_color else "▪"
                     attr = curses.color_pair(i + 1)
                     if i == self.current_color:
@@ -632,8 +640,8 @@ class ArtEditor:
 
         # Tab - cycle colors
         elif key == ord('\t'):
-            self.current_color = (self.current_color + 1) % len(self.COLORS)
-            self.show_message(f"Color: {self.COLORS[self.current_color][0]}")
+            self.current_color = (self.current_color + 1) % len(self._get_colors())
+            self.show_message(f"Color: {self._get_colors()[self.current_color][0]}")
 
         # Backspace
         elif key in (curses.KEY_BACKSPACE, 127, 8):
