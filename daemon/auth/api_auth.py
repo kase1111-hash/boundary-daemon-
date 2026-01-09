@@ -436,8 +436,8 @@ class TokenManager:
             # Set permissions before rename
             os.chmod(temp_file, 0o600)
 
-            # Atomic rename
-            temp_file.rename(self.token_file)
+            # Atomic replace (works on Windows even if target exists)
+            temp_file.replace(self.token_file)
 
         except (IOError, OSError, PermissionError) as e:
             # File system errors - permission denied, disk full, etc.
