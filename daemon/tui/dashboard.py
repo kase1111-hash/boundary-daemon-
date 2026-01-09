@@ -5598,6 +5598,9 @@ class AlleyScene:
             # Randomly choose car type: approaching (from distance) or departing (from behind camera)
             car_type = random.choice(['approaching', 'departing'])
 
+            # Randomly decide if this closeup car is a taxi (25% chance)
+            is_taxi = random.random() < 0.25
+
             if car_type == 'approaching':
                 # Approaching: starts small/far, grows big, then disappears behind camera
                 self._closeup_car = {
@@ -5607,6 +5610,7 @@ class AlleyScene:
                     'type': 'approaching',
                     'phase': 0,    # 0=growing, 1=passing behind camera
                     'scale_speed': 0.12,
+                    'is_taxi': is_taxi,
                 }
             else:
                 # Departing: starts big (just passed camera), shrinks as it drives away
@@ -5617,6 +5621,7 @@ class AlleyScene:
                     'type': 'departing',
                     'phase': 0,    # 0=shrinking away
                     'scale_speed': 0.10,
+                    'is_taxi': is_taxi,
                 }
 
         # Update close-up car
@@ -7433,64 +7438,121 @@ class AlleyScene:
         x = int(car['x'])  # Position calculated in _update_closeup_car
         scale = car['scale']
         direction = car['direction']
+        is_taxi = car.get('is_taxi', False)
         # Calculate vertical offset based on scale (moves up as car shrinks)
         # At scale 3.0 (largest) = 0 offset, at scale 0.8 (smallest) = moves up
         scale_progress = (3.0 - scale) / 2.2  # 0 to 1 as car shrinks
         y_offset = int(scale_progress * (self.height // 5))  # Move up 1/5 of screen
 
-        # Different car sprites based on scale (biggest to smallest)
+        # Different car/taxi sprites based on scale (biggest to smallest)
         if scale >= 2.5:
             # Huge car (just passed camera)
-            if direction == 1:
-                sprite = [
-                    "  .============.",
-                    " /              \\",
-                    "|  [O]      [O]  |",
-                    "|________________|",
-                    "  (__)       (__)",
-                ]
+            if is_taxi:
+                if direction == 1:
+                    sprite = [
+                        "     _TAXI_       ",
+                        "  .============.",
+                        " /              \\",
+                        "|  [O]      [O]  |",
+                        "|________________|",
+                        "  (__)       (__)",
+                    ]
+                else:
+                    sprite = [
+                        "      _TAXI_      ",
+                        ".============.  ",
+                        "/              \\",
+                        "|  [O]      [O]  |",
+                        "|________________|",
+                        "  (__)       (__) ",
+                    ]
             else:
-                sprite = [
-                    ".============.  ",
-                    "/              \\",
-                    "|  [O]      [O]  |",
-                    "|________________|",
-                    "  (__)       (__) ",
-                ]
+                if direction == 1:
+                    sprite = [
+                        "  .============.",
+                        " /              \\",
+                        "|  [O]      [O]  |",
+                        "|________________|",
+                        "  (__)       (__)",
+                    ]
+                else:
+                    sprite = [
+                        ".============.  ",
+                        "/              \\",
+                        "|  [O]      [O]  |",
+                        "|________________|",
+                        "  (__)       (__) ",
+                    ]
         elif scale >= 1.8:
             # Large car
-            if direction == 1:
-                sprite = [
-                    " .========.",
-                    "|  [O]  [O] |",
-                    "|__________|",
-                    " (__)  (__)",
-                ]
+            if is_taxi:
+                if direction == 1:
+                    sprite = [
+                        "   _TAXI_   ",
+                        " .========.",
+                        "|  [O]  [O] |",
+                        "|__________|",
+                        " (__)  (__)",
+                    ]
+                else:
+                    sprite = [
+                        "   _TAXI_   ",
+                        ".========. ",
+                        "| [O]  [O] |",
+                        "|__________|",
+                        "(__)  (__) ",
+                    ]
             else:
-                sprite = [
-                    ".========. ",
-                    "| [O]  [O] |",
-                    "|__________|",
-                    "(__)  (__) ",
-                ]
+                if direction == 1:
+                    sprite = [
+                        " .========.",
+                        "|  [O]  [O] |",
+                        "|__________|",
+                        " (__)  (__)",
+                    ]
+                else:
+                    sprite = [
+                        ".========. ",
+                        "| [O]  [O] |",
+                        "|__________|",
+                        "(__)  (__) ",
+                    ]
         elif scale >= 1.3:
             # Medium car (normal-ish)
-            if direction == 1:
-                sprite = [
-                    " .=====.",
-                    "| O  O |",
-                    "|______|",
-                    " ()  ()",
-                ]
+            if is_taxi:
+                if direction == 1:
+                    sprite = [
+                        " _TAXI_",
+                        " .=====.",
+                        "| O  O |",
+                        "|______|",
+                        " ()  ()",
+                    ]
+                else:
+                    sprite = [
+                        "_TAXI_ ",
+                        ".=====. ",
+                        "| O  O |",
+                        "|______|",
+                        "()  () ",
+                    ]
             else:
-                sprite = [
-                    ".=====. ",
-                    "| O  O |",
-                    "|______|",
-                    "()  () ",
-                ]
+                if direction == 1:
+                    sprite = [
+                        " .=====.",
+                        "| O  O |",
+                        "|______|",
+                        " ()  ()",
+                    ]
+                else:
+                    sprite = [
+                        ".=====. ",
+                        "| O  O |",
+                        "|______|",
+                        "()  () ",
+                    ]
         else:
-            # Small car (far away)
+            # Small car (far away) - no TAXI text visible at this distance
             if direction == 1:
                 sprite = [
                     " .==.",
@@ -7506,6 +7568,9 @@ class AlleyScene:
         street_y = self.height - 3 - y_offset
         sprite_height = len(sprite)
 
+        # Use yellow for taxis, white for regular cars
+        car_color = Colors.RAT_YELLOW if is_taxi else Colors.ALLEY_LIGHT
+
         # Render car on top of vanishing street (street is background)
         for row_idx, row in enumerate(sprite):
             for col_idx, char in enumerate(row):
@@ -7514,8 +7579,7 @@ class AlleyScene:
 
                 if 0 <= px < self.width - 1 and 0 <= py < self.height and char != ' ':
                     try:
-                        # Close-up car in bright white
-                        attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                        attr = curses.color_pair(car_color) | curses.A_BOLD
                         screen.attron(attr)
                         screen.addstr(py, px, char)
                         screen.attroff(attr)
@@ -9486,7 +9550,7 @@ class Dashboard:
         self._current_weather: WeatherMode = WeatherMode.MATRIX
 
         # Framerate options (for matrix mode)
-        self._framerate_options = [100, 50, 25, 15]  # ms
+        self._framerate_options = [100, 50, 25, 15, 10]  # ms
         self._framerate_index = 1  # Start at 50ms
         self._qte_enabled = False  # QTE (meteor game) toggle state - off by default
         self._qte_pending_activation = False  # Waiting for delayed QTE activation
