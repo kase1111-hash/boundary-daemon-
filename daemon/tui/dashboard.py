@@ -9775,6 +9775,22 @@ class DashboardClient:
             return response.get('events', [])
         return []
 
+    def toggle_memory_debug(self) -> Tuple[bool, str]:
+        """Toggle memory debug mode (tracemalloc) for leak detection.
+
+        Returns:
+            (success, message) - Whether toggle succeeded and status message
+        """
+        if not self._connected:
+            return False, "Daemon not connected"
+
+        response = self._send_request('toggle_memory_debug')
+        if response.get('success'):
+            enabled = response.get('debug_enabled', False)
+            status = "enabled" if enabled else "disabled"
+            return True, f"Memory debug mode {status}"
+        return False, response.get('error', 'Failed to toggle memory debug')
+
 
 class Dashboard:
     """
@@ -9839,6 +9855,7 @@ class Dashboard:
         self._qte_activation_time = 0.0  # When to activate QTE
         self._audio_muted = False  # Audio mute toggle state
         self._tunnel_enabled = True  # 3D tunnel backdrop toggle state - on by default
+        self._memory_debug_enabled = False  # Memory debug mode (tracemalloc) for leak tracking
 
         # TTS Engine for sound effects and LLM response speech
         self._tts_manager = None
@@ -10515,6 +10532,11 @@ class Dashboard:
             if self.matrix_mode and self.alley_scene:
                 muted = self.alley_scene.toggle_mute()
                 self._audio_muted = muted  # Store for header display
+        elif key == ord('d') or key == ord('D'):
+            # Toggle memory debug mode (tracemalloc) for leak tracking
+            success, message = self.client.toggle_memory_debug()
+            if success:
+                self._memory_debug_enabled = not self._memory_debug_enabled
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -10582,6 +10604,8 @@ class Dashboard:
                 header += " [QTE OFF]"
             if self._audio_muted:
                 header += " [MUTED]"
+            if self._memory_debug_enabled:
+                header += " [DEBUG]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "

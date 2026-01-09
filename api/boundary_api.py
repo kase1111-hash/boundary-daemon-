@@ -428,6 +428,9 @@ class BoundaryAPIServer:
         elif command == 'get_memory_stats':
             return self._handle_get_memory_stats()
 
+        elif command == 'toggle_memory_debug':
+            return self._handle_toggle_memory_debug()
+
         elif command == 'get_resource_stats':
             return self._handle_get_resource_stats()
 
@@ -1083,6 +1086,42 @@ class BoundaryAPIServer:
             }
         except (AttributeError, RuntimeError) as e:
             # Memory monitor not available or failed to get stats
+            return {'success': False, 'error': str(e)}
+
+    def _handle_toggle_memory_debug(self) -> Dict[str, Any]:
+        """
+        Toggle memory debug mode (tracemalloc) for leak detection.
+
+        When enabled, tracks allocation sites to help identify memory leak sources.
+        Returns the new debug mode state.
+        """
+        try:
+            if not hasattr(self.daemon, 'memory_monitor') or not self.daemon.memory_monitor:
+                return {'success': False, 'error': 'Memory monitor not available'}
+
+            if not getattr(self.daemon, 'memory_monitor_enabled', False):
+                return {'success': False, 'error': 'Memory monitor not enabled'}
+
+            # Toggle debug mode
+            monitor = self.daemon.memory_monitor
+            if hasattr(monitor, '_debugger') and monitor._debugger:
+                if monitor._debugger.is_enabled:
+                    monitor.disable_debug_mode()
+                    debug_enabled = False
+                else:
+                    monitor.enable_debug_mode()
+                    debug_enabled = True
+            else:
+                # Try to enable debug mode
+                monitor.enable_debug_mode()
+                debug_enabled = True
+
+            return {
+                'success': True,
+                'debug_enabled': debug_enabled,
+                'message': f"Memory debug mode {'enabled' if debug_enabled else 'disabled'}"
+            }
+        except (AttributeError, RuntimeError) as e:
             return {'success': False, 'error': str(e)}
 
     def _handle_get_resource_stats(self) -> Dict[str, Any]:
