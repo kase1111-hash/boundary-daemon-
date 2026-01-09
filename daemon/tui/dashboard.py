@@ -1414,13 +1414,13 @@ class AlleyScene:
         "    \\___|_|___\\/     ",
     ]
 
-    # Turtle head animation frames (peeks out from shell) - each frame is [head_top, head_mid, neck]
+    # Turtle head animation frames (peeks out from shell) - each frame is [head_top, head_mid, chin, neck]
     # Proper head shape with outline connecting to neck
     TURTLE_HEAD_FRAMES = [
-        [" .--.  ", "( o o )", "  )-(  "],   # Normal eyes
-        [" .--.  ", "( - - )", "  )-(  "],   # Blink
-        [" .--.  ", "( o ~ )", "  )-(  "],   # Right wink
-        [" .--.  ", "( ^ ^ )", "  )-(  "],   # Happy
+        [" .--.  ", "( o o )", "  )-(  ", "   ||  "],   # Normal eyes
+        [" .--.  ", "( - - )", "  )-(  ", "   ||  "],   # Blink
+        [" .--.  ", "( o ~ )", "  )-(  ", "   ||  "],   # Right wink
+        [" .--.  ", "( ^ ^ )", "  )-(  ", "   ||  "],   # Happy
     ]
 
     CAFE = [
@@ -7492,7 +7492,15 @@ class AlleyScene:
         min_car_y = self.height // 5
 
         for car in self._cars:
-            x = int(car['x'])
+            # Apply lane offset based on direction:
+            # Cars going left (direction==-1, "down screen"/far lane) offset 8 chars left
+            # Cars going right (direction==1, "up screen"/near lane) offset 2 chars left
+            direction = car.get('direction', 1)
+            if direction == -1:
+                lane_offset = -8  # Far lane - 8 chars to the left
+            else:
+                lane_offset = -2  # Near lane - 2 chars to the left
+            x = int(car['x']) + lane_offset
             sprite = car['sprite']
             sprite_height = len(sprite)
             body_color = car.get('color', Colors.ALLEY_LIGHT)
@@ -8131,11 +8139,12 @@ class AlleyScene:
         else:  # Left side
             turtle_x = self.cafe_x - 6  # Left edge of shell
 
-        # Get the current turtle head frame (now a list: [head_top, head_mid, neck])
+        # Get the current turtle head frame (now a list: [head_top, head_mid, chin, neck])
         frame = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
         head_top = frame[0]
         head_mid = frame[1] if len(frame) > 1 else ""
-        neck = frame[2] if len(frame) > 2 else ""
+        chin = frame[2] if len(frame) > 2 else ""
+        neck = frame[3] if len(frame) > 3 else ""
 
         if not (0 <= turtle_x < self.width - len(head_top) and 0 <= turtle_y < self.height):
             return
@@ -8149,9 +8158,12 @@ class AlleyScene:
             # Draw head middle (eyes)
             if head_mid and turtle_y + 1 < self.height:
                 screen.addstr(turtle_y + 1, turtle_x, head_mid)
+            # Draw chin
+            if chin and turtle_y + 2 < self.height:
+                screen.addstr(turtle_y + 2, turtle_x, chin)
             # Draw neck connecting to shell
-            if neck and turtle_y + 2 < self.height:
-                screen.addstr(turtle_y + 2, turtle_x, neck)
+            if neck and turtle_y + 3 < self.height:
+                screen.addstr(turtle_y + 3, turtle_x, neck)
             screen.attroff(attr)
         except curses.error:
             pass
@@ -10552,6 +10564,15 @@ class Dashboard:
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
+        # SIEM connection status indicator
+        siem_connected = self.siem_status.get('connected', False) if self.siem_status else False
+        ingestion_connected = bool(self.ingestion_status.get('active_clients', 0)) if self.ingestion_status else False
+        if siem_connected and ingestion_connected:
+            header += "[SIEM: OK]  │  "
+        elif siem_connected or ingestion_connected:
+            header += "[SIEM: PARTIAL]  │  "
+        else:
+            header += "[SIEM: OFF]  │  "
         header += f"Uptime: {self._format_duration(self.status.get('uptime', 0))}"
         if self.event_filter:
             header += f"  │  Filter: {self.event_filter}"
