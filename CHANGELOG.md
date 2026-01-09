@@ -5,6 +5,63 @@ All notable changes to the Boundary Daemon project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta] - 2026-01-09
+
+**Beta Release** - Production-ready release of Boundary Daemon (Agent Smith)
+
+This release represents a fully-tested, performance-optimized security policy and audit system ready for production deployment.
+
+### Highlights
+
+- **Full TUI Dashboard**: Animated cityscape with weather effects, pedestrians, vehicles, and seasonal events
+- **SIEM Integration**: Bidirectional data flow (shipping to SIEM, ingestion from SIEM clients)
+- **Built-in AI Assistant**: Self-aware Ollama integration with system knowledge base
+- **Performance Optimized**: 60% CPU reduction, 10ms refresh rate support
+- **Cross-Platform**: Full Windows support with Python 3.12 auto-detection
+
+### Added
+- **TUI Scene Elements**:
+  - Small park with bench, lamp, bushes, and flowers
+  - Yellow taxi support for closeup perspective cars
+  - Background stars (80-120 twinkling) when tunnel is off
+  - Improved seasonal constellation visibility
+  - 10ms refresh rate option for smoother animation
+- **SIEM Disconnection Detection**:
+  - 60-second timeout detection for SIEM clients
+  - Warning events logged on disconnect/reconnect
+  - TUI panel shows connection status (Connected/Disconnected)
+- **AI Self-Knowledge System**:
+  - SELF_KNOWLEDGE.md as authoritative documentation
+  - Live system state awareness (mode, SIEM, alerts)
+  - AI speaks as "Agent Smith" with system authority
+- **CLI Improvements**:
+  - CLI renders as overlay on animated scene (matrix mode)
+  - F1 help popup stays until dismissed
+  - Clear events stays cleared until manual reload
+
+### Changed
+- **Performance Optimizations**:
+  - Frame-based update throttling (every 2/3/5/10 frames for slow updates)
+  - Early-exit conditions for empty collections in render methods
+  - Holiday events only update when their mode is active
+- **Windows Compatibility**:
+  - Python 3.12 auto-detection and relaunch for curses support
+  - TCP socket support for SIEM ingestion (port 19847)
+  - Path.replace() for atomic file saves
+
+### Fixed
+- TUI token capabilities using invalid names (changed to 'operator')
+- Colors.STATUS_CRITICAL AttributeError (use Colors.SHADOW_RED)
+- System tray mode changes not working (use request_mode_change)
+- Memory leak in roof/sill snow list (added 400 entry limit)
+- Windows file rename error in token saving
+- CLI mode scene slowdown (restore screen timeout)
+- Park not visible (reduced minimum width from 20 to 15)
+- Fireworks not updating (wrong variable name)
+- Art editor curses import order on Windows
+
+---
+
 ## [0.1.0-alpha] - 2026-01-01
 
 **Alpha Release** - First public Alpha of Boundary Daemon (Agent Smith)

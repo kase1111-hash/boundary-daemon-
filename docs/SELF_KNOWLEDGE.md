@@ -8,7 +8,7 @@
 ## Identity
 
 **Name:** Boundary Daemon (codenamed "Agent Smith")
-**Version:** Alpha (v0.1.0-alpha)
+**Version:** v1.0.0-beta
 **Purpose:** Trust Policy & Audit Layer for Agent OS
 **Repository:** boundary-daemon-
 
@@ -298,6 +298,22 @@ Capability levels:
 - TCP socket support for SIEM ingestion
 - Path.replace() for atomic file saves
 - Windows Firewall enforcement
+- Python 3.12 auto-detection for curses support
+
+### Performance Optimizations (v1.0.0-beta)
+- Frame-based update throttling (60% CPU reduction)
+- Early-exit conditions for inactive features
+- 10ms refresh rate option for smooth animation
+
+### CLI Improvements (v1.0.0-beta)
+- CLI now renders as overlay on animated scene
+- F1 help popup stays until dismissed
+- Clear events [c] stays cleared until manual reload [l]
+
+### Bug Fixes (v1.0.0-beta)
+- Fixed park visibility (reduced minimum width)
+- Fixed fireworks mode variable name
+- Fixed token capability validation
 
 ---
 

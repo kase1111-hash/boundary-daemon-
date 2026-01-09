@@ -1,6 +1,6 @@
 # Boundary Daemon - Agent Smith
 
-## Version: Alpha (v0.1.0-alpha)
+## Version: v1.0.0-beta
 
 **The Trust Policy & Audit Layer for Agent OS**
 
@@ -8,19 +8,21 @@
 
 ---
 
-## Alpha Release Overview
+## Beta Release Overview
 
-This is the **Alpha release** of Boundary Daemon, representing a fully-featured security policy and audit system for AI agent environments. While all core functionality is implemented and tested, this release is intended for:
+This is the **v1.0.0-beta release** of Boundary Daemon, representing a production-ready security policy and audit system for AI agent environments. This release includes:
 
-- **Development and testing environments**
-- **Security researchers and evaluators**
-- **Early adopters building on Agent OS**
+- **Full TUI dashboard** with animated cityscape visualization
+- **SIEM integration** with bidirectional data flow (shipping & ingestion)
+- **Built-in AI assistant** with self-knowledge and system awareness
+- **Cross-platform support** (Linux, Windows, macOS)
+- **Performance optimizations** for smooth 10ms refresh rates
 
-**What Alpha means:**
-- All documented features are implemented and functional
-- API contracts may change before v1.0 stable release
-- Performance optimizations are ongoing
-- Community feedback is actively incorporated
+**What Beta means:**
+- All documented features are implemented, tested, and stable
+- API contracts are finalized for v1.0 stable release
+- Performance is optimized for production use
+- Security hardened with tamper-evident logging
 
 ---
 

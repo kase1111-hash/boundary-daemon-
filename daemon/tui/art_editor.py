@@ -30,23 +30,46 @@ Keyboard Controls:
 """
 
 import argparse
-import curses
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
-# Handle curses import for Windows
+# Handle curses import for Windows (windows-curses not available for Python 3.14+)
+curses = None
+CURSES_AVAILABLE = False
 try:
     import curses
     CURSES_AVAILABLE = True
 except ImportError:
-    curses = None
-    CURSES_AVAILABLE = False
+    # Try to find Python 3.12 on Windows for curses support
+    pass
+
+
+def _try_relaunch_with_py312() -> bool:
+    """Try to relaunch with Python 3.12 if available (for Windows curses support)."""
+    if sys.platform != 'win32':
+        return False
+
+    try:
+        # Check if py launcher can find Python 3.12
+        result = subprocess.run(
+            ['py', '-3.12', '--version'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            # Relaunch with Python 3.12
+            print(f"Relaunching with Python 3.12 for curses support...")
+            subprocess.run(['py', '-3.12'] + sys.argv)
+            return True
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return False
 
 
 @dataclass
@@ -733,9 +756,20 @@ def main():
         return
 
     if not CURSES_AVAILABLE:
-        print("Error: curses library not available.")
         if sys.platform == 'win32':
-            print("Try: pip install windows-curses")
+            # Try to relaunch with Python 3.12
+            if _try_relaunch_with_py312():
+                return  # Successfully relaunched
+            print("Error: curses library not available on Windows.")
+            print("")
+            print("windows-curses is not available for Python 3.14+.")
+            print("")
+            print("To use the Art Editor, install Python 3.12:")
+            print("  1. Download from https://www.python.org/downloads/release/python-3120/")
+            print("  2. Run: py -3.12 -m pip install windows-curses")
+            print("  3. Re-run this command (it will auto-detect Python 3.12)")
+        else:
+            print("Error: curses library not available.")
         sys.exit(1)
 
     # Parse dimensions

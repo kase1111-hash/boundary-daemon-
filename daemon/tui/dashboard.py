@@ -10307,7 +10307,9 @@ class Dashboard:
 
         try:
             self.status = self.client.get_status()
-            self.events = self.client.get_events(20)
+            # Only refresh events if not manually cleared
+            if not getattr(self, '_events_cleared', False):
+                self.events = self.client.get_events(20)
             self.alerts = self.client.get_alerts()
             self.sandboxes = self.client.get_sandboxes()
             self.siem_status, self.ingestion_status = self.client.get_siem_status()
@@ -10329,12 +10331,14 @@ class Dashboard:
         elif key == ord('e') or key == ord('E'):
             self._export_events()
         elif key == ord('c') or key == ord('C'):
-            # Clear events display
+            # Clear events display (stays cleared until manual reload)
             self.events = []
             self.scroll_offset = 0
+            self._events_cleared = True  # Prevent auto-refresh from refetching
         elif key == ord('l') or key == ord('L'):
-            # Recall/reload events from daemon
+            # Recall/reload events from daemon (also resets cleared flag)
             try:
+                self._events_cleared = False  # Allow auto-refresh again
                 self.events = self.client.get_events(50)  # Get more events
                 self.scroll_offset = 0
             except Exception:
@@ -11862,21 +11866,59 @@ Provide a clear, actionable analysis."""
                 self._cli_chat_history = []
                 break
 
-            self.screen.clear()
+            # Render the scene as background (if in matrix mode)
+            if self.matrix_mode:
+                # Update scene animations
+                if self.matrix_rain:
+                    self.matrix_rain.update()
+                if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                    self.tunnel_backdrop.update()
+                if self.alley_scene:
+                    self.alley_scene.update()
+
+                # Render scene
+                self.screen.clear()
+                if hasattr(self, 'tunnel_backdrop') and self.tunnel_backdrop:
+                    self.tunnel_backdrop.render(self.screen)
+                if self.alley_scene:
+                    self.alley_scene.render(self.screen)
+                if self.matrix_rain:
+                    self.matrix_rain.render(self.screen)
+            else:
+                self.screen.clear()
+
+            # Draw semi-transparent CLI overlay panel
+            cli_panel_height = min(self.height - 2, 20)  # Max 20 rows for CLI panel
+            cli_panel_y = self.height - cli_panel_height - 2  # Position at bottom
+
+            # Draw CLI panel background (semi-transparent effect with dim chars)
+            for row in range(cli_panel_y, self.height):
+                for col in range(self.width - 1):
+                    try:
+                        self.screen.addch(row, col, ' ', curses.color_pair(Colors.MATRIX_DIM))
+                    except curses.error:
+                        pass
+
+            # Draw CLI border
+            border_attr = curses.color_pair(Colors.HEADER)
+            for col in range(self.width - 1):
+                try:
+                    self.screen.addch(cli_panel_y, col, '─', border_attr)
+                except curses.error:
+                    pass
 
             # Draw CLI header with Ollama status
-            header = "─" * (self.width - 1)
-            self._addstr(0, 0, " BOUNDARY CLI ", Colors.HEADER)
+            self._addstr(cli_panel_y, 0, " BOUNDARY CLI ", Colors.HEADER)
             ollama_indicator = f" [Ollama: {ollama_status}] "
-            self._addstr(0, 15, ollama_indicator, Colors.STATUS_OK if ollama_status == "connected" else Colors.STATUS_WARN)
-            self._addstr(0, 15 + len(ollama_indicator), header[15 + len(ollama_indicator):], Colors.MUTED)
+            self._addstr(cli_panel_y, 15, ollama_indicator, Colors.STATUS_OK if ollama_status == "connected" else Colors.STATUS_WARN)
 
-            # Draw results area (scrollable)
-            results_height = self.height - 5
+            # Draw results area (scrollable) - within the CLI panel
+            results_start_y = cli_panel_y + 1  # Start after header
+            results_height = cli_panel_height - 3  # Leave room for prompt and shortcuts
             if self._cli_results:
                 for i, line in enumerate(self._cli_results[self._cli_results_scroll:]):
-                    row = 2 + i
-                    if row >= results_height:
+                    row = results_start_y + i
+                    if i >= results_height:
                         break
                     # Color code based on content
                     if line.startswith("ERROR:") or "VIOLATION" in line or "CRITICAL" in line:
@@ -11894,18 +11936,18 @@ Provide a clear, actionable analysis."""
                     self._addstr(row, 1, line[:self.width-3], color)
 
                 # Scroll indicator
-                if len(self._cli_results) > results_height - 2:
-                    scroll_info = f"[{self._cli_results_scroll+1}-{min(self._cli_results_scroll+results_height-2, len(self._cli_results))}/{len(self._cli_results)}]"
-                    self._addstr(1, self.width - len(scroll_info) - 2, scroll_info, Colors.MUTED)
+                if len(self._cli_results) > results_height:
+                    scroll_info = f"[{self._cli_results_scroll+1}-{min(self._cli_results_scroll+results_height, len(self._cli_results))}/{len(self._cli_results)}]"
+                    self._addstr(cli_panel_y, self.width - len(scroll_info) - 2, scroll_info, Colors.MUTED)
             else:
                 # Show help if no results
                 for i, line in enumerate(cli_help):
-                    row = 2 + i
-                    if row >= results_height:
+                    row = results_start_y + i
+                    if i >= results_height:
                         break
                     self._addstr(row, 2, line, Colors.MUTED)
 
-            # Draw command line at bottom
+            # Draw command line at bottom of panel
             prompt_y = self.height - 2
             prompt_char = ">" if not cmd_text.startswith("/") else ":"
             self._addstr(prompt_y, 0, prompt_char + cmd_text + " ", Colors.HEADER)
@@ -12009,13 +12051,19 @@ Provide a clear, actionable analysis."""
             elif 32 <= key <= 126:  # Printable characters
                 cmd_text += chr(key)
 
-            # Draw help popup if active
+            # Draw help popup if active - blocks until F1/ESC/Enter pressed
             if show_help_popup:
                 self._draw_help_popup(help_popup_tool)
                 self.screen.refresh()
+                # Set blocking mode while help is shown
+                self.screen.timeout(-1)  # Block until key pressed
                 popup_key = self.screen.getch()
+                # Restore timeout for CLI
+                self.screen.timeout(1000)
                 if popup_key == 27 or popup_key == curses.KEY_F1 or popup_key == 265 or popup_key in (10, 13):
                     show_help_popup = False
+                # Reset activity timer after help popup
+                self._cli_last_activity = time.time()
                 continue
 
         curses.curs_set(0)  # Hide cursor
