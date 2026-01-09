@@ -10604,8 +10604,8 @@ class Dashboard:
                 header += " [QTE OFF]"
             if self._audio_muted:
                 header += " [MUTED]"
-            if self._memory_debug_enabled:
-                header += " [DEBUG]"
+        if self._memory_debug_enabled:
+            header += " [DEBUG]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
