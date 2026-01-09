@@ -2475,6 +2475,10 @@ class AlleyScene:
         self._star_twinkle_timer = 0
         self._star_twinkle_frame = 0
 
+        # Background stars (small twinkling dots filling the sky)
+        self._background_stars: List[Dict] = []
+        self._init_background_stars()
+
         # Scene seeding - deterministic random based on date for consistency
         # Same date = same scene layout (for screenshot validation)
         today = datetime.now()
@@ -2634,6 +2638,23 @@ class AlleyScene:
         # Winter: December-February -> Orion
         else:
             return self.CONSTELLATION_ORION
+
+    def _init_background_stars(self):
+        """Initialize background star positions for the night sky."""
+        self._background_stars = []
+        # Generate many small stars across the upper portion of screen
+        # Stars should be in the sky area (roughly upper 40% of screen)
+        sky_height = max(20, self.height // 2 - 5)
+
+        # Create 80-120 background stars with varying brightness
+        num_stars = random.randint(80, 120)
+        for _ in range(num_stars):
+            self._background_stars.append({
+                'x': random.randint(5, max(10, self.width - 10)),
+                'y': random.randint(2, sky_height),
+                'brightness': random.choice([1, 1, 1, 2]),  # Mostly dim, some bright
+                'twinkle_offset': random.randint(0, 3),  # Randomize twinkle phase
+            })
 
     def _check_security_canaries(self, daemon_client=None):
         """
@@ -3956,8 +3977,61 @@ class AlleyScene:
                         except curses.error:
                             pass
 
+    def _render_background_stars(self, screen):
+        """Render background stars filling the night sky."""
+        # Only show stars when tunnel effect is disabled
+        if getattr(self, '_tunnel_enabled', True):
+            return
+
+        # Security canary: no stars if memory monitor is down
+        if not self._security_canary.get('stars', True):
+            return
+
+        # Reinitialize if empty (e.g., after resize)
+        if not self._background_stars:
+            self._init_background_stars()
+
+        for star in self._background_stars:
+            px = star['x']
+            py = star['y']
+
+            if 0 <= px < self.width - 1 and 1 <= py < self.height // 2:
+                try:
+                    # Twinkle based on brightness and offset
+                    twinkle_phase = (self._star_twinkle_frame + star['twinkle_offset']) % 4
+
+                    if star['brightness'] == 2:
+                        # Brighter background stars
+                        if twinkle_phase == 0:
+                            char = '.'
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT)
+                        elif twinkle_phase == 1:
+                            char = '·'
+                            attr = curses.color_pair(Colors.GREY_BLOCK)
+                        else:
+                            char = '.'
+                            attr = curses.color_pair(Colors.ALLEY_MID)
+                    else:
+                        # Dim background stars
+                        if twinkle_phase % 2 == 0:
+                            char = '.'
+                            attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+                        else:
+                            char = '·'
+                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+
+                    screen.attron(attr)
+                    screen.addstr(py, px, char)
+                    screen.attroff(attr)
+                except curses.error:
+                    pass
+
     def _render_constellation(self, screen):
         """Render seasonal constellation in the sky. Tied to memory_monitor health."""
+        # Only show stars when tunnel effect is disabled
+        if getattr(self, '_tunnel_enabled', True):
+            return
+
         # Security canary: no stars if memory monitor is down
         if not self._security_canary.get('stars', True):
             return
@@ -3965,41 +4039,42 @@ class AlleyScene:
         if not self._constellation:
             return
 
-        # Position constellation in upper sky area
+        # Position constellation in upper sky area (scale down offsets for better fit)
         base_x = self._constellation_x
         base_y = self._constellation_y
 
         stars = self._constellation.get('stars', [])
         for dx, dy, brightness in stars:
-            px = base_x + dx
-            py = base_y + dy
+            # Scale down the constellation coordinates (they were 5x scaled)
+            px = base_x + (dx // 2)  # Reduce horizontal spread
+            py = base_y + (dy // 3)  # Reduce vertical spread
 
-            # Expanded sky area for larger 5x constellations
+            # Expanded sky area for constellations
             if 0 <= px < self.width - 1 and 1 <= py < self.height // 2:  # Keep in upper half
                 try:
-                    # Subtle star characters based on brightness
+                    # More visible star characters based on brightness
                     if brightness == 2:
-                        # Bright star - alternates with twinkle
+                        # Bright star - prominent with twinkle
                         if self._star_twinkle_frame == 0:
+                            char = '★'
+                            attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_BOLD
+                        elif self._star_twinkle_frame == 1:
                             char = '*'
                             attr = curses.color_pair(Colors.ALLEY_LIGHT)
-                        elif self._star_twinkle_frame == 1:
-                            char = '+'
-                            attr = curses.color_pair(Colors.GREY_BLOCK)
                         elif self._star_twinkle_frame == 2:
+                            char = '✦'
+                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_BOLD
+                        else:
                             char = '*'
                             attr = curses.color_pair(Colors.ALLEY_LIGHT) | curses.A_DIM
-                        else:
-                            char = '·'
-                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
                     else:
-                        # Dim star - more subtle, less twinkle
+                        # Dim star - still visible but subtler
                         if self._star_twinkle_frame % 2 == 0:
-                            char = '·'
-                            attr = curses.color_pair(Colors.GREY_BLOCK) | curses.A_DIM
+                            char = '*'
+                            attr = curses.color_pair(Colors.GREY_BLOCK)
                         else:
-                            char = '.'
-                            attr = curses.color_pair(Colors.ALLEY_MID) | curses.A_DIM
+                            char = '·'
+                            attr = curses.color_pair(Colors.ALLEY_MID)
 
                     screen.attron(attr)
                     screen.addstr(py, px, char)
@@ -6609,7 +6684,10 @@ class AlleyScene:
 
     def render(self, screen):
         """Render the alley scene to the screen with proper layering."""
-        # Render constellation first (furthest back, behind clouds and buildings)
+        # Render background stars first (furthest back, only when tunnel is off)
+        self._render_background_stars(screen)
+
+        # Render constellation (behind clouds and buildings, only when tunnel is off)
         self._render_constellation(screen)
 
         # Render distant clouds first (furthest back, behind everything)
@@ -10390,7 +10468,7 @@ class Dashboard:
         # Draw shortcuts at bottom of events panel (inside the box)
         shortcut_row = y + height - 2
         if self.matrix_mode:
-            shortcuts = "[:]CLI [w]Weather [m]Mode [a]Ack [e]Export [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [t]Tunnel [f]FPS [g]Game [u]Mute [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -10531,7 +10609,7 @@ class Dashboard:
         """Draw the footer bar."""
         # Add weather shortcut in matrix mode
         if self.matrix_mode:
-            shortcuts = "[:]CLI [w]Weather [t]Tunnel [m]Mode [c]Clear [l]Load [e]Export [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [t]Tunnel [f]FPS [g]Game [u]Mute [m]Mode [?]Help [q]Quit"
         else:
             shortcuts = "[m]Mode [c]Clear [l]Load [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
 
@@ -10581,7 +10659,10 @@ class Dashboard:
         if self.matrix_mode:
             help_text.insert(8, "  w    Cycle weather (Matrix/Rain/Snow/Sand/Fog)")
             help_text.insert(9, "  t    Toggle 3D tunnel sky backdrop")
-            help_text.insert(10, "")
+            help_text.insert(10, "  f    Cycle framerate (100/50/25/15/10ms)")
+            help_text.insert(11, "  g    Toggle meteor defense game (QTE)")
+            help_text.insert(12, "  u    Toggle audio mute")
+            help_text.insert(13, "")
 
         help_text.append("Press any key to close")
 
