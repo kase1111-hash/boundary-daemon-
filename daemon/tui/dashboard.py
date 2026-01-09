@@ -1414,13 +1414,13 @@ class AlleyScene:
         "    \\___|_|___\\/     ",
     ]
 
-    # Turtle head animation frames (peeks out from shell) - each frame is [head_top, head_mid, neck]
-    # Proper head shape with outline connecting to neck
+    # Turtle head animation frames (peeks out from shell) - each frame is [head_row, neck]
+    # Head with horizontal neck extending to the left, connecting to shell
     TURTLE_HEAD_FRAMES = [
-        [" .--.  ", "( o o )", "  )-(  "],   # Normal eyes
-        [" .--.  ", "( - - )", "  )-(  "],   # Blink
-        [" .--.  ", "( o ~ )", "  )-(  "],   # Right wink
-        [" .--.  ", "( ^ ^ )", "  )-(  "],   # Happy
+        ["  .--.  ", " ( o o )", "==)-(   "],   # Normal eyes - neck extends left
+        ["  .--.  ", " ( - - )", "==)-(   "],   # Blink
+        ["  .--.  ", " ( o ~ )", "==)-(   "],   # Right wink
+        ["  .--.  ", " ( ^ ^ )", "==)-(   "],   # Happy
     ]
 
     CAFE = [
@@ -7492,7 +7492,15 @@ class AlleyScene:
         min_car_y = self.height // 5
 
         for car in self._cars:
-            x = int(car['x'])
+            # Apply lane offset based on direction:
+            # Cars going left (direction==-1, "down screen"/far lane) offset 8 chars left
+            # Cars going right (direction==1, "up screen"/near lane) offset 2 chars left
+            direction = car.get('direction', 1)
+            if direction == -1:
+                lane_offset = -8  # Far lane - 8 chars to the left
+            else:
+                lane_offset = -2  # Near lane - 2 chars to the left
+            x = int(car['x']) + lane_offset
             sprite = car['sprite']
             sprite_height = len(sprite)
             body_color = car.get('color', Colors.ALLEY_LIGHT)
@@ -8131,11 +8139,11 @@ class AlleyScene:
         else:  # Left side
             turtle_x = self.cafe_x - 6  # Left edge of shell
 
-        # Get the current turtle head frame (now a list: [head_top, head_mid, neck])
+        # Get the current turtle head frame (list: [head_top, head_mid/eyes, chin_with_neck])
         frame = self.TURTLE_HEAD_FRAMES[self._turtle_frame]
         head_top = frame[0]
         head_mid = frame[1] if len(frame) > 1 else ""
-        neck = frame[2] if len(frame) > 2 else ""
+        chin_neck = frame[2] if len(frame) > 2 else ""  # Chin with horizontal neck
 
         if not (0 <= turtle_x < self.width - len(head_top) and 0 <= turtle_y < self.height):
             return
@@ -8149,9 +8157,9 @@ class AlleyScene:
             # Draw head middle (eyes)
             if head_mid and turtle_y + 1 < self.height:
                 screen.addstr(turtle_y + 1, turtle_x, head_mid)
-            # Draw neck connecting to shell
-            if neck and turtle_y + 2 < self.height:
-                screen.addstr(turtle_y + 2, turtle_x, neck)
+            # Draw chin with horizontal neck extending to left
+            if chin_neck and turtle_y + 2 < self.height:
+                screen.addstr(turtle_y + 2, turtle_x, chin_neck)
             screen.attroff(attr)
         except curses.error:
             pass
@@ -9767,6 +9775,22 @@ class DashboardClient:
             return response.get('events', [])
         return []
 
+    def toggle_memory_debug(self) -> Tuple[bool, str]:
+        """Toggle memory debug mode (tracemalloc) for leak detection.
+
+        Returns:
+            (success, message) - Whether toggle succeeded and status message
+        """
+        if not self._connected:
+            return False, "Daemon not connected"
+
+        response = self._send_request('toggle_memory_debug')
+        if response.get('success'):
+            enabled = response.get('debug_enabled', False)
+            status = "enabled" if enabled else "disabled"
+            return True, f"Memory debug mode {status}"
+        return False, response.get('error', 'Failed to toggle memory debug')
+
 
 class Dashboard:
     """
@@ -9831,6 +9855,7 @@ class Dashboard:
         self._qte_activation_time = 0.0  # When to activate QTE
         self._audio_muted = False  # Audio mute toggle state
         self._tunnel_enabled = True  # 3D tunnel backdrop toggle state - on by default
+        self._memory_debug_enabled = False  # Memory debug mode (tracemalloc) for leak tracking
 
         # TTS Engine for sound effects and LLM response speech
         self._tts_manager = None
@@ -9879,6 +9904,31 @@ class Dashboard:
         self._moon_start_time = 0.0
         self._moon_next_time = 0.0  # When to start next moon arc
         self._moon_duration = 900.0  # 15 minutes (900 seconds) to cross screen
+
+    def _speak_text(self, text: str, speed: float = 1.0, pitch: float = 0.0) -> bool:
+        """Speak text using TTS engine in background thread. Returns True if started."""
+        if self._audio_muted or not self._tts_manager:
+            return False
+
+        def _tts_worker():
+            try:
+                params = VoiceParameters(speed=speed, pitch=pitch) if VoiceParameters else None
+                request = TTSRequest(text=text, params=params) if TTSRequest and params else None
+                if request:
+                    self._tts_manager.synthesize(request)
+                    logger.debug(f"TTS spoke: {text[:50]}...")
+            except Exception as e:
+                logger.debug(f"TTS error: {e}")
+
+        try:
+            # Run TTS in background thread to avoid blocking UI
+            import threading
+            tts_thread = threading.Thread(target=_tts_worker, daemon=True)
+            tts_thread.start()
+            return True
+        except Exception as e:
+            logger.debug(f"TTS thread error: {e}")
+        return False
 
     def run(self):
         """Run the dashboard."""
@@ -10482,6 +10532,11 @@ class Dashboard:
             if self.matrix_mode and self.alley_scene:
                 muted = self.alley_scene.toggle_mute()
                 self._audio_muted = muted  # Store for header display
+        elif key == ord('d') or key == ord('D'):
+            # Toggle memory debug mode (tracemalloc) for leak tracking
+            success, message = self.client.toggle_memory_debug()
+            if success:
+                self._memory_debug_enabled = not self._memory_debug_enabled
         # QTE keys (6, 7, 8, 9, 0) for meteor game
         elif key in [ord('6'), ord('7'), ord('8'), ord('9'), ord('0')]:
             if self.matrix_mode and self.alley_scene:
@@ -10549,9 +10604,20 @@ class Dashboard:
                 header += " [QTE OFF]"
             if self._audio_muted:
                 header += " [MUTED]"
+            if self._memory_debug_enabled:
+                header += " [DEBUG]"
         header += f"  │  Mode: {self.status.get('mode', 'UNKNOWN')}  │  "
         if self.status.get('is_frozen'):
             header += "⚠ MODE FROZEN  │  "
+        # SIEM connection status indicator
+        siem_connected = self.siem_status.get('connected', False) if self.siem_status else False
+        ingestion_connected = bool(self.ingestion_status.get('active_clients', 0)) if self.ingestion_status else False
+        if siem_connected and ingestion_connected:
+            header += "[SIEM: OK]  │  "
+        elif siem_connected or ingestion_connected:
+            header += "[SIEM: PARTIAL]  │  "
+        else:
+            header += "[SIEM: OFF]  │  "
         header += f"Uptime: {self._format_duration(self.status.get('uptime', 0))}"
         if self.event_filter:
             header += f"  │  Filter: {self.event_filter}"
