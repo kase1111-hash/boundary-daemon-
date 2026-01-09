@@ -11620,7 +11620,8 @@ Your response (COMMANDS: ... or NONE):"""
             # Step 3: Generate natural language response
             # Build conversation context
             chat_context = ""
-            for entry in self._cli_chat_history[-5:]:
+            # Convert deque to list for slicing (deque doesn't support slice indexing)
+            for entry in list(self._cli_chat_history)[-5:]:
                 chat_context += f"User: {entry['user']}\nAssistant: {entry['assistant']}\n\n"
 
             # Get current system state
@@ -11673,7 +11674,8 @@ Speak with confidence about the system's capabilities - you know this system ins
                 # Store in chat history
                 self._cli_chat_history.append({'user': message, 'assistant': response})
                 if len(self._cli_chat_history) > 20:
-                    self._cli_chat_history = self._cli_chat_history[-20:]
+                    # Convert to list for slicing (deque doesn't support slice indexing)
+                    self._cli_chat_history = deque(list(self._cli_chat_history)[-20:], maxlen=50)
 
                 # Word wrap response
                 for paragraph in response.split('\n'):
