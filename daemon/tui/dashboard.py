@@ -11618,10 +11618,10 @@ Your response (COMMANDS: ... or NONE):"""
                 command_results = self._gather_command_data(commands_to_run)
 
             # Step 3: Generate natural language response
-            # Build conversation context
+            # Build conversation context (convert deque to list for slicing)
             chat_context = ""
-            # Convert deque to list for slicing (deque doesn't support slice indexing)
-            for entry in list(self._cli_chat_history)[-5:]:
+            chat_history_list = list(self._cli_chat_history)
+            for entry in chat_history_list[-5:]:
                 chat_context += f"User: {entry['user']}\nAssistant: {entry['assistant']}\n\n"
 
             # Get current system state
@@ -11671,11 +11671,8 @@ Speak with confidence about the system's capabilities - you know this system ins
             response = self._ollama_client.generate(prompt, system=system_prompt)
 
             if response:
-                # Store in chat history
+                # Store in chat history (deque auto-trims to maxlen=50)
                 self._cli_chat_history.append({'user': message, 'assistant': response})
-                if len(self._cli_chat_history) > 20:
-                    # Convert to list for slicing (deque doesn't support slice indexing)
-                    self._cli_chat_history = deque(list(self._cli_chat_history)[-20:], maxlen=50)
 
                 # Word wrap response
                 for paragraph in response.split('\n'):
