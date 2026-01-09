@@ -267,6 +267,8 @@ Capability levels:
 **Memory leak warnings**
 - Check for unbounded lists
 - Use `deque(maxlen=N)` for buffers
+- TUI bounded: CLI history (100), chat history (50), results (1000)
+- TUI bounded: knocked_out_peds (10), debug_log (500)
 
 **SIEM not showing data on Windows**
 - Use TCP mode: set `BOUNDARY_USE_TCP=true`
@@ -314,6 +316,7 @@ Capability levels:
 - Fixed park visibility (reduced minimum width)
 - Fixed fireworks mode variable name
 - Fixed token capability validation
+- Fixed TUI memory leaks (bounded CLI history, chat history, results, debug log)
 
 ---
 
