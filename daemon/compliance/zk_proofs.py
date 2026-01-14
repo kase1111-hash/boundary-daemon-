@@ -63,8 +63,7 @@ from typing import Dict, List, Optional, Tuple, Any, Callable
 import logging
 
 try:
-    from nacl.hash import sha256
-    from nacl.encoding import HexEncoder
+    from nacl.hash import sha256  # noqa: F401
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False

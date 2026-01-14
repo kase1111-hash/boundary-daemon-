@@ -80,7 +80,7 @@ def main():
 
     # Setup enhanced logging if available
     try:
-        from daemon.logging_config import setup_logging, set_verbose, set_trace
+        from daemon.logging_config import setup_logging
         setup_logging(
             verbose=args.verbose,
             trace=args.trace,

@@ -36,14 +36,7 @@ IS_WINDOWS = sys.platform == 'win32'
 
 # Import error handling utilities
 try:
-    from daemon.utils.error_handling import (
-        handle_error,
-        ErrorCategory,
-        ErrorSeverity,
-        log_auth_error,
-        log_security_error,
-        log_filesystem_error,
-    )
+    from daemon.utils.error_handling import handle_error
     ERROR_HANDLING_AVAILABLE = True
 except ImportError:
     ERROR_HANDLING_AVAILABLE = False

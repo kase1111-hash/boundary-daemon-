@@ -46,7 +46,7 @@ IS_WINDOWS = os.name == 'nt'
 if IS_WINDOWS:
     try:
         import ctypes
-        from ctypes import wintypes
+        from ctypes import wintypes  # noqa: F401
         HAS_CTYPES = True
     except ImportError:
         HAS_CTYPES = False

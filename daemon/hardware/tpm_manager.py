@@ -334,7 +334,7 @@ class TPMManager:
 
         # Try tpm2-pytss first (preferred)
         try:
-            import tpm2_pytss
+            import tpm2_pytss  # noqa: F401
             return TPMBackend.TPM2_PYTSS
         except ImportError:
             pass
@@ -522,7 +522,6 @@ class TPMManager:
         """Read PCR using tpm2-pytss"""
         try:
             from tpm2_pytss import ESAPI
-            from tpm2_pytss.constants import ESYS_TR
 
             if self._tpm_ctx is None:
                 self._tpm_ctx = ESAPI()
@@ -1155,7 +1154,6 @@ class TPMManager:
         """Seal using tpm2-pytss with AES-GCM encryption"""
         try:
             from tpm2_pytss import ESAPI
-            from tpm2_pytss.types import TPM2B_SENSITIVE_CREATE
 
             if self._tpm_ctx is None:
                 self._tpm_ctx = ESAPI()

@@ -27,7 +27,6 @@ try:
         log_security_error,
         log_auth_error,
         log_network_error,
-        ErrorCategory,
     )
     ERROR_HANDLING_AVAILABLE = True
 except ImportError:

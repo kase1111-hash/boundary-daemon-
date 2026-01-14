@@ -64,10 +64,7 @@ from typing import Dict, List, Optional, Any, Callable
 
 try:
     from nacl.signing import SigningKey, VerifyKey
-    from nacl.public import PrivateKey, PublicKey, Box
     from nacl.secret import SecretBox
-    from nacl.utils import random as nacl_random
-    from nacl.encoding import HexEncoder
     from nacl.exceptions import CryptoError
     NACL_AVAILABLE = True
 except ImportError:

@@ -57,7 +57,6 @@ from typing import Dict, List, Optional, Tuple, Any
 
 try:
     from nacl.signing import SigningKey, VerifyKey
-    from nacl.encoding import HexEncoder
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False

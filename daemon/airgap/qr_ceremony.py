@@ -31,8 +31,8 @@ except ImportError:
 
 # For terminal QR display
 try:
-    import io
-    from PIL import Image
+    import io  # noqa: F401
+    from PIL import Image  # noqa: F401
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False

@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Callable
 
 try:
-    from nacl.signing import VerifyKey
+    from nacl.signing import VerifyKey  # noqa: F401
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False
