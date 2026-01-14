@@ -440,7 +440,7 @@ class TPMManager:
         mode_data = f"BOUNDARY_MODE:{mode.name}:{mode.value}"
         return hashlib.sha256(mode_data.encode()).hexdigest()
 
-    def _log_event(self, event_type: str, details: str, metadata: Dict = None):
+    def _log_event(self, event_type: str, details: str, metadata: Optional[Dict] = None):
         """Log TPM event if logger available"""
         if self.event_logger:
             from ..event_logger import EventType
@@ -455,7 +455,7 @@ class TPMManager:
     # PCR Operations
     # =========================================================================
 
-    def read_pcr(self, pcr_index: int = None) -> str:
+    def read_pcr(self, pcr_index: Optional[int] = None) -> str:
         """
         Read PCR value.
 
@@ -550,7 +550,7 @@ class TPMManager:
             self._pcr_cache[pcr_index] = '0' * 64
         return self._pcr_cache[pcr_index]
 
-    def extend_pcr(self, data: bytes, pcr_index: int = None) -> str:
+    def extend_pcr(self, data: bytes, pcr_index: Optional[int] = None) -> str:
         """
         Extend PCR with data.
 
@@ -838,7 +838,7 @@ class TPMManager:
     # =========================================================================
 
     def seal_secret(self, secret: bytes, mode: 'BoundaryMode',
-                    secret_id: str = None, metadata: Dict = None) -> SealedSecret:
+                    secret_id: Optional[str] = None, metadata: Optional[Dict] = None) -> SealedSecret:
         """
         Seal a secret to a specific boundary mode.
 

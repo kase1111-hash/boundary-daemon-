@@ -70,8 +70,8 @@ class SecureProfileManager:
 
     def __init__(
         self,
-        profile_dir: str = None,
-        secret_key: bytes = None,
+        profile_dir: Optional[str] = None,
+        secret_key: Optional[bytes] = None,
         event_logger = None,
         use_immutable: bool = True,
     ):
@@ -371,7 +371,7 @@ class SecureProfileManager:
     def install_profile(
         self,
         profile: Dict,
-        name: str = None,
+        name: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Install a seccomp profile securely.

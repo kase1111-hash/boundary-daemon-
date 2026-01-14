@@ -309,7 +309,7 @@ class DifferentialPrivacy:
         noise = sigma * math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
         return value + noise
 
-    def randomized_response(self, true_value: bool, p: float = None) -> bool:
+    def randomized_response(self, true_value: bool, p: Optional[float] = None) -> bool:
         """
         Randomized response for boolean values.
 

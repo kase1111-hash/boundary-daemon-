@@ -437,7 +437,7 @@ class WatchdogPeer:
         self.peer_id = peer_id
         self.socket_path = socket_path
         self.protocol = protocol
-        self.last_seen = 0
+        self.last_seen: float = 0
         self.consecutive_failures = 0
         self.is_alive = False
 
@@ -538,7 +538,7 @@ class HardenedWatchdog:
 
         # Monitoring
         self._daemon_failures = 0
-        self._last_daemon_response = 0
+        self._last_daemon_response: float = 0
         self._peers: Dict[str, WatchdogPeer] = {}
 
         # Server socket for receiving challenges

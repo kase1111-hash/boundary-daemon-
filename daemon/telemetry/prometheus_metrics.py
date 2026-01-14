@@ -32,7 +32,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -49,11 +49,11 @@ class MetricValue:
 class Counter:
     """A monotonically increasing counter."""
 
-    def __init__(self, name: str, help_text: str, labels: List[str] = None):
+    def __init__(self, name: str, help_text: str, labels: Optional[List[str]] = None):
         self.name = name
         self.help_text = help_text
         self.label_names = labels or []
-        self._values: Dict[tuple, float] = defaultdict(float)
+        self._values: Dict[Tuple[str, ...], float] = defaultdict(float)
         self._lock = threading.Lock()
 
     def inc(self, value: float = 1.0, **labels) -> None:
@@ -83,11 +83,11 @@ class Counter:
 class Gauge:
     """A metric that can go up and down."""
 
-    def __init__(self, name: str, help_text: str, labels: List[str] = None):
+    def __init__(self, name: str, help_text: str, labels: Optional[List[str]] = None):
         self.name = name
         self.help_text = help_text
         self.label_names = labels or []
-        self._values: Dict[tuple, float] = {}
+        self._values: Dict[Tuple[str, ...], float] = {}
         self._lock = threading.Lock()
 
     def set(self, value: float, **labels) -> None:
@@ -133,8 +133,8 @@ class Histogram:
         self,
         name: str,
         help_text: str,
-        labels: List[str] = None,
-        buckets: tuple = None,
+        labels: Optional[List[str]] = None,
+        buckets: Optional[Tuple[Any, ...]] = None,
     ):
         self.name = name
         self.help_text = help_text
@@ -376,7 +376,7 @@ class BoundaryMetrics:
 class MetricsHandler(BaseHTTPRequestHandler):
     """HTTP handler for /metrics endpoint."""
 
-    metrics: BoundaryMetrics = None
+    metrics: Optional[BoundaryMetrics] = None
 
     def do_GET(self):
         if self.path == '/metrics':

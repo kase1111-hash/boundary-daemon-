@@ -147,7 +147,7 @@ class Case:
     tags: List[str] = field(default_factory=list)
     metadata: Dict = field(default_factory=dict)
 
-    def add_event(self, event_type: str, actor: str, details: str, metadata: Dict = None):
+    def add_event(self, event_type: str, actor: str, details: str, metadata: Optional[Dict] = None):
         """Add event to timeline."""
         event = CaseEvent(
             timestamp=datetime.utcnow().isoformat() + "Z",

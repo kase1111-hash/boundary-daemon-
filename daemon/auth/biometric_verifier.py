@@ -71,7 +71,7 @@ class BiometricResult:
     match_score: float
     liveness_passed: bool
     error_message: Optional[str] = None
-    timestamp: str = None
+    timestamp: Optional[str] = None
 
     def __post_init__(self):
         if self.timestamp is None:

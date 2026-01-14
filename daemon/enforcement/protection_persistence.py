@@ -177,7 +177,7 @@ class ProtectionPersistenceManager:
 
     def __init__(
         self,
-        state_dir: str = None,
+        state_dir: Optional[str] = None,
         cleanup_policy: CleanupPolicy = CleanupPolicy.EXPLICIT_ONLY,
         cleanup_timeout: int = 300,
         event_logger=None,

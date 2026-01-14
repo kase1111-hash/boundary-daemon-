@@ -138,7 +138,7 @@ class PersistentRateLimiter:
 
     def __init__(
         self,
-        state_file: str = None,
+        state_file: Optional[str] = None,
         rate_limit_window: int = 60,
         rate_limit_max_requests: int = 100,
         rate_limit_block_duration: int = 300,
@@ -563,7 +563,7 @@ _instance: Optional[PersistentRateLimiter] = None
 
 
 def get_rate_limiter(
-    state_file: str = None,
+    state_file: Optional[str] = None,
     **kwargs,
 ) -> PersistentRateLimiter:
     """Get or create the singleton rate limiter instance."""

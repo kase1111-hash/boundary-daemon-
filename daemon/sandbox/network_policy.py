@@ -142,7 +142,7 @@ class NetworkPolicy:
         )
 
     @classmethod
-    def internal_only(cls, internal_cidrs: List[str] = None) -> 'NetworkPolicy':
+    def internal_only(cls, internal_cidrs: Optional[List[str]] = None) -> 'NetworkPolicy':
         """Only internal network allowed."""
         return cls(
             allow_loopback=True,

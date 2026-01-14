@@ -927,7 +927,7 @@ class SelectiveDisclosureManager:
 
     def create_disclosure_proof(
         self,
-        event_indices: List[int] = None,
+        event_indices: Optional[List[int]] = None,
         event_filter: Optional[Callable[[BoundaryEvent], bool]] = None,
         event_type: Optional[EventType] = None,
         time_range: Optional[Tuple[str, str]] = None

@@ -3307,7 +3307,7 @@ class BoundaryDaemon:
         except Exception as e:
             return (False, f"Scan error: {e}", [])
 
-    def get_security_advisories(self, status_filter: str = None) -> list:
+    def get_security_advisories(self, status_filter: Optional[str] = None) -> list:
         """
         Get stored security advisories (Plan 7).
 
@@ -3352,7 +3352,7 @@ class BoundaryDaemon:
             return []
 
     def update_security_advisory(self, advisory_id: str, new_status: str,
-                                  note: str = None) -> tuple[bool, str]:
+                                  note: Optional[str] = None) -> tuple[bool, str]:
         """
         Update the status of a security advisory (Plan 7).
 
@@ -3466,7 +3466,7 @@ class BoundaryDaemon:
         except Exception as e:
             return (False, f"Failed to stop watchdog: {e}")
 
-    def get_watchdog_alerts(self, severity: str = None, status: str = None,
+    def get_watchdog_alerts(self, severity: Optional[str] = None, status: Optional[str] = None,
                             limit: int = 100) -> list:
         """
         Get watchdog alerts with optional filtering (Plan 8).
@@ -3671,7 +3671,7 @@ class BoundaryDaemon:
         except Exception as e:
             return {'enabled': True, 'error': str(e)}
 
-    def record_telemetry_span(self, name: str, attributes: dict = None) -> tuple[bool, str]:
+    def record_telemetry_span(self, name: str, attributes: Optional[dict] = None) -> tuple[bool, str]:
         """
         Record a custom telemetry span (Plan 9).
 
@@ -3692,7 +3692,7 @@ class BoundaryDaemon:
         except Exception as e:
             return (False, f"Failed to record span: {e}")
 
-    def record_telemetry_metric(self, name: str, value: float, attributes: dict = None) -> tuple[bool, str]:
+    def record_telemetry_metric(self, name: str, value: float, attributes: Optional[dict] = None) -> tuple[bool, str]:
         """
         Record a custom telemetry metric (Plan 9).
 

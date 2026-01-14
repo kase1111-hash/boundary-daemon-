@@ -56,7 +56,7 @@ class SecurityAdvisory:
     recommended_action: str
     code_snippet: Optional[str] = None
     status: AdvisoryStatus = AdvisoryStatus.PENDING
-    created_at: str = None
+    created_at: Optional[str] = None
     reviewed_at: Optional[str] = None
     review_note: Optional[str] = None
 

@@ -544,14 +544,14 @@ class TelemetryManager:
 
     # Convenience methods for common operations
 
-    def record_violation(self, violation_type: str, mode: str, details: str = None):
+    def record_violation(self, violation_type: str, mode: str, details: Optional[str] = None):
         """Record a security violation"""
         attrs = {'violation_type': violation_type, 'mode': mode}
         if details:
             attrs['details'] = details
         self.increment_counter('violations', 1, attrs)
 
-    def record_mode_transition(self, from_mode: str, to_mode: str, reason: str = None):
+    def record_mode_transition(self, from_mode: str, to_mode: str, reason: Optional[str] = None):
         """Record a mode transition"""
         attrs = {'from_mode': from_mode, 'to_mode': to_mode}
         if reason:
@@ -564,7 +564,7 @@ class TelemetryManager:
         self.increment_counter('ceremonies', 1, attrs)
         self.record_histogram('ceremony_latency', duration_s, attrs)
 
-    def record_policy_decision(self, decision: str, operator: str = None, memory_class: int = None):
+    def record_policy_decision(self, decision: str, operator: Optional[str] = None, memory_class: Optional[int] = None):
         """Record a policy decision"""
         attrs = {'decision': decision}
         if operator:
@@ -745,7 +745,7 @@ class MockSpan:
             event['attributes'] = attributes
         self._data['events'].append(event)
 
-    def set_status(self, status_code, description: str = None):
+    def set_status(self, status_code, description: Optional[str] = None):
         """Set span status"""
         self._data['status'] = {'code': str(status_code), 'description': description}
 
@@ -758,7 +758,7 @@ class MockSpan:
 
 
 # Decorator for instrumenting functions
-def instrument(span_name: str = None, attributes: Dict[str, Any] = None):
+def instrument(span_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None):
     """
     Decorator to instrument a function with tracing.
 

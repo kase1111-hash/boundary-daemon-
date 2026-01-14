@@ -468,7 +468,7 @@ class DataDiodeExporter:
 
         # Rate limiting
         min_interval = 1.0 / channel.rate_limit
-        last_send = 0
+        last_send: float = 0
 
         while not stop_event.is_set():
             try:
@@ -514,8 +514,8 @@ class DataDiodeExporter:
     def _send_udp(self, destination: str, packet: DiodePacket) -> bool:
         """Send packet via UDP."""
         try:
-            host, port = destination.rsplit(':', 1)
-            port = int(port)
+            host, port_str = destination.rsplit(':', 1)
+            port = int(port_str)
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(1.0)
@@ -531,8 +531,8 @@ class DataDiodeExporter:
     def _send_tcp(self, destination: str, packet: DiodePacket) -> bool:
         """Send packet via TCP."""
         try:
-            host, port = destination.rsplit(':', 1)
-            port = int(port)
+            host, port_str = destination.rsplit(':', 1)
+            port = int(port_str)
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)

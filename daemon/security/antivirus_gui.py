@@ -609,7 +609,7 @@ class AntivirusGUI:
         self._update_bazaar_status()
         self._append_bazaar_text("Cache cleared\n", 'info')
 
-    def _append_bazaar_text(self, text: str, tag: str = None):
+    def _append_bazaar_text(self, text: str, tag: Optional[str] = None):
         """Append text to the bazaar results area."""
         self.bazaar_results_text.config(state='normal')
         if tag:
@@ -669,7 +669,7 @@ class AntivirusGUI:
         text_widget.tag_configure('critical', foreground='#D32F2F', font=('Courier', 10, 'bold'))
         text_widget.tag_configure('header', font=('Courier', 11, 'bold'))
 
-    def _log(self, message: str, tag: str = None, target: str = 'results'):
+    def _log(self, message: str, tag: Optional[str] = None, target: str = 'results'):
         """Add message to a text area."""
         self.msg_queue.put(('log', message, tag, target))
 

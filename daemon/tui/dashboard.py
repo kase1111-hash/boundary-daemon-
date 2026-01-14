@@ -526,8 +526,8 @@ class MatrixRain:
         self._glow_positions = positions
 
     def set_quick_melt_zones(self, sidewalk_y: int, mailbox_bounds: Tuple[int, int, int, int], street_y: int,
-                              traffic_light_bounds: Tuple[int, int, int, int] = None,
-                              cafe_bounds: Tuple[int, int, int, int, int] = None):
+                              traffic_light_bounds: Optional[Tuple[int, int, int, int]] = None,
+                              cafe_bounds: Optional[Tuple[int, int, int, int, int]] = None):
         """Set zones where snow melts very quickly (sidewalk, mailbox, traffic lines, traffic light, cafe).
 
         Args:
@@ -1315,7 +1315,7 @@ class TunnelBackdrop:
             return
         self._frame_idx = (self._frame_idx + self._speed) % self.CACHE_FRAMES
 
-    def render(self, screen, sky_height: int = None):
+    def render(self, screen, sky_height: Optional[int] = None):
         """
         Render the organic tunnel backdrop effect using cached frames.
 
@@ -5316,7 +5316,7 @@ class AlleyScene:
 
         return False
 
-    def _generate_semi_sprite(self, direction: int, warning_message: str = None) -> Tuple[List[str], int, int, int, str]:
+    def _generate_semi_sprite(self, direction: int, warning_message: Optional[str] = None) -> Tuple[List[str], int, int, int, str]:
         """Generate a unique semi-truck sprite with advertising.
 
         Uses seeded randomness based on system time for screenshot validation.
@@ -5385,7 +5385,7 @@ class AlleyScene:
             sprite.append(formatted)
         return sprite
 
-    def _spawn_car(self, warning_message: str = None):
+    def _spawn_car(self, warning_message: Optional[str] = None):
         """Spawn a new car, taxi, truck, work truck, city truck, or semi-truck on the street.
 
         Vehicle distribution:
@@ -11021,7 +11021,7 @@ class Dashboard:
         else:
             return (Colors.HEADER, Colors.HEADER, Colors.HEADER, False)
 
-    def _draw_box(self, y: int, x: int, width: int, height: int, title: str, title_color: int = None):
+    def _draw_box(self, y: int, x: int, width: int, height: int, title: str, title_color: Optional[int] = None):
         """Draw a box with title, using weather-based colors."""
         if title_color is None:
             title_color = Colors.HEADER

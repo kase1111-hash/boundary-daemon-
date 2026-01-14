@@ -82,7 +82,7 @@ class RealTimeEnforcement:
         ALERT = "alert"  # Log and alert
         STRICT = "strict"  # Log, alert, and recommend actions
 
-    def __init__(self, mode: 'RealTimeEnforcement.Mode' = None):
+    def __init__(self, mode: Optional['RealTimeEnforcement.Mode'] = None):
         self.mode = mode or self.Mode.MONITOR
         self._alert_callbacks: Dict[int, Callable[[PolicyMatch], None]] = {}
         self._next_callback_id = 0

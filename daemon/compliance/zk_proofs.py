@@ -203,7 +203,7 @@ class PedersenCommitment:
     - Binding: Cannot open commitment to different value
     """
 
-    def __init__(self, p: int = None, g: int = None, h: int = None):
+    def __init__(self, p: Optional[int] = None, g: Optional[int] = None, h: Optional[int] = None):
         """
         Initialize with group parameters.
 
@@ -225,7 +225,7 @@ class PedersenCommitment:
             self.g = g
             self.h = h
 
-    def commit(self, value: int, randomness: int = None) -> Tuple[int, int]:
+    def commit(self, value: int, randomness: Optional[int] = None) -> Tuple[int, int]:
         """
         Create a commitment to a value.
 

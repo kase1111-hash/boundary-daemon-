@@ -807,7 +807,7 @@ class AntivirusScanner:
 
         return result
 
-    def scan_filesystem(self, paths: List[str] = None) -> ScanResult:
+    def scan_filesystem(self, paths: Optional[List[str]] = None) -> ScanResult:
         """
         Scan filesystem for suspicious files.
 
@@ -2568,7 +2568,7 @@ class AntivirusScanner:
             logger.error(f"Error restoring from quarantine: {e}")
             return (False, str(e))
 
-    def block_network_connection(self, ip: str, port: int = None,
+    def block_network_connection(self, ip: str, port: Optional[int] = None,
                                  reason: str = "") -> Tuple[bool, str]:
         """
         Block a network connection using iptables.
@@ -3069,8 +3069,8 @@ class StartupMonitor:
     }
 
     def __init__(self,
-                 data_dir: str = None,
-                 notification_callback: Callable[[str, Dict], None] = None,
+                 data_dir: Optional[str] = None,
+                 notification_callback: Optional[Callable[[str, Dict], None]] = None,
                  check_interval_hours: float = 1.0):
         """
         Initialize the startup monitor.

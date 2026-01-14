@@ -787,7 +787,7 @@ class BoundaryAPIServer:
             log_security_error(e, "set_mode", requested_mode=mode_str)
             return {'success': False, 'error': str(e)}
 
-    def _handle_get_events(self, params: Dict[str, Any], client_info: str = None) -> Dict[str, Any]:
+    def _handle_get_events(self, params: Dict[str, Any], client_info: Optional[str] = None) -> Dict[str, Any]:
         """
         Get recent events.
 
@@ -826,7 +826,7 @@ class BoundaryAPIServer:
             # Event logger not available or file access error
             return {'success': False, 'error': str(e)}
 
-    def _track_ingestion(self, event_count: int, client_info: str = None):
+    def _track_ingestion(self, event_count: int, client_info: Optional[str] = None):
         """Track event ingestion statistics for SIEM clients."""
         import time
         from datetime import datetime, date
@@ -877,7 +877,7 @@ class BoundaryAPIServer:
                 return True
         return False
 
-    def _log_siem_connection_event(self, state: str, client_info: str = None):
+    def _log_siem_connection_event(self, state: str, client_info: Optional[str] = None):
         """Log SIEM connection state change event."""
         if self.daemon and hasattr(self.daemon, 'event_logger'):
             try:

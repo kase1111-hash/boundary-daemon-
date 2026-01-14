@@ -259,7 +259,7 @@ class TokenManager:
         global_rate_limit_block_duration: int = 60,  # 1 minute global block
         event_logger=None,  # Optional EventLogger for rate limit events
         use_persistent_rate_limit: bool = True,  # SECURITY: Use persistent rate limiting
-        rate_limit_state_file: str = None,  # Path to rate limit state file
+        rate_limit_state_file: Optional[str] = None,  # Path to rate limit state file
     ):
         """
         Initialize token manager.

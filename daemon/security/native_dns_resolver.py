@@ -415,7 +415,7 @@ class NativeDNSResolver:
         self,
         domain: str,
         record_type: int = DNSType.A,
-        resolver: str = None,
+        resolver: Optional[str] = None,
     ) -> DNSResponse:
         """
         Resolve a domain using pure Python DNS implementation.
@@ -594,7 +594,7 @@ class NativeDNSResolver:
         self,
         domain: str,
         record_type: int = DNSType.A,
-        resolvers: List[Tuple[str, str]] = None,
+        resolvers: Optional[List[Tuple[str, str]]] = None,
     ) -> Dict:
         """
         Verify DNS response by querying multiple resolvers.

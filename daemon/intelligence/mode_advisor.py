@@ -580,7 +580,7 @@ class ModeAdvisor:
 
         # Find the most restrictive recommended mode
         recommended_mode = None
-        highest_score = 0
+        highest_score: float = 0
 
         for mode, score in mode_scores.items():
             if score > highest_score:
