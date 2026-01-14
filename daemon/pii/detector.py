@@ -706,7 +706,7 @@ class PIIDetector:
         if len(entities) <= 1:
             return entities
 
-        result = []
+        result: List[PIIEntity] = []
         for entity in entities:
             # Check if overlaps with any existing
             overlaps = False

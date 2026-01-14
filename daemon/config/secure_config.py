@@ -325,7 +325,7 @@ class SecureConfigStorage:
             return key
         finally:
             # SECURITY: Zero the combined input data after derivation
-            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory is not None:
                 secure_zero_memory(combined)
             else:
                 # Fallback: manual zeroing
@@ -813,7 +813,7 @@ class SecureConfigStorage:
 
         # SECURITY: Zero old key material from memory
         if old_key_material is not None:
-            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory is not None:
                 secure_zero_memory(old_key_material)
             else:
                 for i in range(len(old_key_material)):

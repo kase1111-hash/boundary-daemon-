@@ -26,7 +26,7 @@ except ImportError:
     get_enhanced_logger = None
 
 # Use enhanced logger if available, otherwise standard
-if ENHANCED_LOGGING_AVAILABLE and get_enhanced_logger:
+if ENHANCED_LOGGING_AVAILABLE and get_enhanced_logger is not None:
     logger = get_enhanced_logger(__name__)
 else:
     logger = logging.getLogger(__name__)
@@ -484,7 +484,7 @@ class BoundaryDaemon:
         self.redundant_logging = False
         self._redundant_logger = None
 
-        if SIGNED_LOGGING_AVAILABLE and SignedEventLogger:
+        if SIGNED_LOGGING_AVAILABLE and SignedEventLogger is not None:
             try:
                 signing_key_path = os.path.join(self.log_dir, 'signing.key')
                 self.event_logger = SignedEventLogger(log_file, signing_key_path)
@@ -499,7 +499,7 @@ class BoundaryDaemon:
             logger.info("Signed event logging: not available (pynacl not installed)")
 
         # Initialize redundant logger (SECURITY: Addresses single logger dependency)
-        if REDUNDANT_LOGGING_AVAILABLE and create_redundant_logger:
+        if REDUNDANT_LOGGING_AVAILABLE and create_redundant_logger is not None:
             try:
                 self._redundant_logger = create_redundant_logger(
                     log_dir=log_dir,
@@ -526,7 +526,7 @@ class BoundaryDaemon:
         # Initialize Event Publisher (Attack Detection Integration)
         # Connects tripwire/boundary events to YARA, Sigma, MITRE, IOC detection engines
         self.event_publisher = None
-        if EVENT_PUBLISHER_AVAILABLE and get_event_publisher:
+        if EVENT_PUBLISHER_AVAILABLE and get_event_publisher is not None:
             try:
                 self.event_publisher = get_event_publisher()
                 logger.info("Event publisher initialized for attack detection")
@@ -538,7 +538,7 @@ class BoundaryDaemon:
         # Initialize Privilege Manager (SECURITY: Prevents Silent Enforcement Failures)
         # This addresses Critical Finding: "Root Privilege Required = Silent Failure"
         self.privilege_manager = None
-        if PRIVILEGE_MANAGER_AVAILABLE and PrivilegeManager:
+        if PRIVILEGE_MANAGER_AVAILABLE and PrivilegeManager is not None:
             self.privilege_manager = PrivilegeManager(
                 event_logger=self.event_logger,
                 on_critical_callback=self._on_privilege_critical,
@@ -560,7 +560,7 @@ class BoundaryDaemon:
 
         # Initialize network enforcer (Plan 1 Phase 1: Network Enforcement)
         self.network_enforcer = None
-        if ENFORCEMENT_AVAILABLE and NetworkEnforcer:
+        if ENFORCEMENT_AVAILABLE and NetworkEnforcer is not None:
             self.network_enforcer = NetworkEnforcer(
                 daemon=self,
                 event_logger=self.event_logger
@@ -594,7 +594,7 @@ class BoundaryDaemon:
 
         # Initialize USB enforcer (Plan 1 Phase 2: USB Enforcement)
         self.usb_enforcer = None
-        if ENFORCEMENT_AVAILABLE and USBEnforcer:
+        if ENFORCEMENT_AVAILABLE and USBEnforcer is not None:
             self.usb_enforcer = USBEnforcer(
                 daemon=self,
                 event_logger=self.event_logger
@@ -628,7 +628,7 @@ class BoundaryDaemon:
 
         # Initialize process enforcer (Plan 1 Phase 3: Process Enforcement)
         self.process_enforcer = None
-        if ENFORCEMENT_AVAILABLE and ProcessEnforcer:
+        if ENFORCEMENT_AVAILABLE and ProcessEnforcer is not None:
             self.process_enforcer = ProcessEnforcer(
                 daemon=self,
                 event_logger=self.event_logger
@@ -664,7 +664,7 @@ class BoundaryDaemon:
         # Initialize protection persistence manager (Critical: Survives Restarts)
         # SECURITY: This addresses "Cleanup on Shutdown Removes All Protection"
         self.protection_persistence = None
-        if PROTECTION_PERSISTENCE_AVAILABLE and ProtectionPersistenceManager:
+        if PROTECTION_PERSISTENCE_AVAILABLE and ProtectionPersistenceManager is not None:
             try:
                 self.protection_persistence = ProtectionPersistenceManager(
                     cleanup_policy=CleanupPolicy.EXPLICIT_ONLY,
@@ -698,7 +698,7 @@ class BoundaryDaemon:
 
         # Initialize TPM manager (Plan 2: TPM Integration)
         self.tpm_manager = None
-        if TPM_MODULE_AVAILABLE and TPMManager:
+        if TPM_MODULE_AVAILABLE and TPMManager is not None:
             self.tpm_manager = TPMManager(
                 daemon=self,
                 event_logger=self.event_logger
@@ -713,7 +713,7 @@ class BoundaryDaemon:
         # Initialize cluster manager (Plan 4: Distributed Deployment)
         self.cluster_manager = None
         self.cluster_enabled = False
-        if DISTRIBUTED_AVAILABLE and ClusterManager and FileCoordinator:
+        if DISTRIBUTED_AVAILABLE and ClusterManager is not None and FileCoordinator is not None:
             # Cluster mode can be enabled via environment variable or config
             cluster_data_dir = os.environ.get('BOUNDARY_CLUSTER_DIR', None)
             if cluster_data_dir:
@@ -735,7 +735,7 @@ class BoundaryDaemon:
         # Initialize custom policy engine (Plan 5: Custom Policy Language)
         self.custom_policy_engine = None
         self.custom_policy_enabled = False
-        if CUSTOM_POLICY_AVAILABLE and CustomPolicyEngine:
+        if CUSTOM_POLICY_AVAILABLE and CustomPolicyEngine is not None:
             # Custom policies can be enabled via environment variable
             policy_dir = os.environ.get('BOUNDARY_POLICY_DIR', None)
             if policy_dir:
@@ -755,7 +755,7 @@ class BoundaryDaemon:
         self.biometric_verifier = None
         self.ceremony_manager = None
         self.biometric_enabled = False
-        if BIOMETRIC_AVAILABLE and BiometricVerifier and EnhancedCeremonyManager:
+        if BIOMETRIC_AVAILABLE and BiometricVerifier is not None and EnhancedCeremonyManager is not None:
             # Biometric auth can be enabled via environment variable
             biometric_dir = os.environ.get('BOUNDARY_BIOMETRIC_DIR', None)
             if biometric_dir:
@@ -789,7 +789,7 @@ class BoundaryDaemon:
         # Initialize code vulnerability advisor (Plan 7: LLM-Powered Security)
         self.security_advisor = None
         self.security_advisor_enabled = False
-        if SECURITY_ADVISOR_AVAILABLE and CodeVulnerabilityAdvisor:
+        if SECURITY_ADVISOR_AVAILABLE and CodeVulnerabilityAdvisor is not None:
             # Security advisor can be enabled via environment variable
             security_dir = os.environ.get('BOUNDARY_SECURITY_DIR', None)
             if security_dir:
@@ -815,7 +815,7 @@ class BoundaryDaemon:
         # Initialize log watchdog (Plan 8: Log Watchdog Agent)
         self.log_watchdog = None
         self.watchdog_enabled = False
-        if WATCHDOG_AVAILABLE and LogWatchdog:
+        if WATCHDOG_AVAILABLE and LogWatchdog is not None:
             # Watchdog can be enabled via environment variable
             watchdog_dir = os.environ.get('BOUNDARY_WATCHDOG_DIR', None)
             if watchdog_dir:
@@ -851,7 +851,7 @@ class BoundaryDaemon:
         # Initialize telemetry (Plan 9: OpenTelemetry Integration)
         self.telemetry_manager = None
         self.telemetry_enabled = False
-        if TELEMETRY_AVAILABLE and TelemetryManager:
+        if TELEMETRY_AVAILABLE and TelemetryManager is not None:
             # Telemetry can be enabled via environment variable
             telemetry_dir = os.environ.get('BOUNDARY_TELEMETRY_DIR', None)
             if telemetry_dir:
@@ -880,7 +880,7 @@ class BoundaryDaemon:
         # Initialize SIEM integration (SECURITY: Security event forwarding to SIEM)
         self.siem = None
         self.siem_enabled = False
-        if SIEM_AVAILABLE and SIEMIntegration:
+        if SIEM_AVAILABLE and SIEMIntegration is not None:
             # SIEM can be enabled via environment variable
             siem_host = os.environ.get('BOUNDARY_SIEM_HOST', None)
             if siem_host:
@@ -924,7 +924,7 @@ class BoundaryDaemon:
                     if success:
                         self.siem_enabled = True
                         # Wire error handling to SIEM
-                        if set_siem_integration:
+                        if set_siem_integration is not None:
                             set_siem_integration(self.siem)
                         logger.info(f"SIEM integration enabled ({siem_host}:{siem_port})")
                         logger.info(f"  Transport: {transport.value}, Format: {fmt.value}")
@@ -940,7 +940,7 @@ class BoundaryDaemon:
         # Initialize memory monitor (Plan 11: Memory Leak Monitoring)
         self.memory_monitor = None
         self.memory_monitor_enabled = False
-        if MEMORY_MONITOR_AVAILABLE and MemoryMonitor:
+        if MEMORY_MONITOR_AVAILABLE and MemoryMonitor is not None:
             try:
                 # Get optional config from environment
                 sample_interval = float(os.environ.get('BOUNDARY_MEMORY_INTERVAL', '5.0'))
@@ -989,7 +989,7 @@ class BoundaryDaemon:
         # Initialize resource monitor (Plan 11: Resource Monitoring - FD, Threads, Disk, CPU)
         self.resource_monitor = None
         self.resource_monitor_enabled = False
-        if RESOURCE_MONITOR_AVAILABLE and ResourceMonitor:
+        if RESOURCE_MONITOR_AVAILABLE and ResourceMonitor is not None:
             try:
                 sample_interval = float(os.environ.get('BOUNDARY_RESOURCE_INTERVAL', '10.0'))
                 fd_warning = float(os.environ.get('BOUNDARY_FD_WARNING_PERCENT', '70'))
@@ -1030,7 +1030,7 @@ class BoundaryDaemon:
         # Initialize health monitor (Plan 11: Health Monitoring)
         self.health_monitor = None
         self.health_monitor_enabled = False
-        if HEALTH_MONITOR_AVAILABLE and HealthMonitor:
+        if HEALTH_MONITOR_AVAILABLE and HealthMonitor is not None:
             try:
                 check_interval = float(os.environ.get('BOUNDARY_HEALTH_INTERVAL', '30.0'))
                 heartbeat_timeout = float(os.environ.get('BOUNDARY_HEARTBEAT_TIMEOUT', '60.0'))
@@ -1061,7 +1061,7 @@ class BoundaryDaemon:
         # Initialize queue monitor (Plan 11: Queue Monitoring)
         self.queue_monitor = None
         self.queue_monitor_enabled = False
-        if QUEUE_MONITOR_AVAILABLE and QueueMonitor:
+        if QUEUE_MONITOR_AVAILABLE and QueueMonitor is not None:
             try:
                 sample_interval = float(os.environ.get('BOUNDARY_QUEUE_INTERVAL', '5.0'))
                 warning_depth = int(os.environ.get('BOUNDARY_QUEUE_WARNING', '100'))
@@ -1093,7 +1093,7 @@ class BoundaryDaemon:
 
         # Initialize report generator (Plan 11: Report Generation with Ollama)
         self.report_generator = None
-        if REPORT_GENERATOR_AVAILABLE and MonitoringReportGenerator:
+        if REPORT_GENERATOR_AVAILABLE and MonitoringReportGenerator is not None:
             try:
                 # Get Ollama config from environment
                 ollama_endpoint = os.environ.get('OLLAMA_ENDPOINT', 'http://localhost:11434')
@@ -1117,7 +1117,7 @@ class BoundaryDaemon:
         # Initialize message checker (Plan 10: Message Checking for NatLangChain/Agent-OS)
         self.message_checker = None
         self.message_checker_enabled = False
-        if MESSAGE_CHECKER_AVAILABLE and MessageChecker:
+        if MESSAGE_CHECKER_AVAILABLE and MessageChecker is not None:
             try:
                 # Check if strict mode is enabled via environment
                 strict_mode = os.environ.get('BOUNDARY_MESSAGE_STRICT', 'false').lower() == 'true'
@@ -1135,7 +1135,7 @@ class BoundaryDaemon:
         # Initialize clock monitor (Clock Drift Protection)
         self.clock_monitor = None
         self.clock_monitor_enabled = False
-        if CLOCK_MONITOR_AVAILABLE and ClockMonitor:
+        if CLOCK_MONITOR_AVAILABLE and ClockMonitor is not None:
             try:
                 self.clock_monitor = ClockMonitor(
                     check_interval=10.0,
@@ -1153,7 +1153,7 @@ class BoundaryDaemon:
         # Initialize Network Attestor (Phase 1: Network Trust Verification)
         self.network_attestor = None
         self.network_attestation_enabled = False
-        if NETWORK_ATTESTATION_AVAILABLE and NetworkAttestor:
+        if NETWORK_ATTESTATION_AVAILABLE and NetworkAttestor is not None:
             try:
                 self.network_attestor = NetworkAttestor(
                     config=NetworkAttestationConfig(
@@ -1175,7 +1175,7 @@ class BoundaryDaemon:
         # This addresses Critical Finding #6: "External Watchdog Can Be Killed"
         self.watchdog_endpoint = None
         self.hardened_watchdog_enabled = False
-        if HARDENED_WATCHDOG_AVAILABLE and DaemonWatchdogEndpoint:
+        if HARDENED_WATCHDOG_AVAILABLE and DaemonWatchdogEndpoint is not None:
             try:
                 # Generate shared secret for watchdog authentication
                 shared_secret = generate_shared_secret()
@@ -1213,7 +1213,7 @@ class BoundaryDaemon:
 
         # Initialize API server for CLI tools
         self.api_server = None
-        if API_SERVER_AVAILABLE and BoundaryAPIServer:
+        if API_SERVER_AVAILABLE and BoundaryAPIServer is not None:
             socket_path = os.path.join(os.path.dirname(log_dir), 'api', 'boundary.sock')
             self.api_server = BoundaryAPIServer(daemon=self, socket_path=socket_path)
 
@@ -2555,7 +2555,7 @@ class BoundaryDaemon:
             return (False, "Message checker not available", None)
 
         # Map source string to enum
-        if MESSAGE_CHECKER_AVAILABLE and MessageSource:
+        if MESSAGE_CHECKER_AVAILABLE and MessageSource is not None:
             source_map = {
                 'natlangchain': MessageSource.NATLANGCHAIN,
                 'agent_os': MessageSource.AGENT_OS,
@@ -3324,7 +3324,7 @@ class BoundaryDaemon:
             advisories = self.security_advisor.load_advisories()
 
             # Filter by status if specified
-            if status_filter and AdvisoryStatus:
+            if status_filter and AdvisoryStatus is not None:
                 try:
                     target_status = AdvisoryStatus(status_filter)
                     advisories = [a for a in advisories if a.status == target_status]
@@ -3369,7 +3369,7 @@ class BoundaryDaemon:
 
         try:
             # Validate status
-            if not AdvisoryStatus:
+            if AdvisoryStatus is None:
                 return (False, "AdvisoryStatus not available")
 
             try:
@@ -3486,13 +3486,13 @@ class BoundaryDaemon:
             sev_filter = None
             stat_filter = None
 
-            if severity and WatchdogSeverity:
+            if severity and WatchdogSeverity is not None:
                 try:
                     sev_filter = WatchdogSeverity(severity)
                 except ValueError:
                     pass
 
-            if status and WatchdogStatus:
+            if status and WatchdogStatus is not None:
                 try:
                     stat_filter = WatchdogStatus(status)
                 except ValueError:

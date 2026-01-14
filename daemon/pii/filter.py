@@ -256,7 +256,7 @@ class PIIFilter:
         if detector:
             self.detector = detector
             self._bypass_resistant = False
-        elif use_bypass_resistant and BYPASS_RESISTANT_AVAILABLE and BypassResistantPIIDetector:
+        elif use_bypass_resistant and BYPASS_RESISTANT_AVAILABLE and BypassResistantPIIDetector is not None:
             base_detector = PIIDetector()
             self.detector = BypassResistantPIIDetector(
                 base_detector=base_detector,

@@ -3246,8 +3246,8 @@ class AlleyScene:
 
         def _tts_worker():
             try:
-                params = VoiceParameters(speed=speed, pitch=pitch) if VoiceParameters else None
-                request = TTSRequest(text=text, params=params) if TTSRequest and params else None
+                params = VoiceParameters(speed=speed, pitch=pitch) if VoiceParameters is not None else None
+                request = TTSRequest(text=text, params=params) if TTSRequest is not None and params else None
                 if request:
                     self._tts_manager.synthesize(request)
                     logger.debug(f"TTS spoke: {text[:50]}...")
@@ -9912,8 +9912,8 @@ class Dashboard:
 
         def _tts_worker():
             try:
-                params = VoiceParameters(speed=speed, pitch=pitch) if VoiceParameters else None
-                request = TTSRequest(text=text, params=params) if TTSRequest and params else None
+                params = VoiceParameters(speed=speed, pitch=pitch) if VoiceParameters is not None else None
+                request = TTSRequest(text=text, params=params) if TTSRequest is not None and params else None
                 if request:
                     self._tts_manager.synthesize(request)
                     logger.debug(f"TTS spoke: {text[:50]}...")

@@ -335,7 +335,7 @@ class EventLogger:
             with open(self.log_file_path, 'r') as f:
                 lines = f.readlines()
 
-            events = []
+            events: List[BoundaryEvent] = []
             # Read in reverse to get newest first
             for line in reversed(lines):
                 if len(events) >= limit:

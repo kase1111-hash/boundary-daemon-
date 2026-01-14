@@ -361,7 +361,7 @@ class WiFiSecurityMonitor:
             return None
 
         # Group by target
-        target_counts = defaultdict(int)
+        target_counts: Dict[str, int] = defaultdict(int)
         for event in self._deauth_events:
             target_counts[event.target_mac] += 1
 
@@ -519,8 +519,8 @@ class WiFiSecurityMonitor:
 
     def _parse_iwlist_scan(self, output: str) -> List[Dict]:
         """Parse iwlist scan output"""
-        networks = []
-        current_network = {}
+        networks: list = []
+        current_network: dict = {}
 
         for line in output.split('\n'):
             line = line.strip()

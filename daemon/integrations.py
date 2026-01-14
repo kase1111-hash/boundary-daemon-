@@ -200,7 +200,7 @@ class MessageGate:
         self.daemon = daemon
         self.strict_mode = strict_mode
 
-        if MESSAGE_CHECKER_AVAILABLE and MessageChecker:
+        if MESSAGE_CHECKER_AVAILABLE and MessageChecker is not None:
             self.checker = MessageChecker(daemon=daemon, strict_mode=strict_mode)
         else:
             self.checker = None

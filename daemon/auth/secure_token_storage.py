@@ -133,7 +133,7 @@ class SecureTokenStorage:
 
         # Zero the key material if secure memory is available
         if self._key_material is not None:
-            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory is not None:
                 try:
                     if not secure_zero_memory(self._key_material):
                         logger.warning("Failed to zero token encryption key material")
@@ -271,7 +271,7 @@ class SecureTokenStorage:
             return key
         finally:
             # SECURITY: Zero the combined input data after derivation
-            if SECURE_MEMORY_AVAILABLE and secure_zero_memory:
+            if SECURE_MEMORY_AVAILABLE and secure_zero_memory is not None:
                 secure_zero_memory(combined)
             else:
                 # Fallback: manual zeroing

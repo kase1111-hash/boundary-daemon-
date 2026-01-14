@@ -250,7 +250,7 @@ class ProcessEnforcer:
 
         # Initialize secure profile manager (SECURITY: Integrity-verified profiles)
         self._profile_manager = None
-        if SECURE_PROFILE_AVAILABLE and SecureProfileManager and self._has_root:
+        if SECURE_PROFILE_AVAILABLE and SecureProfileManager is not None and self._has_root:
             try:
                 self._profile_manager = SecureProfileManager(
                     profile_dir=self.SECCOMP_PROFILE_DIR,
@@ -270,7 +270,7 @@ class ProcessEnforcer:
         # Initialize secure process terminator (SECURITY: No broad pattern matching)
         # This addresses: "Process Termination Uses Broad Pattern Matching"
         self._secure_terminator = None
-        if SECURE_TERMINATION_AVAILABLE and SecureProcessTerminator:
+        if SECURE_TERMINATION_AVAILABLE and SecureProcessTerminator is not None:
             try:
                 self._secure_terminator = SecureProcessTerminator(
                     event_logger=self.event_logger,

@@ -3529,7 +3529,7 @@ class StartupMonitor:
         message = self._generate_friendly_message(program)
 
         # Use callback if provided
-        if self.notification_callback:
+        if self.notification_callback is not None:
             try:
                 self.notification_callback(message, program)
             except Exception as e:

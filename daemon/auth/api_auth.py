@@ -298,7 +298,7 @@ class TokenManager:
         # SECURITY: Initialize persistent rate limiter (survives daemon restarts)
         # This addresses the vulnerability: "Rate Limiting Bypass via Restart"
         self._persistent_rate_limiter = None
-        if use_persistent_rate_limit and PERSISTENT_RATE_LIMIT_AVAILABLE and PersistentRateLimiter:
+        if use_persistent_rate_limit and PERSISTENT_RATE_LIMIT_AVAILABLE and PersistentRateLimiter is not None:
             try:
                 self._persistent_rate_limiter = PersistentRateLimiter(
                     state_file=rate_limit_state_file,

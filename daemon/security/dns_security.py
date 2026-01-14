@@ -292,7 +292,7 @@ class DNSSecurityMonitor:
         # This addresses: "DNS Response Verification Uses External Tools"
         self._native_resolver = None
         self._secure_verifier = None
-        if NATIVE_DNS_AVAILABLE and NativeDNSResolver:
+        if NATIVE_DNS_AVAILABLE and NativeDNSResolver is not None:
             try:
                 self._native_resolver = NativeDNSResolver()
                 self._secure_verifier = SecureDNSVerifier(event_logger=event_logger)
