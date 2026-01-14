@@ -6,7 +6,9 @@ Features:
 - Create new ASCII art with labels
 - Load and modify existing sprites from dashboard.py
 - Draw with keyboard (characters, lines, boxes)
-- Color support with preview
+- 16 color support with preview (8 normal + 8 bright)
+- Visual cursor with multiple styles (block, underline, crosshair)
+- Multi-frame animation support with frame navigation
 - Export to Python code format
 - Undo/redo support
 
@@ -24,17 +26,26 @@ Keyboard Controls:
     Ctrl+Y      - Redo
     Ctrl+L      - Load sprite
     Ctrl+N      - New canvas
+    Ctrl+R      - Resize canvas
     Tab         - Cycle colors
+    Shift+Tab   - Cycle colors backward
     F1          - Help
+    F2          - Cycle cursor style
+    < / >       - Previous/Next frame (animation)
+    Ctrl+F      - Add new frame
+    Ctrl+D      - Delete current frame
+    Ctrl+G      - Play/preview animation
     Escape/Q    - Quit
 """
 
 import argparse
+import copy
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -133,6 +144,12 @@ class ArtCanvas:
         self.width = new_width
         self.height = new_height
 
+    def copy(self) -> 'ArtCanvas':
+        """Create a deep copy of the canvas."""
+        new_canvas = ArtCanvas(self.width, self.height, self.name)
+        new_canvas.cells = [[Cell(c.char, c.color) for c in row] for row in self.cells]
+        return new_canvas
+
 
 class UndoManager:
     """Manages undo/redo history."""
@@ -228,19 +245,35 @@ class ArtEditor:
     # when curses is not available (Windows without windows-curses)
     COLORS = None
 
+    # Cursor styles
+    CURSOR_STYLES = ["block", "underline", "crosshair", "corners"]
+
     @classmethod
     def _get_colors(cls):
-        """Get color definitions, initializing lazily if needed."""
+        """Get color definitions, initializing lazily if needed.
+
+        Returns 16 colors: 8 normal + 8 bright variants.
+        """
         if cls.COLORS is None and curses is not None:
             cls.COLORS = [
-                ("Default", curses.COLOR_WHITE, curses.COLOR_BLACK),
-                ("Red", curses.COLOR_RED, curses.COLOR_BLACK),
-                ("Green", curses.COLOR_GREEN, curses.COLOR_BLACK),
-                ("Yellow", curses.COLOR_YELLOW, curses.COLOR_BLACK),
-                ("Blue", curses.COLOR_BLUE, curses.COLOR_BLACK),
-                ("Magenta", curses.COLOR_MAGENTA, curses.COLOR_BLACK),
-                ("Cyan", curses.COLOR_CYAN, curses.COLOR_BLACK),
-                ("White Bold", curses.COLOR_WHITE, curses.COLOR_BLACK),
+                # Normal colors (0-7)
+                ("White", curses.COLOR_WHITE, curses.COLOR_BLACK, False),
+                ("Red", curses.COLOR_RED, curses.COLOR_BLACK, False),
+                ("Green", curses.COLOR_GREEN, curses.COLOR_BLACK, False),
+                ("Yellow", curses.COLOR_YELLOW, curses.COLOR_BLACK, False),
+                ("Blue", curses.COLOR_BLUE, curses.COLOR_BLACK, False),
+                ("Magenta", curses.COLOR_MAGENTA, curses.COLOR_BLACK, False),
+                ("Cyan", curses.COLOR_CYAN, curses.COLOR_BLACK, False),
+                ("Gray", curses.COLOR_WHITE, curses.COLOR_BLACK, False),
+                # Bright colors (8-15) - use A_BOLD for brightness
+                ("Bright White", curses.COLOR_WHITE, curses.COLOR_BLACK, True),
+                ("Bright Red", curses.COLOR_RED, curses.COLOR_BLACK, True),
+                ("Bright Green", curses.COLOR_GREEN, curses.COLOR_BLACK, True),
+                ("Bright Yellow", curses.COLOR_YELLOW, curses.COLOR_BLACK, True),
+                ("Bright Blue", curses.COLOR_BLUE, curses.COLOR_BLACK, True),
+                ("Bright Magenta", curses.COLOR_MAGENTA, curses.COLOR_BLACK, True),
+                ("Bright Cyan", curses.COLOR_CYAN, curses.COLOR_BLACK, True),
+                ("Bright Gray", curses.COLOR_WHITE, curses.COLOR_BLACK, True),
             ]
         return cls.COLORS or []
 
@@ -263,27 +296,42 @@ class ArtEditor:
         self.drawing_mode = "char"  # char, line, box
         self.line_start: Optional[Tuple[int, int]] = None
 
+        # Visual cursor settings
+        self.cursor_style = 0  # Index into CURSOR_STYLES
+        self.cursor_blink = True
+        self.cursor_blink_state = True
+        self.cursor_blink_counter = 0
+
+        # Animation frames support
+        self.frames: List[ArtCanvas] = [self.canvas]  # List of frames
+        self.current_frame = 0  # Current frame index
+        self.animation_playing = False
+        self.animation_speed = 200  # ms per frame
+
         # UI layout
         self.canvas_offset_y = 3
         self.canvas_offset_x = 2
 
     def init_colors(self):
-        """Initialize color pairs."""
+        """Initialize color pairs for 16 colors plus UI colors."""
         curses.start_color()
         curses.use_default_colors()
 
-        for i, (name, fg, bg) in enumerate(self._get_colors()):
+        # Initialize 16 color pairs (colors are stored with bright flag in tuple)
+        for i, (name, fg, bg, bright) in enumerate(self._get_colors()):
             try:
                 curses.init_pair(i + 1, fg, bg)
             except curses.error:
                 pass
 
-        # Special colors for UI
-        curses.init_pair(20, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Cursor
+        # Special colors for UI (pairs 20-29)
+        curses.init_pair(20, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Cursor highlight
         curses.init_pair(21, curses.COLOR_WHITE, curses.COLOR_BLUE)   # Header
-        curses.init_pair(22, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Status
-        curses.init_pair(23, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Success
-        curses.init_pair(24, curses.COLOR_RED, curses.COLOR_BLACK)    # Error
+        curses.init_pair(22, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Status bar
+        curses.init_pair(23, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Success message
+        curses.init_pair(24, curses.COLOR_RED, curses.COLOR_BLACK)    # Error message
+        curses.init_pair(25, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Frame indicator
+        curses.init_pair(26, curses.COLOR_BLACK, curses.COLOR_YELLOW) # Cursor crosshair
 
     def show_message(self, msg: str, is_error: bool = False):
         """Show a status message."""
@@ -306,34 +354,65 @@ class ArtEditor:
         return False
 
     def export_to_python(self) -> str:
-        """Export canvas as Python code."""
-        lines = self.canvas.to_string_list()
+        """Export canvas as Python code. Supports multi-frame animation export."""
+        if len(self.frames) == 1:
+            # Single frame export
+            lines = self.canvas.to_string_list()
 
-        # Escape backslashes and quotes
-        escaped_lines = []
-        for line in lines:
-            escaped = line.replace('\\', '\\\\').replace('"', '\\"')
-            escaped_lines.append(f'        "{escaped}",')
+            # Escape backslashes and quotes
+            escaped_lines = []
+            for line in lines:
+                escaped = line.replace('\\', '\\\\').replace('"', '\\"')
+                escaped_lines.append(f'        "{escaped}",')
 
-        code = f'''    # {self.canvas.name} - Generated by Art Editor
+            code = f'''    # {self.canvas.name} - Generated by Art Editor
     # Size: {self.canvas.width}x{self.canvas.height}
     {self.canvas.name} = [
 {chr(10).join(escaped_lines)}
     ]
 '''
+        else:
+            # Multi-frame animation export
+            frame_code_parts = []
+            for i, frame in enumerate(self.frames):
+                lines = frame.to_string_list()
+                escaped_lines = []
+                for line in lines:
+                    escaped = line.replace('\\', '\\\\').replace('"', '\\"')
+                    escaped_lines.append(f'            "{escaped}",')
+                frame_code = f'''        [  # Frame {i + 1}
+{chr(10).join(escaped_lines)}
+        ],'''
+                frame_code_parts.append(frame_code)
+
+            code = f'''    # {self.canvas.name}_FRAMES - Generated by Art Editor
+    # Size: {self.canvas.width}x{self.canvas.height}, Frames: {len(self.frames)}
+    {self.canvas.name}_FRAMES = [
+{chr(10).join(frame_code_parts)}
+    ]
+'''
         return code
 
     def save_to_file(self, filename: str = None):
-        """Save sprite to a file."""
+        """Save sprite to a file. Multi-frame sprites are saved with frame markers."""
         if not filename:
-            filename = f"{self.canvas.name.lower()}.txt"
+            suffix = "_frames" if len(self.frames) > 1 else ""
+            filename = f"{self.canvas.name.lower()}{suffix}.txt"
 
         # Save as plain text
         try:
             with open(filename, 'w', encoding='utf-8') as f:
-                for line in self.canvas.to_string_list():
-                    f.write(line + '\n')
-            self.show_message(f"Saved to {filename}")
+                if len(self.frames) == 1:
+                    for line in self.canvas.to_string_list():
+                        f.write(line + '\n')
+                else:
+                    # Multi-frame format with separators
+                    for i, frame in enumerate(self.frames):
+                        f.write(f"--- Frame {i + 1} ---\n")
+                        for line in frame.to_string_list():
+                            f.write(line + '\n')
+                        f.write('\n')
+            self.show_message(f"Saved {len(self.frames)} frame(s) to {filename}")
             return True
         except Exception as e:
             self.show_message(f"Save failed: {e}", is_error=True)
@@ -360,10 +439,17 @@ class ArtEditor:
         self.screen.clear()
         height, width = self.screen.getmaxyx()
 
-        # Header
-        header = f" ART EDITOR - {self.canvas.name} ({self.canvas.width}x{self.canvas.height}) "
+        # Update cursor blink state
+        self.cursor_blink_counter += 1
+        if self.cursor_blink_counter >= 10:  # Blink every ~500ms at 50ms refresh
+            self.cursor_blink_counter = 0
+            self.cursor_blink_state = not self.cursor_blink_state
+
+        # Header with frame info
+        frame_info = f" Frame {self.current_frame + 1}/{len(self.frames)}" if len(self.frames) > 1 else ""
+        header = f" ART EDITOR - {self.canvas.name} ({self.canvas.width}x{self.canvas.height}){frame_info} "
         header += f"| Color: {self._get_colors()[self.current_color][0]} "
-        header += f"| Mode: {self.drawing_mode.upper()} "
+        header += f"| Cursor: {self.CURSOR_STYLES[self.cursor_style]} "
         header = header.ljust(width - 1)
 
         try:
@@ -374,7 +460,7 @@ class ArtEditor:
             pass
 
         # Shortcuts bar
-        shortcuts = "[Arrows]Move [Space]Clear [Tab]Color [Ctrl+S]Save [Ctrl+L]Load [Ctrl+N]New [F1]Help [Q]Quit"
+        shortcuts = "[Arrows]Move [Tab]Color [F1]Help [F2]Cursor [</>]Frames [Ctrl+S]Save [Q]Quit"
         try:
             self.screen.attron(curses.color_pair(22))
             self.screen.addstr(1, 0, shortcuts[:width-1])
@@ -405,7 +491,10 @@ class ArtEditor:
         except curses.error:
             pass
 
-        # Draw canvas content
+        # Draw canvas content with visual cursor
+        cursor_style = self.CURSOR_STYLES[self.cursor_style]
+        show_cursor = self.cursor_blink_state or not self.cursor_blink
+
         for row in range(self.canvas.height):
             for col in range(self.canvas.width):
                 cell = self.canvas.get(row, col)
@@ -416,40 +505,109 @@ class ArtEditor:
                     continue
 
                 try:
-                    # Highlight cursor position
-                    if row == self.cursor_row and col == self.cursor_col:
-                        attr = curses.color_pair(20) | curses.A_REVERSE
-                    elif cell.color > 0:
-                        attr = curses.color_pair(cell.color)
+                    is_cursor_pos = (row == self.cursor_row and col == self.cursor_col)
+                    is_cursor_row = (row == self.cursor_row)
+                    is_cursor_col = (col == self.cursor_col)
+
+                    # Determine base color attribute
+                    if cell.color > 0:
+                        color_idx = cell.color
+                        colors = self._get_colors()
+                        if color_idx <= len(colors):
+                            is_bright = colors[color_idx - 1][3]  # Check bright flag
+                            attr = curses.color_pair(color_idx)
+                            if is_bright:
+                                attr |= curses.A_BOLD
+                        else:
+                            attr = curses.A_NORMAL
                     else:
                         attr = curses.A_NORMAL
 
                     char = cell.char if cell.char else ' '
+
+                    # Apply cursor styling based on cursor style
+                    if show_cursor:
+                        if cursor_style == "block" and is_cursor_pos:
+                            # Block cursor: reverse video
+                            attr = curses.color_pair(20) | curses.A_REVERSE
+                        elif cursor_style == "underline" and is_cursor_pos:
+                            # Underline cursor: underline attribute
+                            attr |= curses.A_UNDERLINE | curses.A_BOLD
+                        elif cursor_style == "crosshair":
+                            # Crosshair: highlight entire row and column
+                            if is_cursor_pos:
+                                attr = curses.color_pair(26) | curses.A_BOLD
+                            elif is_cursor_row or is_cursor_col:
+                                attr |= curses.A_DIM
+                        elif cursor_style == "corners" and is_cursor_pos:
+                            # Corners style: show with bright reverse
+                            attr = curses.color_pair(20) | curses.A_REVERSE | curses.A_BOLD
+
                     self.screen.addstr(y, x, char, attr)
                 except curses.error:
                     pass
 
-        # Draw cursor position indicator
+        # Draw corner indicators for "corners" cursor style
+        if show_cursor and cursor_style == "corners":
+            self._draw_cursor_corners(height, width)
+
+        # Draw cursor position indicator and frame info
         pos_info = f"Cursor: ({self.cursor_row}, {self.cursor_col})"
+        if len(self.frames) > 1:
+            pos_info += f"  |  Frame: {self.current_frame + 1}/{len(self.frames)} [</>] [Ctrl+F:Add] [Ctrl+D:Del]"
         try:
             self.screen.addstr(canvas_bottom + 1, self.canvas_offset_x, pos_info)
         except curses.error:
             pass
 
-        # Draw color palette
+        # Draw color palette (16 colors in 2 rows)
         palette_y = canvas_bottom + 2
         if palette_y < height - 1:
             try:
                 self.screen.addstr(palette_y, self.canvas_offset_x, "Colors: ")
-                for i, (name, _, _) in enumerate(self._get_colors()):
+                colors = self._get_colors()
+                # First row: colors 0-7 (normal)
+                for i in range(min(8, len(colors))):
+                    name, _, _, is_bright = colors[i]
                     marker = "█" if i == self.current_color else "▪"
                     attr = curses.color_pair(i + 1)
                     if i == self.current_color:
                         attr |= curses.A_BOLD
                     self.screen.addstr(marker, attr)
                     self.screen.addstr(" ")
+
+                # Second row: colors 8-15 (bright) if space available
+                palette_y2 = canvas_bottom + 3
+                if palette_y2 < height - 1 and len(colors) > 8:
+                    self.screen.addstr(palette_y2, self.canvas_offset_x, "        ")
+                    for i in range(8, min(16, len(colors))):
+                        name, _, _, is_bright = colors[i]
+                        marker = "█" if i == self.current_color else "▪"
+                        attr = curses.color_pair(i + 1)
+                        if is_bright:
+                            attr |= curses.A_BOLD
+                        if i == self.current_color:
+                            attr |= curses.A_REVERSE
+                        self.screen.addstr(marker, attr)
+                        self.screen.addstr(" ")
             except curses.error:
                 pass
+
+        # Draw frame indicators if multiple frames exist
+        if len(self.frames) > 1:
+            frame_y = canvas_bottom + 4 if canvas_bottom + 4 < height - 2 else canvas_bottom + 3
+            if frame_y < height - 1:
+                try:
+                    frame_bar = "Frames: "
+                    for i in range(len(self.frames)):
+                        if i == self.current_frame:
+                            frame_bar += f"[{i+1}] "
+                        else:
+                            frame_bar += f" {i+1}  "
+                    self.screen.addstr(frame_y, self.canvas_offset_x, frame_bar,
+                                       curses.color_pair(25))
+                except curses.error:
+                    pass
 
         # Draw message
         if self.message and self.message_time > 0:
@@ -473,41 +631,73 @@ class ArtEditor:
 
         self.screen.refresh()
 
+    def _draw_cursor_corners(self, height: int, width: int):
+        """Draw corner indicators for the 'corners' cursor style."""
+        y = self.canvas_offset_y + self.cursor_row
+        x = self.canvas_offset_x + self.cursor_col
+
+        # Draw corner brackets around cursor position
+        corner_attr = curses.color_pair(25) | curses.A_BOLD
+        try:
+            # Top-left corner indicator (above and left)
+            if y > self.canvas_offset_y and x > self.canvas_offset_x:
+                self.screen.addstr(y - 1, x - 1, "┌", corner_attr)
+            # Top-right corner indicator
+            if y > self.canvas_offset_y and x < self.canvas_offset_x + self.canvas.width - 1:
+                self.screen.addstr(y - 1, x + 1, "┐", corner_attr)
+            # Bottom-left corner indicator
+            if y < self.canvas_offset_y + self.canvas.height - 1 and x > self.canvas_offset_x:
+                self.screen.addstr(y + 1, x - 1, "└", corner_attr)
+            # Bottom-right corner indicator
+            if y < self.canvas_offset_y + self.canvas.height - 1 and x < self.canvas_offset_x + self.canvas.width - 1:
+                self.screen.addstr(y + 1, x + 1, "┘", corner_attr)
+        except curses.error:
+            pass
+
     def _draw_help_overlay(self):
         """Draw help overlay."""
         height, width = self.screen.getmaxyx()
 
         help_text = [
-            "╔══════════════════════════════════════════════════════════╗",
-            "║                    ART EDITOR HELP                       ║",
-            "╠══════════════════════════════════════════════════════════╣",
-            "║  Navigation:                                             ║",
-            "║    Arrow Keys    - Move cursor                           ║",
-            "║    Home/End      - Start/end of row                      ║",
-            "║    PgUp/PgDn     - Top/bottom of canvas                  ║",
-            "║                                                          ║",
-            "║  Drawing:                                                ║",
-            "║    Any character - Draw at cursor                        ║",
-            "║    Space         - Clear cell                            ║",
-            "║    Tab           - Cycle through colors                  ║",
-            "║    Backspace     - Clear and move left                   ║",
-            "║                                                          ║",
-            "║  File Operations:                                        ║",
-            "║    Ctrl+S        - Save to file                          ║",
-            "║    Ctrl+P        - Save as Python code                   ║",
-            "║    Ctrl+L        - Load sprite from library              ║",
-            "║    Ctrl+N        - New canvas                            ║",
-            "║                                                          ║",
-            "║  Edit:                                                   ║",
-            "║    Ctrl+Z        - Undo                                  ║",
-            "║    Ctrl+Y        - Redo                                  ║",
-            "║    Ctrl+R        - Resize canvas                         ║",
-            "║                                                          ║",
-            "║  Other:                                                  ║",
-            "║    F1            - Toggle this help                      ║",
-            "║    Q / Escape    - Quit                                  ║",
-            "╚══════════════════════════════════════════════════════════╝",
-            "                  Press any key to close                    ",
+            "╔════════════════════════════════════════════════════════════════╗",
+            "║                      ART EDITOR HELP                           ║",
+            "╠════════════════════════════════════════════════════════════════╣",
+            "║  Navigation:                                                   ║",
+            "║    Arrow Keys    - Move cursor                                 ║",
+            "║    Home/End      - Start/end of row                            ║",
+            "║    PgUp/PgDn     - Top/bottom of canvas                        ║",
+            "║                                                                ║",
+            "║  Drawing:                                                      ║",
+            "║    Any character - Draw at cursor                              ║",
+            "║    Space         - Clear cell                                  ║",
+            "║    Tab           - Cycle through colors (16 colors)            ║",
+            "║    Shift+Tab     - Cycle colors backward                       ║",
+            "║    Backspace     - Clear and move left                         ║",
+            "║                                                                ║",
+            "║  File Operations:                                              ║",
+            "║    Ctrl+S        - Save to file                                ║",
+            "║    Ctrl+P        - Save as Python code                         ║",
+            "║    Ctrl+L        - Load sprite from library                    ║",
+            "║    Ctrl+N        - New canvas                                  ║",
+            "║                                                                ║",
+            "║  Edit:                                                         ║",
+            "║    Ctrl+Z        - Undo                                        ║",
+            "║    Ctrl+Y        - Redo                                        ║",
+            "║    Ctrl+R        - Resize canvas                               ║",
+            "║                                                                ║",
+            "║  Animation Frames:                                             ║",
+            "║    < / ,         - Previous frame                              ║",
+            "║    > / .         - Next frame                                  ║",
+            "║    Ctrl+F        - Add new frame (copy current)                ║",
+            "║    Ctrl+D        - Delete current frame                        ║",
+            "║    Ctrl+G        - Play/preview animation                      ║",
+            "║                                                                ║",
+            "║  Cursor & Display:                                             ║",
+            "║    F1            - Toggle this help                            ║",
+            "║    F2            - Cycle cursor style (block/line/cross/corner)║",
+            "║    Q / Escape    - Quit                                        ║",
+            "╚════════════════════════════════════════════════════════════════╝",
+            "                     Press any key to close                       ",
         ]
 
         box_height = len(help_text)
@@ -609,6 +799,16 @@ class ArtEditor:
         # Function keys
         elif key == curses.KEY_F1:
             self.show_help = True
+        elif key == curses.KEY_F2:
+            # Cycle cursor style
+            self.cursor_style = (self.cursor_style + 1) % len(self.CURSOR_STYLES)
+            self.show_message(f"Cursor style: {self.CURSOR_STYLES[self.cursor_style]}")
+
+        # Frame navigation with < > or , .
+        elif key in (ord('<'), ord(',')):
+            self._goto_previous_frame()
+        elif key in (ord('>'), ord('.')):
+            self._goto_next_frame()
 
         # Control keys
         elif key == 19:  # Ctrl+S
@@ -625,6 +825,7 @@ class ArtEditor:
             result = self.undo_manager.undo(self.canvas.cells)
             if result:
                 self.canvas.cells = result
+                self.frames[self.current_frame] = self.canvas  # Keep frame in sync
                 self.show_message("Undo")
             else:
                 self.show_message("Nothing to undo", is_error=True)
@@ -632,15 +833,26 @@ class ArtEditor:
             result = self.undo_manager.redo(self.canvas.cells)
             if result:
                 self.canvas.cells = result
+                self.frames[self.current_frame] = self.canvas  # Keep frame in sync
                 self.show_message("Redo")
             else:
                 self.show_message("Nothing to redo", is_error=True)
         elif key == 18:  # Ctrl+R
             self._prompt_resize()
+        elif key == 6:  # Ctrl+F - Add new frame
+            self._add_frame()
+        elif key == 4:  # Ctrl+D - Delete current frame
+            self._delete_frame()
+        elif key == 7:  # Ctrl+G - Play animation
+            self._play_animation()
 
-        # Tab - cycle colors
+        # Tab - cycle colors forward
         elif key == ord('\t'):
             self.current_color = (self.current_color + 1) % len(self._get_colors())
+            self.show_message(f"Color: {self._get_colors()[self.current_color][0]}")
+        # Shift+Tab - cycle colors backward
+        elif key == curses.KEY_BTAB or key == 353:
+            self.current_color = (self.current_color - 1) % len(self._get_colors())
             self.show_message(f"Color: {self._get_colors()[self.current_color][0]}")
 
         # Backspace
@@ -686,6 +898,8 @@ class ArtEditor:
             new_name = name.upper().replace(' ', '_') if name else "NEW_SPRITE"
 
             self.canvas = ArtCanvas(new_width, new_height, new_name)
+            self.frames = [self.canvas]  # Reset to single frame
+            self.current_frame = 0
             self.cursor_row = 0
             self.cursor_col = 0
             self.undo_manager = UndoManager()
@@ -723,6 +937,155 @@ class ArtEditor:
             self.show_message(f"Invalid input: {e}", is_error=True)
         finally:
             curses.noecho()
+
+    # =========================================================================
+    # Frame Management Methods for Animation Support
+    # =========================================================================
+
+    def _goto_previous_frame(self):
+        """Navigate to the previous frame."""
+        if len(self.frames) <= 1:
+            self.show_message("Only one frame exists. Use Ctrl+F to add frames.")
+            return
+
+        # Save current frame state
+        self.frames[self.current_frame] = self.canvas
+
+        # Go to previous frame (wrap around)
+        self.current_frame = (self.current_frame - 1) % len(self.frames)
+        self.canvas = self.frames[self.current_frame]
+        self.undo_manager = UndoManager()  # Reset undo for new frame
+
+        # Clamp cursor to new canvas bounds
+        self.cursor_row = min(self.cursor_row, self.canvas.height - 1)
+        self.cursor_col = min(self.cursor_col, self.canvas.width - 1)
+
+        self.show_message(f"Frame {self.current_frame + 1}/{len(self.frames)}")
+
+    def _goto_next_frame(self):
+        """Navigate to the next frame."""
+        if len(self.frames) <= 1:
+            self.show_message("Only one frame exists. Use Ctrl+F to add frames.")
+            return
+
+        # Save current frame state
+        self.frames[self.current_frame] = self.canvas
+
+        # Go to next frame (wrap around)
+        self.current_frame = (self.current_frame + 1) % len(self.frames)
+        self.canvas = self.frames[self.current_frame]
+        self.undo_manager = UndoManager()  # Reset undo for new frame
+
+        # Clamp cursor to new canvas bounds
+        self.cursor_row = min(self.cursor_row, self.canvas.height - 1)
+        self.cursor_col = min(self.cursor_col, self.canvas.width - 1)
+
+        self.show_message(f"Frame {self.current_frame + 1}/{len(self.frames)}")
+
+    def _add_frame(self):
+        """Add a new frame (copy of current frame)."""
+        # Save current frame state
+        self.frames[self.current_frame] = self.canvas
+
+        # Create a copy of the current frame
+        new_frame = self.canvas.copy()
+
+        # Insert the new frame after the current frame
+        insert_pos = self.current_frame + 1
+        self.frames.insert(insert_pos, new_frame)
+
+        # Move to the new frame
+        self.current_frame = insert_pos
+        self.canvas = self.frames[self.current_frame]
+        self.undo_manager = UndoManager()
+
+        self.show_message(f"Added frame {self.current_frame + 1}/{len(self.frames)} (copy of previous)")
+
+    def _delete_frame(self):
+        """Delete the current frame."""
+        if len(self.frames) <= 1:
+            self.show_message("Cannot delete the only frame!", is_error=True)
+            return
+
+        # Remove current frame
+        del self.frames[self.current_frame]
+
+        # Adjust current frame index if needed
+        if self.current_frame >= len(self.frames):
+            self.current_frame = len(self.frames) - 1
+
+        # Update canvas to the new current frame
+        self.canvas = self.frames[self.current_frame]
+        self.undo_manager = UndoManager()
+
+        # Clamp cursor to new canvas bounds
+        self.cursor_row = min(self.cursor_row, self.canvas.height - 1)
+        self.cursor_col = min(self.cursor_col, self.canvas.width - 1)
+
+        self.show_message(f"Deleted frame. Now at frame {self.current_frame + 1}/{len(self.frames)}")
+
+    def _play_animation(self):
+        """Play animation preview of all frames."""
+        if len(self.frames) <= 1:
+            self.show_message("Need at least 2 frames for animation. Use Ctrl+F to add frames.")
+            return
+
+        # Save current frame state
+        self.frames[self.current_frame] = self.canvas
+        original_frame = self.current_frame
+
+        self.show_message("Playing animation... Press any key to stop")
+        self.screen.refresh()
+
+        # Play through frames
+        self.animation_playing = True
+        frame_delay = self.animation_speed / 1000.0  # Convert ms to seconds
+
+        try:
+            self.screen.nodelay(True)  # Non-blocking input
+            cycles = 0
+            max_cycles = 3  # Play 3 cycles then stop
+
+            while self.animation_playing and cycles < max_cycles:
+                for i in range(len(self.frames)):
+                    # Check for key press to stop
+                    key = self.screen.getch()
+                    if key != -1:
+                        self.animation_playing = False
+                        break
+
+                    # Show frame
+                    self.current_frame = i
+                    self.canvas = self.frames[i]
+                    self.draw()
+
+                    # Wait for frame delay
+                    time.sleep(frame_delay)
+
+                cycles += 1
+
+        finally:
+            self.screen.nodelay(False)
+            self.animation_playing = False
+
+        # Restore to original frame
+        self.current_frame = original_frame
+        self.canvas = self.frames[self.current_frame]
+        self.show_message(f"Animation stopped. Frame {self.current_frame + 1}/{len(self.frames)}")
+
+    def _resize_all_frames(self, new_width: int, new_height: int):
+        """Resize all frames to the same dimensions."""
+        for frame in self.frames:
+            frame.resize(new_width, new_height)
+
+        # Update current canvas reference
+        self.canvas = self.frames[self.current_frame]
+
+        # Clamp cursor
+        self.cursor_row = min(self.cursor_row, new_height - 1)
+        self.cursor_col = min(self.cursor_col, new_width - 1)
+
+        self.show_message(f"All {len(self.frames)} frames resized to {new_width}x{new_height}")
 
     def run(self, screen):
         """Main editor loop."""
@@ -811,11 +1174,22 @@ def main():
         pass
 
     print(f"\nExiting Art Editor. Sprite: {editor.canvas.name}")
-    print("\nFinal sprite content:")
-    print("-" * 40)
-    for line in editor.canvas.to_string_list():
-        print(f'"{line}",')
-    print("-" * 40)
+    if len(editor.frames) == 1:
+        print("\nFinal sprite content:")
+        print("-" * 40)
+        for line in editor.canvas.to_string_list():
+            print(f'"{line}",')
+        print("-" * 40)
+    else:
+        print(f"\nFinal animation content ({len(editor.frames)} frames):")
+        print("-" * 40)
+        for i, frame in enumerate(editor.frames):
+            print(f"# Frame {i + 1}:")
+            print("[")
+            for line in frame.to_string_list():
+                print(f'    "{line}",')
+            print("],")
+        print("-" * 40)
 
 
 if __name__ == '__main__':
