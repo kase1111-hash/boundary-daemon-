@@ -286,7 +286,7 @@ class EventReader:
             lines = f.readlines()
 
         if reverse:
-            lines = reversed(lines)
+            lines = list(reversed(lines))
 
         for line in lines:
             line = line.strip()
