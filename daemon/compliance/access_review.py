@@ -88,10 +88,12 @@ class AccessReviewRecord:
     # Timing
     created_at: datetime
     due_date: datetime
-    completed_at: Optional[datetime] = None
 
-    # Participants
+    # Participants (must come before fields with defaults)
     initiated_by: str
+
+    # Fields with defaults
+    completed_at: Optional[datetime] = None
     reviewers: List[str] = field(default_factory=list)
     approvers: List[str] = field(default_factory=list)
 

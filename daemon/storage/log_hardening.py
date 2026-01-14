@@ -708,8 +708,10 @@ class SecureLogWriter:
                 self.open()
 
             line = data if data.endswith('\n') else data + '\n'
-            os.write(self._fd, line.encode())
-            os.fsync(self._fd)
+            fd = self._fd
+            if fd is not None:  # Type narrowing for mypy
+                os.write(fd, line.encode())
+                os.fsync(fd)
 
     def close(self, seal: bool = False):
         """

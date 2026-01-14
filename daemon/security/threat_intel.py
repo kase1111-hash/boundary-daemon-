@@ -436,9 +436,12 @@ class ThreatIntelMonitor:
             return None
 
         try:
+            api_key = self.config.abuseipdb_api_key
+            if not api_key:
+                return None
             url = f"https://api.abuseipdb.com/api/v2/check?ipAddress={ip}"
             req = urllib.request.Request(url)
-            req.add_header('Key', self.config.abuseipdb_api_key)
+            req.add_header('Key', api_key)
             req.add_header('Accept', 'application/json')
 
             with urllib.request.urlopen(req, timeout=5) as response:
@@ -485,9 +488,12 @@ class ThreatIntelMonitor:
             return None
 
         try:
+            api_key = self.config.virustotal_api_key
+            if not api_key:
+                return None
             url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
             req = urllib.request.Request(url)
-            req.add_header('x-apikey', self.config.virustotal_api_key)
+            req.add_header('x-apikey', api_key)
 
             with urllib.request.urlopen(req, timeout=5) as response:
                 self._record_api_call()
