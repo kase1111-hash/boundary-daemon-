@@ -55,7 +55,6 @@ import base64
 try:
     from nacl.signing import SigningKey, VerifyKey
     from nacl.public import PrivateKey, PublicKey, Box
-    from nacl.encoding import HexEncoder
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False

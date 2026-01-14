@@ -1049,8 +1049,8 @@ class HardwareTokenCeremony:
     def _check_fido2_available(self) -> bool:
         """Check if FIDO2 library is available."""
         try:
-            from fido2.hid import CtapHidDevice
-            from fido2.client import Fido2Client
+            from fido2.hid import CtapHidDevice  # noqa: F401
+            from fido2.client import Fido2Client  # noqa: F401
             return True
         except ImportError:
             return False

@@ -34,8 +34,6 @@ try:
         handle_error,
         log_security_error,
         log_filesystem_error,
-        ErrorCategory,
-        ErrorSeverity,
     )
     ERROR_HANDLING_AVAILABLE = True
 except ImportError:

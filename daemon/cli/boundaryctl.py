@@ -161,7 +161,7 @@ def cmd_config(args):
 def cmd_case(args):
     """Case management."""
     try:
-        from daemon.alerts.case_manager import CaseManager, CaseStatus, CaseSeverity
+        from daemon.alerts.case_manager import CaseManager, CaseStatus
 
         manager = CaseManager()
 

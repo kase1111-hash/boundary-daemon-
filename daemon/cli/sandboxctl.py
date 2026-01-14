@@ -36,8 +36,6 @@ try:
     from daemon.sandbox import (
         SandboxManager,
         SandboxProfile,
-        Sandbox,
-        SandboxResult,
         SandboxError,
         CgroupLimits,
         NetworkPolicy,

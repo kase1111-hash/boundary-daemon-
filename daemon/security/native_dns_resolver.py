@@ -695,8 +695,8 @@ class NativeDNSResolver:
 
             # Try to import dnspython for full validation
             try:
-                import dns.resolver
-                import dns.dnssec
+                import dns.resolver  # noqa: F401
+                import dns.dnssec  # noqa: F401
                 result['validation_available'] = True
             except ImportError:
                 pass

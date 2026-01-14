@@ -31,15 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Try to import HSM provider
 try:
-    from ..crypto.hsm_provider import HSMProvider, HSMSession, HSMConfig, HSMType
+    from ..crypto.hsm_provider import HSMProvider  # noqa: F401
     HSM_AVAILABLE = True
 except ImportError:
     HSM_AVAILABLE = False
 
 # Try to import nacl for software signing fallback
 try:
-    from nacl.signing import SigningKey, VerifyKey
-    from nacl.encoding import HexEncoder
+    from nacl.signing import SigningKey
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False

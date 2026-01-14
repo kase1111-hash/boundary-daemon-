@@ -344,7 +344,7 @@ class ComprehensivePipelineTests:
 
         try:
             from daemon.tripwires import (
-                TripwireSystem, ViolationType, TripwireViolation, LockdownManager
+                TripwireSystem, ViolationType, LockdownManager
             )
             from collections import deque
 
@@ -815,7 +815,7 @@ class ComprehensivePipelineTests:
         try:
             from daemon.health_monitor import (
                 HealthMonitor, HealthStatus, HealthSnapshot,
-                ComponentStatus, ComponentHealth
+                ComponentStatus
             )
             from unittest.mock import MagicMock
 

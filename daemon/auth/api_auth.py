@@ -33,7 +33,6 @@ try:
         handle_error,
         log_auth_error,
         log_filesystem_error,
-        ErrorCategory,
     )
     ERROR_HANDLING_AVAILABLE = True
 except ImportError:

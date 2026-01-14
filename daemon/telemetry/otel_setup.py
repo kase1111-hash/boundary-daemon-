@@ -40,15 +40,12 @@ try:
     from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_INSTANCE_ID, HOST_NAME
     from opentelemetry.sdk.trace import TracerProvider, Span
     from opentelemetry.sdk.trace.export import (
-        SpanProcessor, SpanExporter, SpanExportResult,
-        ConsoleSpanExporter, SimpleSpanProcessor, BatchSpanProcessor
+        SpanExportResult, ConsoleSpanExporter, SimpleSpanProcessor, BatchSpanProcessor
     )
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import (
-        MetricExporter, ConsoleMetricExporter, PeriodicExportingMetricReader
+        ConsoleMetricExporter, PeriodicExportingMetricReader
     )
-    from opentelemetry.trace import Status, StatusCode
-    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False

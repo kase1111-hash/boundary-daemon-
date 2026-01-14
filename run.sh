@@ -2,7 +2,7 @@
 # Boundary Daemon - Run daemon and Matrix TUI
 # Runs daemon in background and displays the TUI
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # Check if daemon is already running
 if pgrep -f "python.*daemon" > /dev/null 2>&1; then
@@ -14,7 +14,7 @@ else
 
     # Wait for socket to be created
     echo "Waiting for daemon to initialize..."
-    for i in {1..10}; do
+    for _ in {1..10}; do
         if [ -S "api/boundary.sock" ]; then
             echo "Daemon ready (PID: $DAEMON_PID)"
             break

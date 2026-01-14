@@ -27,11 +27,8 @@ from textual import work
 # Import daemon components
 try:
     from daemon.boundary_daemon import BoundaryDaemon
-    from daemon.policy_engine import BoundaryMode, PolicyEngine, Operator
-    from daemon.state_monitor import StateMonitor, NetworkState, HardwareTrust
-    from daemon.tripwires import TripwireSystem, ViolationType
-    from daemon.event_logger import EventLogger, EventType
-    from daemon.health_monitor import HealthMonitor, HealthStatus
+    from daemon.policy_engine import BoundaryMode, Operator
+    from daemon.event_logger import EventType
     DAEMON_AVAILABLE = True
 except ImportError as e:
     DAEMON_AVAILABLE = False

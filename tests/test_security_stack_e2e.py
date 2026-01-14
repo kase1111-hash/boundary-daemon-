@@ -559,7 +559,7 @@ class TestDetectionIntegration:
     def test_detection_modules_available(self):
         """Test detection engine modules."""
         try:
-            from daemon.detection import (
+            from daemon.detection import (  # noqa: F401
                 YARAEngine,
                 SigmaEngine,
                 MITREDetector,

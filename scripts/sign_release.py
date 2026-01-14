@@ -53,7 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from daemon.integrity.code_signer import CodeSigner, sign_daemon_release
+    from daemon.integrity.code_signer import CodeSigner
     from daemon.integrity.integrity_verifier import IntegrityVerifier
 except ImportError:
     # Fallback for standalone execution

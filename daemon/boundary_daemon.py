@@ -19,11 +19,7 @@ import logging
 
 # Import enhanced logging configuration
 try:
-    from .logging_config import (
-        setup_logging, get_logger as get_enhanced_logger,
-        set_verbose, set_trace, is_verbose, is_trace,
-        FeatureArea, configure_from_environment
-    )
+    from .logging_config import get_logger as get_enhanced_logger
     ENHANCED_LOGGING_AVAILABLE = True
 except ImportError:
     ENHANCED_LOGGING_AVAILABLE = False

@@ -20,7 +20,6 @@ try:
     from daemon.utils.error_handling import (
         log_security_error,
         log_filesystem_error,
-        ErrorCategory,
     )
     ERROR_HANDLING_AVAILABLE = True
 except ImportError:

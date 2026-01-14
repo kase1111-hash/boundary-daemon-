@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Change to project directory
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || exit 1
 
 # Run the art editor
 echo "Starting ASCII Art Editor..."

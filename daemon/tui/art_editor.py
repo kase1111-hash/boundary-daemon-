@@ -390,7 +390,7 @@ class ArtEditor:
 '''
         return code
 
-    def save_to_file(self, filename: str = None):
+    def save_to_file(self, filename: Optional[str] = None):
         """Save sprite to a file. Multi-frame sprites are saved with frame markers."""
         if not filename:
             suffix = "_frames" if len(self.frames) > 1 else ""
@@ -415,7 +415,7 @@ class ArtEditor:
             self.show_message(f"Save failed: {e}", is_error=True)
             return False
 
-    def save_python_snippet(self, filename: str = None):
+    def save_python_snippet(self, filename: Optional[str] = None):
         """Save as Python code snippet."""
         if not filename:
             filename = f"{self.canvas.name.lower()}_sprite.py"
