@@ -10757,9 +10757,9 @@ class Dashboard:
         # Draw shortcuts at bottom of events panel (inside the box)
         shortcut_row = y + height - 2
         if self.matrix_mode:
-            shortcuts = "[:]CLI [w]Weather [t]Tunnel [f]FPS [g]Game [u]Mute [?]Help [q]Quit"
+            shortcuts = "[:]CLI [w]Weather [t]Tunnel [f]FPS [g]Game [u]Mute [d]Debug [?]Help [q]Quit"
         else:
-            shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [?]Help [q]Quit"
+            shortcuts = "[m]Mode [a]Ack [e]Export [r]Refresh [/]Search [d]Debug [?]Help [q]Quit"
 
         # Center the shortcuts
         shortcuts = shortcuts[:display_width]
@@ -10959,6 +10959,7 @@ class Dashboard:
             "  e    Export events to file",
             "  r    Refresh data",
             "  /    Filter events",
+            "  d    Toggle memory leak trace debug",
             "",
             "  1    Focus status panel",
             "  2    Focus events panel",
