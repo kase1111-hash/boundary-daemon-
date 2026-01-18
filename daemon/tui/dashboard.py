@@ -4610,7 +4610,7 @@ class AlleyScene:
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
         self.box_x = self._building_x + 5  # In front of left building
-        self.box_y = ground_y - len(self.BOX) + 1 - 4  # Moved up 4 rows
+        self.box_y = ground_y - len(self.BOX) + 1 - 2  # Moved up 2 rows
         self._draw_box_with_label(self.box_x, self.box_y)
 
         # Place blue mailbox near building 1 (shifted 2 chars left)
