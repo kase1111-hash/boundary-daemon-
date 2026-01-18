@@ -14,23 +14,12 @@ echo ============================================
 echo  Git Update - Boundary Daemon
 echo ============================================
 echo.
-echo Working directory: %CD%
-echo.
 
 REM Check if git is available
 git --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Git is not installed or not in PATH
     echo Please install Git and try again
-    pause
-    exit /b 1
-)
-
-REM Check if we're in a git repository (check for .git\HEAD file)
-if not exist ".git\HEAD" (
-    echo ERROR: Not a git repository
-    echo Working directory: %CD%
-    echo Please run this script from the repository root
     pause
     exit /b 1
 )
