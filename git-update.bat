@@ -26,9 +26,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Check if we're in a git repository (check for .git folder)
-if not exist ".git" (
+REM Check if we're in a git repository (check for .git\HEAD file)
+if not exist ".git\HEAD" (
     echo ERROR: Not a git repository
+    echo Working directory: %CD%
     echo Please run this script from the repository root
     pause
     exit /b 1
