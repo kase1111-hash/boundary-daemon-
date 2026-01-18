@@ -4609,7 +4609,7 @@ class AlleyScene:
         building1_right = self._building_x + len(self.BUILDING[0])
         building2_left = self._building2_x if self._building2_x > 0 else self.width
         gap_center = (building1_right + building2_left) // 2
-        self.box_x = self._building_x + 5  # In front of left building
+        self.box_x = self._building_x + 2  # In front of left building (shifted 3 left)
         self.box_y = ground_y - len(self.BOX) + 1 - 2  # Moved up 2 rows
         self._draw_box_with_label(self.box_x, self.box_y)
 
@@ -10613,11 +10613,11 @@ class Dashboard:
         siem_connected = self.siem_status.get('connected', False) if self.siem_status else False
         ingestion_connected = bool(self.ingestion_status.get('active_clients', 0)) if self.ingestion_status else False
         if siem_connected and ingestion_connected:
-            header += "[SIEM: OK]  │  "
+            header += "[SIEM: CONNECTED]  │  "
         elif siem_connected or ingestion_connected:
             header += "[SIEM: PARTIAL]  │  "
         else:
-            header += "[SIEM: OFF]  │  "
+            header += "[SIEM: UNDETECTED]  │  "
         header += f"Uptime: {self._format_duration(self.status.get('uptime', 0))}"
         if self.event_filter:
             header += f"  │  Filter: {self.event_filter}"
