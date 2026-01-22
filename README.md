@@ -1488,7 +1488,7 @@ This is a security-critical component. Contributions must:
 
 ## License
 
-MIT License (see LICENSE file)
+GNU General Public License v3.0 (GPL-3.0) - see [LICENSE](LICENSE) file for details.
 
 ## Design Constraint
 
