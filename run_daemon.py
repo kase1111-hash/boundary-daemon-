@@ -11,6 +11,7 @@ It handles the import path setup required for PyInstaller builds.
 
 import sys
 import os
+import subprocess
 import threading
 import time
 
@@ -32,6 +33,46 @@ def setup_path():
     parent_path = os.path.dirname(base_path)
     if parent_path not in sys.path:
         sys.path.insert(0, parent_path)
+
+
+def handle_service_command(args) -> None:
+    """Handle Linux service management commands."""
+    if sys.platform != 'linux':
+        print("Error: Service management is only supported on Linux.")
+        print("For macOS, use launchd. For Windows, use Task Scheduler.")
+        sys.exit(1)
+
+    # Get the path to the setup script
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    setup_script = os.path.join(base_path, 'scripts', 'setup-linux-boot.py')
+
+    if not os.path.exists(setup_script):
+        print(f"Error: Setup script not found: {setup_script}")
+        sys.exit(1)
+
+    # Build the command
+    if args.install_service:
+        cmd = [sys.executable, setup_script, '--enable']
+    elif args.remove_service:
+        cmd = [sys.executable, setup_script, '--uninstall']
+    elif args.service_status:
+        cmd = [sys.executable, setup_script, '--status']
+    else:
+        return
+
+    # Run the setup script
+    try:
+        result = subprocess.run(cmd)
+        sys.exit(result.returncode)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception as e:
+        print(f"Error running setup script: {e}")
+        sys.exit(1)
 
 
 def main():
@@ -76,7 +117,21 @@ def main():
     parser.add_argument('--log-file', type=str,
                         help='Additional log file path for detailed logging')
 
+    # Linux service management options
+    service_group = parser.add_argument_group('Linux Service Management')
+    service_group.add_argument('--install-service', action='store_true',
+                               help='Install and enable systemd service for boot startup (Linux only, requires root)')
+    service_group.add_argument('--remove-service', action='store_true',
+                               help='Remove systemd service (Linux only, requires root)')
+    service_group.add_argument('--service-status', action='store_true',
+                               help='Show systemd service status (Linux only)')
+
     args = parser.parse_args()
+
+    # Handle service management commands (Linux only)
+    if args.install_service or args.remove_service or args.service_status:
+        handle_service_command(args)
+        sys.exit(0)
 
     # Setup enhanced logging if available
     try:
