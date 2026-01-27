@@ -92,7 +92,7 @@ class TestTripwireSystemInit:
         assert tripwire._locked is False
         assert tripwire._auth_required is True
         assert len(tripwire._violations) == 0  # May be deque or list
-        assert tripwire._callbacks == []
+        assert tripwire._callbacks == {}  # Dict for O(1) unregister
 
     def test_init_with_event_logger(self):
         """TripwireSystem should accept an event logger."""
@@ -128,11 +128,11 @@ class TestTripwireSystemCallbacks:
     """Tests for TripwireSystem callback functionality."""
 
     def test_register_callback(self):
-        """register_callback should add callback to list."""
+        """register_callback should add callback to dict values."""
         tripwire = TripwireSystem()
         callback = MagicMock()
         tripwire.register_callback(callback)
-        assert callback in tripwire._callbacks
+        assert callback in tripwire._callbacks.values()
 
     def test_register_multiple_callbacks(self):
         """Multiple callbacks can be registered."""

@@ -385,11 +385,11 @@ class TestStateMonitorCallbacks:
     """Tests for StateMonitor callback functionality."""
 
     def test_register_callback(self):
-        """register_callback should add callback to list."""
+        """register_callback should add callback to dict values."""
         monitor = StateMonitor()
         callback = MagicMock()
         monitor.register_callback(callback)
-        assert callback in monitor._callbacks
+        assert callback in monitor._callbacks.values()
 
     def test_register_multiple_callbacks(self):
         """Multiple callbacks can be registered."""
