@@ -488,13 +488,28 @@ class TestIntentLogIntegration(unittest.TestCase):
 class TestRRAModuleIntegration(unittest.TestCase):
     """Test RRA-Module integration prevents attacks."""
 
+    def _import_rra_boundary(self):
+        """Import boundary module from RRA-Module, handling cache."""
+        import importlib
+        # Remove cached boundary module if it exists (from other integration tests)
+        if 'boundary' in sys.modules:
+            del sys.modules['boundary']
+
+        rra_path = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'integrations', 'rra-module', 'src'
+        )
+        if rra_path not in sys.path:
+            sys.path.insert(0, rra_path)
+
+        import boundary
+        return importlib.reload(boundary)
+
     def test_scope_limiting(self):
         """Verify RRA-Module limits analysis scope per mode."""
-        sys.path.insert(0, os.path.join(
-            os.path.dirname(__file__), '..', '..', 'integrations', 'rra-module', 'src'
-        ))
-
-        from boundary import RiskGate, AnalysisScope, OperationalMode
+        boundary = self._import_rra_boundary()
+        RiskGate = boundary.RiskGate
+        AnalysisScope = boundary.AnalysisScope
+        OperationalMode = boundary.OperationalMode
 
         gate = RiskGate()
 
@@ -506,11 +521,8 @@ class TestRRAModuleIntegration(unittest.TestCase):
 
     def test_decision_integrity_check(self):
         """Verify RRA-Module validates decision integrity."""
-        sys.path.insert(0, os.path.join(
-            os.path.dirname(__file__), '..', '..', 'integrations', 'rra-module', 'src'
-        ))
-
-        from boundary import AnalysisAuditGate
+        boundary = self._import_rra_boundary()
+        AnalysisAuditGate = boundary.AnalysisAuditGate
 
         audit = AnalysisAuditGate()
 

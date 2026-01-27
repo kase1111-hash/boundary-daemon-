@@ -51,7 +51,8 @@ from .event_publisher import (
     SecurityEvent,
     SecurityAlert,
     DetectionResult,
-    EventType as DetectionEventType,
+    EventType,
+    EventType as DetectionEventType,  # Alias for backward compatibility
     AlertSeverity,
     get_event_publisher,
     configure_event_publisher,
@@ -94,7 +95,8 @@ __all__ = [
     'SecurityEvent',
     'SecurityAlert',
     'DetectionResult',
-    'DetectionEventType',
+    'EventType',
+    'DetectionEventType',  # Alias for backward compatibility
     'AlertSeverity',
     'get_event_publisher',
     'configure_event_publisher',

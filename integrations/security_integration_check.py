@@ -160,6 +160,7 @@ REPOSITORIES: List[RepositoryIntegration] = [
         attack_vectors_prevented=[
             AttackVector.CONTRACT_TAMPERING,
             AttackVector.PRIVILEGE_ESCALATION,
+            AttackVector.CRYPTO_BYPASS,  # Contract signature verification
         ],
     ),
     RepositoryIntegration(
@@ -211,6 +212,7 @@ REPOSITORIES: List[RepositoryIntegration] = [
         attack_vectors_prevented=[
             AttackVector.CRYPTO_BYPASS,
             AttackVector.RATE_LIMIT_BYPASS,
+            AttackVector.MEMORY_EXFILTRATION,  # Value ledger tracks memory state
         ],
     ),
     RepositoryIntegration(

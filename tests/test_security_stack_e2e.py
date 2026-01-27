@@ -577,16 +577,21 @@ class TestDetectionIntegration:
                 get_event_publisher,
                 SecurityEvent,
                 EventType,
+                AlertSeverity,
             )
 
             publisher = get_event_publisher()
 
-            # Create a test event
+            # Create a test event using valid EventType and correct parameters
+            from datetime import datetime
             event = SecurityEvent(
-                event_type=EventType.CUSTOM,
+                event_id="test_event_001",
+                event_type=EventType.POLICY_VIOLATION,
+                timestamp=datetime.utcnow().isoformat() + 'Z',
+                severity=AlertSeverity.LOW,
                 source="test",
-                description="Test security event",
-                data={"test": True},
+                details="Test security event",
+                metadata={"test": True},
             )
 
             # Should not raise
